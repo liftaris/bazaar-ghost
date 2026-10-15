@@ -6,14 +6,16 @@ This is the acceptance record for the dedicated Cloudflare migration environment
 
 - Branch: `migration/cloudflare`; existing `dev`, `main`, and the separate frontend remain untouched.
 - Hosted Worker: `bazaarghost-validation`, at `https://bazaarghost-validation.kaio-8df.workers.dev`.
-- Verified deployed application: `6f9c1c8167b527f36d5725832d5bcd7377210878`; Worker version `640f8303-05f0-4a0d-91e1-fe2e7d7ed0ac`; migrations `0001`–`0007` applied. Deployment and exact-commit public health were verified on October 14, 2026.
+- Verified deployed application: `ec0902228f19b7e6816a116dd2949af22715c806`; Worker version `0ef7acc9-b413-46a5-af11-5dd021e7d373`; migrations `0001`–`0007` applied. Deployment and exact-commit public health were verified on October 14, 2026.
 - D1, both R2 buckets, the queue, and dead-letter queue belong to validation. Auth is enabled; outbound integrations are disabled. The provider endpoint reports no configured login providers. Auth maintenance at `* * * * *` is the only configured Cron; actual successful minute invocations and an expired-counter deletion have been observed.
 - OCR and workflow execution stay in GitHub Actions. Successful YouTube jobs used disposable, one-job local-container Actions runners. Those runners and containers were removed afterward.
-- [CI 38675469292](https://github.com/liftaris/bazaar-ghost/actions/runs/38675469292) passed 211 Worker tests, the 148-test Python script suite, 244 offline OCR tests, and the real local D1 import check. Its deployment steps actually ran: cf build/prebuilt validation, remote migrations, deployment, and exact-commit health verification. An independent public health request and Cloudflare deployment listing confirmed the serving version. Historical hosted proofs below retain their original dates and builds.
+- [CI 38682247097](https://github.com/liftaris/bazaar-ghost/actions/runs/38682247097) passed 211 Worker tests, the 148-test Python script suite, 244 offline OCR tests, and the real local D1 import check. Its deployment steps actually ran: cf build/prebuilt validation, remote migrations, deployment, and exact-commit health verification. An independent public health request confirmed the serving commit. Historical hosted proofs below retain their original dates and builds.
 
 ## Capability acceptance
 
 Local YouTube evidence was refreshed on October 14, 2026: real discovery and 20 durable ingestion jobs succeeded, followed by seven completed OCR chunks covering three full recordings (4,278 samples). All 35 public detections and JPEGs were verified, including nonzero-start continuation and preservation of prior results. This found and fixed an FFmpeg diagnostic/timestamp collision. See [local YouTube acceptance](platform-ingestion.md#local-youtube-acceptance-october-14-2026); these local runs do not change the hosted deployment or acceptance claims below.
+
+The subsequent [PO-token provider experiment](tooling.md#youtube-po-token-probe) failed on all three GitHub-hosted runners: YouTube required sign-in before token generation. The manual diagnostic workflow is available, but the provider was not added to normal ingestion or processing, and recurring outbound work remains disabled.
 
 | Capability | Established evidence | Remaining acceptance |
 |---|---|---|
