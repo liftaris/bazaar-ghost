@@ -1,4 +1,4 @@
-streamlink>=8.0.0
+streamlink==8.6.2
 opencv-python-headless==4.11.0.86
 paddleocr==3.3.2
 paddlepaddle==3.2.2

@@ -15,7 +15,8 @@ import json
 import logging
 import math
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, Tuple, List
+from typing import Optional, Dict, Any, Tuple, List, Callable
+from urllib.parse import urlparse
 import yaml
 import numpy as np
 from dotenv import load_dotenv
@@ -28,6 +29,8 @@ load_dotenv(".env.local")
 from frame_processor import FrameProcessor
 from supabase_client import SupabaseClient
 from json_logger import JSONFormatter
+from renditions import QUALITY_RESOLUTIONS, parse_rendition, processing_quality, select_rendition
+from video import timestamped_frames
 from telemetry import (
     init_telemetry, create_span, record_counter, record_histogram, record_gauge,
     extract_trace_context, set_span_attribute, add_span_event,
@@ -38,6 +41,7 @@ from telemetry import (
 QUALITY_CONFIGS = {
     '360p': {'resolution': (640, 360), 'file_suffix': '360p.mp4'},
     '480p': {'resolution': (854, 480), 'file_suffix': '480p.mp4'},
+    '720p': {'resolution': (1280, 720), 'file_suffix': '720p.mp4'},
     '1080p': {'resolution': (1920, 1080), 'file_suffix': '1080p.mp4'},
     '1080p60': {'resolution': (1920, 1080), 'file_suffix': '1080p.mp4'}
 }
@@ -49,11 +53,18 @@ class SFOTProcessor:
         """Initialize SFOT processor with configuration"""
         self.chunk_id = config['chunk_id']
         self.test_mode = config.get('test_mode', False)
-        self.quality = config.get('quality', '480p')
+        self.requested_quality = config.get('quality', '480p')
+        self.quality = processing_quality(self.requested_quality)
         self.old_templates = config.get('old_templates', False)
-        self.video_fps = config.get('video_fps', 30)  # Actual video FPS
-
-        self.formatted_quality = f"{self.quality}60" if self.video_fps == 60 else self.quality
+        if self.old_templates:
+            self.quality = '480p'
+        self.stream_quality = config.get('stream_quality') or None
+        if self.stream_quality:
+            _, self.video_fps = parse_rendition(self.stream_quality)
+        else:
+            self.video_fps = None
+        # Native rendition names are metadata, never template names or sampling rates.
+        self.formatted_quality = self.stream_quality or self.quality
 
         # Load configuration
         self.config = self._load_config()
@@ -82,7 +93,11 @@ class SFOTProcessor:
         # Initialize components
         self.frame_queue = queue.Queue(maxsize=self.config['processing']['queue_size'])
         self.result_queue = queue.Queue()
-        self.shutdown = threading.Event()
+        self.shutdown = threading.Event()  # Cancellation/failure, never normal EOF.
+        self.frames_done = threading.Event()
+        self.results_done = threading.Event()
+        self.worker_errors = queue.Queue()
+        self.threads = []
 
         # Process state
         self.streamlink_proc: Optional[subprocess.Popen] = None
@@ -254,6 +269,9 @@ class SFOTProcessor:
         # Wrap entire processing in a root span
         with create_span("process_chunk", attributes=self.span_attributes) as root_span:
             try:
+                # Verify source selection before replacing any existing chunk results.
+                if not self.test_mode:
+                    self._media_url = self._resolve_stream()
                 # Always clean up existing detections and images when rerunning a chunk
                 # This ensures clean slate whether chunk was completed, failed, or partially processed
                 self.logger.info(f"Cleaning up any existing detections for chunk {self.chunk_id} (status: {self.initial_status})...")
@@ -264,35 +282,43 @@ class SFOTProcessor:
                     self.logger.info(f"No existing detections found for chunk {self.chunk_id}")
 
                 # Update chunk status to processing with quality info
-                self.supabase.update_chunk(
+                if not self.supabase.update_chunk(
                     self.chunk_id,
                     'processing',
                     quality=self.formatted_quality
-                )
+                ):
+                    raise RuntimeError('Could not persist processing chunk status')
 
-                # Start worker threads
-                threads = [
-                    threading.Thread(target=self.streamlink_worker, name="streamlink"),
-                    threading.Thread(target=self.ffmpeg_worker, name="ffmpeg"),
-                    threading.Thread(target=self.opencv_worker, name="opencv"),
-                    threading.Thread(target=self.result_worker, name="results"),
+                self.threads = [
+                    threading.Thread(target=self._run_worker, args=(self.ffmpeg_worker, self.frames_done), name='ffmpeg'),
+                    threading.Thread(target=self._run_worker, args=(self.opencv_worker, self.results_done), name='opencv'),
+                    threading.Thread(target=self._run_worker, args=(self.result_worker,), name='results'),
                 ]
-
-                for thread in threads:
+                for thread in self.threads:
                     thread.start()
-
-                # Wait for completion or shutdown
-                for thread in threads:
-                    thread.join(timeout=self.config['processing']['timeout'])
-
-                # Final status update - check if we completed successfully
-                # If shutdown was set but we processed frames successfully, it's completion
-                if self.frames_processed > 0 and self.shutdown.is_set():
-                    status = 'completed'
-                elif not self.shutdown.is_set():
-                    status = 'completed'
-                else:
-                    status = 'interrupted'
+                deadline = time.monotonic() + self.config['processing']['timeout']
+                while any(thread.is_alive() for thread in self.threads):
+                    if not self.worker_errors.empty():
+                        raise self.worker_errors.get()
+                    if self.shutdown.is_set():
+                        raise RuntimeError('Chunk processing cancelled')
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError('Chunk processing deadline exceeded')
+                    for thread in self.threads:
+                        thread.join(timeout=0.05)
+                if not self.worker_errors.empty():
+                    raise self.worker_errors.get()
+                if self.shutdown.is_set() or not self.frames_processed:
+                    raise RuntimeError('Chunk produced no complete result')
+                if not self.supabase.update_chunk(
+                    self.chunk_id,
+                    'completed',
+                    frames_processed=self.frames_processed,
+                    detections_count=self.matchups_found,
+                    quality=self.formatted_quality
+                ):
+                    raise RuntimeError('Could not persist completed chunk status')
+                status = 'completed'
 
                 # Record telemetry metrics
                 duration_ms = (time.time() - processing_start_time) * 1000
@@ -330,26 +356,6 @@ class SFOTProcessor:
                     root_span.set_attribute("duration.ms", duration_ms)
                     root_span.set_attribute("status", status)
 
-                # Update chunk with final status
-                if status == 'completed':
-                    self.supabase.update_chunk(
-                        self.chunk_id,
-                        'completed',
-                        frames_processed=self.frames_processed,
-                        detections_count=self.matchups_found,
-                        quality=self.formatted_quality
-                    )
-                else:
-                    # Set back to pending if interrupted
-                    self.supabase.update_chunk(
-                        self.chunk_id,
-                        'pending',
-                        error=f"Processing interrupted after {self.frames_processed} frames",
-                        frames_processed=self.frames_processed,
-                        detections_count=self.matchups_found,
-                        quality=self.formatted_quality
-                    )
-
                 # Export detection summary for GitHub Actions workflow
                 self.export_detection_summary()
 
@@ -360,10 +366,14 @@ class SFOTProcessor:
                     'vod_id': self.vod_id,
                     'start_time': self.start_time,
                     'end_time': self.end_time,
-                    'quality': self.quality
+                    'quality': self.quality,
+                    'stream_quality': self.stream_quality,
+                    'video_fps': self.video_fps,
                 }
 
             except Exception as e:
+                # Stop uploads before publishing a failed chunk state.
+                self._stop_workers()
                 self.logger.error(f"Processing failed: {e}", exc_info=True)
                 # Record failure metric
                 record_counter("chunks_failed", 1, {
@@ -385,355 +395,147 @@ class SFOTProcessor:
             finally:
                 self.cleanup()
     
-    def streamlink_worker(self):
-        """Worker to run streamlink and pipe HLS stream to FFmpeg"""
-        metric_attrs = {"streamer": self.streamer or "unknown", "quality": self.formatted_quality}
-
-        # Span for tracing - runs in parallel with ffmpeg/opencv workers
-        with create_span("streamlink_stream", attributes=self.span_attributes) as span:
-            try:
-                # Skip streamlink in test mode - FFmpeg will read directly from file
-                if self.test_mode:
-                    self.logger.info("Test mode enabled, skipping streamlink")
-                    return
-
-                # Calculate duration
-                duration = self.end_time - self.start_time
-
-                # Build streamlink command with quality preference
-                quality_stream = self.quality if self.quality in ['360p', '360p60', '480p', '480p60', '720p', '720p60', '1080p', '1080p60', 'worst', 'best'] else '480p'
-                cmd = [
-                    'streamlink',
-                    '--stream-segment-threads', '1',  # Consistent delivery
-                    '--hls-segment-stream-data',      # Immediate segment write
-                    '--hls-start-offset', f"{self.start_time // 3600}:{(self.start_time % 3600) // 60:02d}:{self.start_time % 60:02d}",
-                    '--stream-segmented-duration', str(duration),  # Use segmented duration
-                    f'https://twitch.tv/videos/{self.vod_id}',
-                    quality_stream + ',360p60,480p60,720p60,1080p60',
-                    '-O'  # Output to stdout
-                ]
-
-                self.logger.info(f"Starting streamlink: {' '.join(cmd)}")
-
-                # Start streamlink process
-                self.streamlink_proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    bufsize=65536
-                )
-
-                # Monitor streamlink process (runs in parallel with ffmpeg consuming stdout)
-                self.logger.info("Streamlink process started, piping to FFmpeg...")
-                while not self.shutdown.is_set():
-                    if self.streamlink_proc.poll() is not None:
-                        # Process ended
-                        stderr = self.streamlink_proc.stderr.read().decode('utf-8', errors='ignore')
-                        if self.streamlink_proc.returncode != 0:
-                            self.logger.error(f"Streamlink failed with code {self.streamlink_proc.returncode}: {stderr}")
-                            self.shutdown.set()  # Signal shutdown on streamlink failure
-                            record_counter("errors", 1, {**metric_attrs, "component": "streamlink", "error_type": "exit_code"})
-                        else:
-                            self.logger.info(f"Streamlink completed successfully.")
-                        break
-                    time.sleep(1)
-
-            except Exception as e:
-                self.logger.error(f"Streamlink worker failed: {e}")
-                record_counter("errors", 1, {**metric_attrs, "component": "streamlink", "error_type": type(e).__name__})
-                self.shutdown.set()
-    
-    def ffmpeg_worker(self):
-        """Worker to decode frames from streamlink stream (runs in parallel with opencv_worker)"""
-        metric_attrs = {"streamer": self.streamer or "unknown", "quality": self.formatted_quality}
-
-        with create_span("ffmpeg_decode", attributes=self.span_attributes) as span:
-            try:
-                # In test mode, read directly from file
-                if self.test_mode:
-                    # Determine input file path
-                    quality_config = QUALITY_CONFIGS.get(self.quality, QUALITY_CONFIGS['480p'])
-                    test_data_dir = self.config.get('test_mode', {}).get('data_directory', 'test_data')
-                    video_filename = quality_config['file_suffix']
-
-                    # Log which quality file we're using
-                    self.logger.info(f"Test mode enabled - using video file: {video_filename} for quality: {self.quality}")
-
-                    # Check if running in Docker container (test_data mounted at /app/test_data)
-                    docker_test_path = f'/app/{test_data_dir}'
-                    if os.path.exists(docker_test_path):
-                        # Running in Docker container
-                        input_file = os.path.join(docker_test_path, self.vod_id, video_filename)
-                        self.logger.info(f"Running in Docker container - test data path: {docker_test_path}")
-                    else:
-                        # Running locally
-                        input_file = os.path.join(os.path.dirname(__file__), '..', '..', test_data_dir,
-                                                 self.vod_id, video_filename)
-                        self.logger.info(f"Running locally - test data path: {test_data_dir}")
-
-                    if not os.path.exists(input_file):
-                        self.logger.error(f"Test file not found: {input_file}")
-                        self.logger.error(f"Expected video file '{video_filename}' in directory: {os.path.dirname(input_file)}")
-                        self.shutdown.set()
-                        return
-
-                    self.logger.info(f"Test video file located: {input_file}")
-                    self.logger.info(f"Video resolution for processing: {quality_config['resolution'][0]}x{quality_config['resolution'][1]}")
-
-                    # Get frame dimensions from quality config for crop calculation
-                    frame_width, frame_height = quality_config['resolution']
-                else:
-                    # Wait for streamlink to start
-                    time.sleep(2)
-                    if not self.streamlink_proc or self.streamlink_proc.poll() is not None:
-                        self.logger.error("Streamlink not running when FFmpeg tried to start")
-                        return
-
-                    self.logger.info("Streamlink confirmed running, starting FFmpeg...")
-                    # Determine resolution based on quality for streamlink mode
-                    quality_resolutions = {
-                        '360p': (640, 360),
-                        '480p': (854, 480),
-                        '720p': (1280, 720),
-                        '1080p': (1920, 1080)
-                    }
-                    frame_width, frame_height = quality_resolutions.get(self.quality, (854, 480))
-
-                # Build video filter chain
-                vf_filters = [f'fps={self.config["processing"]["frame_rate"]}']
-
-                # Use crop region from SFOT profile
-                crop_pixels = self.percent_to_pixels(
-                    self.profile['crop_region'],
-                    frame_width,
-                    frame_height
-                )
-                w, h, x, y = crop_pixels
-                vf_filters.append(f'crop={w}:{h}:{x}:{y}')
-                self.logger.info(f"Applied profile crop: [x={x}, y={y}, w={w}, h={h}] for {frame_width}x{frame_height} video")
-                self.logger.info(f"Cropped frame dimensions will be: {w}x{h} pixels")
-
-                vf_chain = ','.join(vf_filters)
-
-                # Build FFmpeg command
-                if self.test_mode:
-                    # Read from file with seeking support
-                    ffmpeg_cmd = [
-                        'ffmpeg',
-                        '-ss', str(self.start_time),  # Seek to start time
-                        '-i', input_file,  # Input from file
-                        '-t', str(self.end_time - self.start_time),  # Duration
-                        '-vf', vf_chain,
-                        '-f', 'image2pipe',
-                        '-vcodec', 'mjpeg',
-                        '-loglevel', self.config['ffmpeg']['loglevel'],
-                        'pipe:1'  # Output to stdout
-                    ]
-                else:
-                    # Read from pipe (streamlink)
-                    ffmpeg_cmd = [
-                        'ffmpeg',
-                        '-i', 'pipe:0',  # Input from stdin
-                        '-vf', vf_chain,
-                        '-f', 'image2pipe',
-                        '-vcodec', 'mjpeg',
-                        '-loglevel', self.config['ffmpeg']['loglevel'],
-                        'pipe:1'  # Output to stdout
-                    ]
-
-                if self.config['ffmpeg']['keyframes_only'] and not self.test_mode:
-                    # Insert input options before -i (only for pipe input)
-                    ffmpeg_cmd.insert(1, '-skip_frame')
-                    ffmpeg_cmd.insert(2, 'nokey')
-
-                self.logger.info("Starting FFmpeg pipeline")
-
-                # Start FFmpeg process
-                if self.test_mode:
-                    # No stdin needed when reading from file
-                    self.ffmpeg_proc = subprocess.Popen(
-                        ffmpeg_cmd,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        bufsize=65536
-                    )
-                else:
-                    # Connect to streamlink's stdout
-                    self.ffmpeg_proc = subprocess.Popen(
-                        ffmpeg_cmd,
-                        stdin=self.streamlink_proc.stdout,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        bufsize=65536
-                    )
-
-                # Check if FFmpeg started successfully
-                time.sleep(0.5)  # Give FFmpeg a moment to start
-                if self.ffmpeg_proc.poll() is not None:
-                    stderr = self.ffmpeg_proc.stderr.read().decode('utf-8', errors='ignore')
-                    self.logger.error(f"FFmpeg failed to start. Exit code: {self.ffmpeg_proc.returncode}, stderr: {stderr}")
-                    record_counter("errors", 1, {**metric_attrs, "component": "ffmpeg", "error_type": "start_failed"})
-                    return
-                else:
-                    self.logger.info("FFmpeg process started successfully")
-
-                # Read frames from FFmpeg
-                frame_buffer = b''
-                frames_extracted = 0
-                bytes_read = 0
-                self.logger.info("Starting to read frames from FFmpeg...")
-
-                while not self.shutdown.is_set():
-                    chunk = self.ffmpeg_proc.stdout.read(4096)
-                    if not chunk:
-                        # Check FFmpeg stderr for any error messages
-                        stderr_data = b''
-                        try:
-                            stderr_data = self.ffmpeg_proc.stderr.read()
-                            stderr_text = stderr_data.decode('utf-8', errors='ignore') if stderr_data else "No stderr output"
-                        except:
-                            stderr_text = "Could not read stderr"
-
-                        self.logger.info(f"FFmpeg stream ended. Total bytes read: {bytes_read}, frames extracted: {frames_extracted}")
-                        break
-
-                    bytes_read += len(chunk)
-                    frame_buffer += chunk
-
-                    # Look for JPEG markers
-                    while True:
-                        start = frame_buffer.find(b'\xff\xd8')  # JPEG start
-                        if start == -1:
-                            break
-
-                        end = frame_buffer.find(b'\xff\xd9', start)  # JPEG end
-                        if end == -1:
-                            break
-
-                        # Extract complete frame
-                        frame_data = frame_buffer[start:end+2]
-                        frame_buffer = frame_buffer[end+2:]
-                        frames_extracted += 1
-                        # Add to queue if not full
-                        try:
-                            self.frame_queue.put(frame_data, timeout=0.1)
-                            record_gauge("queue_depth", 1, metric_attrs)
-                        except queue.Full:
-                            self.logger.warning("Frame queue full, dropping frame")
-                            record_counter("frames_skipped", 1, {**metric_attrs, "reason": "queue_full"})
-                            record_counter("queue_overflow", 1, metric_attrs)
-
-                self.logger.info(f"FFmpeg worker finished. Final stats: {bytes_read} bytes read, {frames_extracted} frames extracted")
-
-                # Signal shutdown when FFmpeg finishes normally (not due to error)
-                if not self.shutdown.is_set():
-                    self.logger.info("FFmpeg completed successfully, signaling shutdown")
-                    self.shutdown.set()
-
-                # Set span attributes for frames extracted
-                if span:
-                    span.set_attribute("frames.extracted", frames_extracted)
-                    span.set_attribute("bytes.read", bytes_read)
-
-            except Exception as e:
-                self.logger.error(f"FFmpeg worker failed: {e}")
-                record_counter("errors", 1, {**metric_attrs, "component": "ffmpeg", "error_type": type(e).__name__})
-                self.shutdown.set()
-    
-    def opencv_worker(self):
-        """Worker to process frames with OpenCV (runs in parallel, consumes from frame queue)"""
-        self.logger.info("OpenCV worker starting...")
-        metric_attrs = {
-            "streamer": self.streamer or "unknown",
-            "quality": self.formatted_quality,
-        }
+    def _run_worker(self, worker: Callable[[], None], done: Optional[threading.Event] = None) -> None:
+        """Propagate worker errors and distinguish end-of-input from cancellation."""
         try:
-            while not self.shutdown.is_set():
-                try:
-                    # Get frame from queue
-                    frame_data = self.frame_queue.get(timeout=1)
-                    record_gauge("queue_depth", -1, metric_attrs)
-
-                    # Calculate timestamp based on frame rate
-                    sampling_rate = self.config["processing"]["frame_rate"]
-                    seconds_per_sampled_frame = 1 / sampling_rate if sampling_rate > 0 else 0
-                    timestamp = self.start_time + int(self.frames_processed * seconds_per_sampled_frame)
-                    result = self.frame_processor.process_frame(
-                        frame_data,
-                        timestamp,
-                        self.vod_id,
-                        self.chunk_id
-                    )
-
-                    self.frames_processed += 1
-                    record_counter("frames_processed", 1, metric_attrs)
-
-                    # If matchup detected, add to result queue
-                    if result and result.get('is_matchup'):
-                        self.result_queue.put(result)
-                        self.matchups_found += 1
-                        # Structured JSON event for Loki queryability
-                        # Log as JSON so Loki can parse with | json
-                        self.logger.info(json.dumps({
-                            'event': 'matchup_detected',
-                            'timestamp_seconds': timestamp,
-                            'username': result.get('username'),
-                            'ocr_confidence': result.get('confidence'),
-                            'emblem_rank': result.get('detected_rank'),
-                            'truncated': result.get('truncated', False),
-                        }))
-
-                        # Record matchup detection
-                        record_counter("matchups_detected", 1, metric_attrs)
-
-                        # Record OCR confidence histogram
-                        if result.get('confidence'):
-                            record_histogram("ocr_confidence", result['confidence'], metric_attrs)
-
-                except queue.Empty:
-                    continue
-                except Exception as e:
-                    self.logger.error(f"Frame processing error: {e}")
-
-        except Exception as e:
-            self.logger.error(f"OpenCV worker failed: {e}")
+            worker()
+        except Exception as error:
+            self.worker_errors.put(error)
             self.shutdown.set()
-    
-    def result_worker(self):
-        """Worker to handle results and update Supabase in batches"""
-        try:
-            while not self.shutdown.is_set():
-                try:
-                    # Get result from queue
-                    result = self.result_queue.get(timeout=1)
-                    self.result_batch.append(result)
-
-                    # Track all detections for summary export
-                    self.all_detections.append({
-                        'timestamp': result['timestamp'],
-                        'username': result['username'],
-                        'confidence': result.get('confidence', 0),
-                        'rank': result.get('detected_rank'),
-                        'frame_base64': result.get('frame_base64')  # For workflow summary images
-                    })
-
-                    # Send batch when it reaches configured size
-                    if len(self.result_batch) >= self.config['supabase']['batch_size']:
-                        self.supabase.upload_batch(self.result_batch)
-                        self.result_batch = []
-
-                except queue.Empty:
-                    # Continue waiting for more results
-                    continue
-
-        except Exception as e:
-            self.logger.error(f"Result worker failed: {e}")
+            self.logger.exception('%s failed', threading.current_thread().name)
         finally:
-            # Send remaining batch at shutdown
-            if self.result_batch:
-                self.logger.info(f"Flushing final batch of {len(self.result_batch)} detections")
-                self.supabase.upload_batch(self.result_batch)
-                self.result_batch = []
+            if done is not None:
+                done.set()
+
+    def _put(self, destination: queue.Queue, value: Any) -> None:
+        """Wait for downstream capacity without dropping frames or timestamps."""
+        while not self.shutdown.is_set():
+            try:
+                destination.put(value, timeout=0.1)
+                return
+            except queue.Full:
+                continue
+        raise RuntimeError('Processing cancelled during queue write')
+
+    def _resolve_stream(self) -> str:
+        """Resolve a fresh exact rendition; FFmpeg owns precise VOD seeking."""
+        response = subprocess.run(
+            ['streamlink', '--no-config', '--json', f'https://www.twitch.tv/videos/{self.vod_id}'],
+            capture_output=True, text=True, timeout=90, check=False,
+        )
+        if response.returncode:
+            raise RuntimeError('Streamlink could not discover video renditions')
+        streams = json.loads(response.stdout).get('streams', {})
+        if not self.stream_quality:
+            selected = select_rendition(streams, getattr(self, 'requested_quality', self.quality), self.old_templates)
+            self.stream_quality = selected['stream_quality']
+        if self.stream_quality not in streams:
+            raise ValueError('The selected video rendition is no longer available')
+        _, self.video_fps = parse_rendition(self.stream_quality)
+        stream = streams[self.stream_quality]
+        url = stream.get('url', '')
+        parsed = urlparse(url)
+        if stream.get('type') not in ('hls', 'http') or parsed.scheme not in ('https', 'http') or not parsed.hostname:
+            raise ValueError('Selected rendition must be HTTP video media')
+        headers = []
+        for key, value in (stream.get('headers') or {}).items():
+            if key.lower() in ('user-agent', 'referer', 'origin'):
+                if not isinstance(value, str) or '\n' in value or '\r' in value:
+                    raise ValueError('Invalid playback header')
+                headers.append(f'{key}: {value}\r\n')
+        self._media_input_args = ['-headers', ''.join(headers)] if headers else []
+        self.formatted_quality = self.stream_quality
+        self.logger.info('Selected source %s; processing geometry %s', self.stream_quality, self.quality)
+        return url
+
+    def ffmpeg_worker(self) -> None:
+        """Normalize geometry, seek accurately, and enqueue every sampled frame."""
+        cmd = ['ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'info']
+        if self.test_mode:
+            directory = self.config.get('test_mode', {}).get('data_directory', 'test_data')
+            input_file = os.getenv('TEST_VIDEO') or os.path.join('/app', directory, self.vod_id, f'{self.quality}.mp4')
+            if not os.path.isfile(input_file):
+                raise FileNotFoundError('Test video is missing')
+            cmd += ['-ss', str(self.start_time), '-i', input_file]
+        else:
+            url = getattr(self, '_media_url', None) or self._resolve_stream()
+            cmd += getattr(self, '_media_input_args', [])
+            cmd += ['-rw_timeout', '30000000', '-ss', str(self.start_time), '-i', url]
+        width, height = QUALITY_RESOLUTIONS[self.quality]
+        w, h, x, y = self.percent_to_pixels(self.profile['crop_region'], width, height)
+        filters = (
+            f'scale={width}:{height},fps={self.config["processing"]["frame_rate"]},'
+            f'crop={w}:{h}:{x}:{y}:exact=1,showinfo'
+        )
+        cmd += [
+            '-t', str(self.end_time - self.start_time), '-an', '-vf', filters,
+            '-fps_mode', 'passthrough', '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1',
+        ]
+        self.ffmpeg_proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        for pixels, pts in timestamped_frames(self.ffmpeg_proc.stdout, self.ffmpeg_proc.stderr, self.logger):
+            timestamp = self.start_time + int(pts)
+            if self.start_time <= timestamp < self.end_time:
+                self._put(self.frame_queue, (pixels, timestamp))
+        try:
+            return_code = self.ffmpeg_proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError('FFmpeg did not finish after decoding') from None
+        if return_code:
+            raise RuntimeError('FFmpeg failed to decode the complete chunk')
+
+    def opencv_worker(self) -> None:
+        """Consume all decoded frames before signalling that results are complete."""
+        metric_attrs = {'streamer': self.streamer or 'unknown', 'quality': self.formatted_quality}
+        while not self.shutdown.is_set():
+            try:
+                frame_data, timestamp = self.frame_queue.get(timeout=0.1)
+            except queue.Empty:
+                if self.frames_done.is_set() and self.frame_queue.empty():
+                    return
+                continue
+            result = self.frame_processor.process_frame(frame_data, timestamp, self.vod_id, self.chunk_id)
+            self.frames_processed += 1
+            record_counter('frames_processed', 1, metric_attrs)
+            if result and result.get('is_matchup'):
+                self._put(self.result_queue, result)
+                self.matchups_found += 1
+                self.logger.info(json.dumps({
+                    'event': 'matchup_detected', 'timestamp_seconds': timestamp,
+                    'username': result.get('username'), 'ocr_confidence': result.get('confidence'),
+                    'emblem_rank': result.get('detected_rank'), 'truncated': result.get('truncated', False),
+                }))
+                record_counter('matchups_detected', 1, metric_attrs)
+                if result.get('confidence'):
+                    record_histogram('ocr_confidence', result['confidence'], metric_attrs)
+
+    def result_worker(self) -> None:
+        """Persist every result, including the final partial batch, before success."""
+        while not self.shutdown.is_set():
+            try:
+                result = self.result_queue.get(timeout=0.1)
+            except queue.Empty:
+                if self.results_done.is_set() and self.result_queue.empty():
+                    break
+                continue
+            self.result_batch.append(result)
+            if len(self.result_batch) >= self.config['supabase']['batch_size']:
+                self._flush_results()
+        if not self.shutdown.is_set():
+            self._flush_results()
+
+    def _flush_results(self) -> None:
+        """Only count persisted detections in the exported summary."""
+        if not self.result_batch:
+            return
+        if not self.supabase.upload_batch(self.result_batch):
+            raise RuntimeError('Detection batch could not be persisted')
+        for result in self.result_batch:
+            self.all_detections.append({
+                'timestamp': result['timestamp'], 'username': result['username'],
+                'confidence': result.get('confidence', 0), 'rank': result.get('detected_rank'),
+                'frame_base64': result.get('frame_base64'),
+            })
+        self.result_batch = []
 
     def export_detection_summary(self, output_dir: str = "/app/output"):
         """Export detection summary for GitHub Actions workflow summary
@@ -753,6 +555,9 @@ class SFOTProcessor:
                 'start_time': self.start_time,
                 'end_time': self.end_time,
                 'quality': self.formatted_quality,
+                'processing_quality': self.quality,
+                'stream_quality': self.stream_quality,
+                'video_fps': self.video_fps,
                 'frames_processed': self.frames_processed,
                 'matchups_found': self.matchups_found,
                 'detections': []
@@ -792,9 +597,8 @@ class SFOTProcessor:
         except Exception as e:
             self.logger.error(f"Failed to export detection summary: {e}", exc_info=True)
 
-    def cleanup(self):
-        """Clean up resources on shutdown"""
-        self.logger.info("Starting cleanup")
+    def _stop_workers(self) -> None:
+        """Cancel workers and stop subprocesses before publishing failure."""
 
         # Set shutdown flag
         self.shutdown.set()
@@ -809,6 +613,11 @@ class SFOTProcessor:
                 except subprocess.TimeoutExpired:
                     self.logger.warning(f"Force killing {proc_name}")
                     proc.kill()
+                    proc.wait(timeout=5)
+
+        for thread in self.threads:
+            if thread is not threading.current_thread():
+                thread.join(timeout=10)
 
         # Clear queues
         while not self.frame_queue.empty():
@@ -817,7 +626,9 @@ class SFOTProcessor:
             except queue.Empty:
                 break
 
-        # Flush and shutdown telemetry before exit
+    def cleanup(self) -> None:
+        """Stop workers, then flush telemetry after final chunk status is known."""
+        self._stop_workers()
         self.logger.info("Flushing telemetry...")
         shutdown_telemetry()
 
@@ -830,9 +641,9 @@ def main():
     config = {
         'chunk_id': os.getenv('CHUNK_ID', sys.argv[1] if len(sys.argv) > 1 else None),
         'test_mode': os.getenv('TEST_MODE', 'false').lower() == 'true',
-        'quality': os.getenv('QUALITY', '480p'),  # Can be single or comma-separated list
+        'quality': os.getenv('QUALITY', '480p'),  # Processing/template geometry
+        'stream_quality': os.getenv('STREAM_QUALITY'),  # Exact native rendition
         'old_templates': os.getenv('OLD_TEMPLATES', 'false').lower() == 'true',
-        'video_fps': int(os.getenv('VIDEO_FPS', '30')),  # Actual video FPS (30 or 60)
     }
 
     if not config['chunk_id']:

@@ -1,0 +1,43 @@
+name: Test Renditions
+
+on:
+  # Always produce the required check for pull requests, including unrelated ones.
+  pull_request:
+  push:
+    paths:
+      - "sfot/**"
+      - "scripts/**"
+      - "tests/**"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Ensure media tools are available
+        run: |
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+          fi
+          ffmpeg -version
+          ffprobe -version
+
+      - name: Test selection, preflight, and media integration
+        # Tests use the standard library and generated media; production OCR,
+        # Supabase credentials, and the heavyweight runtime are not required.
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
