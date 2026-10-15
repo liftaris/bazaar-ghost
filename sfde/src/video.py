@@ -9,6 +9,7 @@ from typing import BinaryIO, Iterator, Tuple
 
 
 PTS_PATTERN = re.compile(r'\bpts_time:([-+\d.eE]+)\s')
+MEDIA_URL_PATTERN = re.compile(r'https?://[^\s]+', re.IGNORECASE)
 
 
 def read_jpegs(stream: BinaryIO) -> Iterator[bytes]:
@@ -52,7 +53,7 @@ def timestamped_frames(stdout: BinaryIO, stderr: BinaryIO, logger: logging.Logge
                         raise ValueError('Non-finite FFmpeg timestamp')
                     timestamps.put(timestamp)
                 elif line and 'showinfo' not in line:
-                    logger.debug('FFmpeg: %s', line)
+                    logger.debug('FFmpeg: %s', MEDIA_URL_PATTERN.sub('[redacted URL]', line))
         except Exception as error:
             timestamps.put(error)
         finally:

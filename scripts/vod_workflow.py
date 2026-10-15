@@ -13,23 +13,11 @@ from uuid import UUID
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'sfde' / 'src'))
 from media_source import resolve_media, validate_source_id
-
-
-SUPPORTED = ('360p', '480p', '720p', '1080p')
+from renditions import processing_quality, select_rendition
 
 
 def select_quality(streams: Dict[str, Any], preferred: str, old_templates: bool) -> str:
-    base = preferred.removesuffix('60')
-    if base not in SUPPORTED:
-        raise ValueError(f'Unsupported quality: {preferred}')
-    candidates = ['480p', '480p60'] if old_templates else [
-        preferred, f'{base}60', base, '480p', '480p60', '720p', '720p60',
-        '1080p', '1080p60', '360p', '360p60',
-    ]
-    for candidate in candidates:
-        if candidate in streams:
-            return candidate
-    raise ValueError('No supported rendition is available for these templates')
+    return select_rendition(streams, preferred, old_templates)['stream_quality']
 
 
 def api(path: str, params: Dict[str, str] = None, body: Any = None, method: str = 'GET',
@@ -95,23 +83,24 @@ def prepare() -> None:
     old = os.getenv('OLD_TEMPLATES') == 'true' or vod['old_templates']
     output('old_templates', str(old).lower())
     preferred = os.getenv('REQUESTED_QUALITY', '480p')
+    geometry = processing_quality(preferred)
     if vod['source'] in ('youtube', 'bilibili'):
         # The decoded geometry is independent of each platform's native rendition names.
-        selected = '480p' if old else preferred.removesuffix('60')
-        if selected not in SUPPORTED:
-            raise ValueError('Unsupported processing quality')
+        selected = {'quality': '480p' if old else geometry, 'stream_quality': '', 'video_fps': None}
         if os.getenv('LOCAL') != 'true':
-            resolve_media(vod['source'], os.environ['VOD_ID'], selected)
+            media = resolve_media(vod['source'], os.environ['VOD_ID'], selected['quality'])
+            selected['video_fps'] = media['fps']
     elif os.getenv('LOCAL') == 'true':
-        selected = select_quality({preferred: {}}, preferred, old)
+        selected = select_rendition({preferred: {}}, preferred, old)
     else:
         result = subprocess.run(['streamlink', '--no-config', '--json', f'https://www.twitch.tv/videos/{os.environ["VOD_ID"]}'], capture_output=True, text=True, timeout=60)
         if result.returncode:
             raise RuntimeError('Streamlink could not fetch renditions; availability was not changed')
         streams = json.loads(result.stdout).get('streams', {})
-        selected = select_quality(streams, preferred, old)
-    output('quality', selected.removesuffix('60'))
-    output('video_fps', '60' if selected.endswith('60') else '30')
+        selected = select_rendition(streams, preferred, old)
+    output('quality', selected['quality'])
+    output('stream_quality', selected['stream_quality'])
+    output('video_fps', '' if selected['video_fps'] is None else str(selected['video_fps']))
     output('sfde_profile', profile)
 
 

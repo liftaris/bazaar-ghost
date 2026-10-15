@@ -2,6 +2,7 @@
 
 import io
 import logging
+import queue
 import threading
 import time
 from types import SimpleNamespace
@@ -38,6 +39,14 @@ def test_frame_timestamp_pairing():
 def test_missing_pts_does_not_invent_a_timestamp():
     with pytest.raises(RuntimeError, match='without its timestamp'):
         list(timestamped_frames(io.BytesIO(b'\xff\xd8a\xff\xd9'), io.BytesIO(), logging.getLogger()))
+
+
+def test_ffmpeg_diagnostics_redact_signed_urls():
+    logger = Mock()
+    diagnostics = io.BytesIO(b"[hls] Opening 'https://cdn.example/video?token=secret' for reading\n")
+    assert list(timestamped_frames(io.BytesIO(), diagnostics, logger)) == []
+    assert 'secret' not in str(logger.debug.call_args_list)
+    assert '[redacted URL]' in str(logger.debug.call_args_list)
 
 
 @pytest.fixture
@@ -78,6 +87,44 @@ def test_eof_drains_frames_results_and_final_batch(processor):
     assert not any(thread.is_alive() for thread in processor.threads)
 
 
+def test_frame_arriving_between_empty_timeout_and_eof_check_is_consumed(processor, monkeypatch):
+    original_get = processor.frame_queue.get
+    first = True
+
+    def get_frame(*args, **kwargs):
+        nonlocal first
+        if first:
+            first = False
+            processor.frame_queue.put((b'frame', 7))
+            processor.frames_done.set()
+            raise queue.Empty
+        return original_get(*args, **kwargs)
+
+    monkeypatch.setattr(processor.frame_queue, 'get', get_frame)
+    processor.opencv_worker()
+    assert processor.frames_processed == 1
+    assert processor.result_queue.get_nowait()['timestamp'] == 7
+
+
+def test_result_arriving_between_empty_timeout_and_eof_check_is_persisted(processor, monkeypatch):
+    original_get = processor.result_queue.get
+    first = True
+
+    def get_result(*args, **kwargs):
+        nonlocal first
+        if first:
+            first = False
+            processor.result_queue.put({'username': 'Opponent', 'timestamp': 7})
+            processor.results_done.set()
+            raise queue.Empty
+        return original_get(*args, **kwargs)
+
+    monkeypatch.setattr(processor.result_queue, 'get', get_result)
+    processor.result_worker()
+    assert [row['timestamp'] for row in processor.all_detections] == [7]
+    processor.supabase.upload_batch.assert_called_once()
+
+
 def test_decoder_error_after_frames_fails_chunk(processor):
     def decode():
         processor._put(processor.frame_queue, (b'frame', 0))
@@ -100,6 +147,41 @@ def test_empty_decode_fails_chunk(processor):
     processor.ffmpeg_worker = lambda: None
     with pytest.raises(RuntimeError, match='no frames'):
         processor.process_vod_chunk()
+
+
+@pytest.mark.parametrize('native,fps', [('480p24', 24), ('720p48', 48),
+                                      ('1080p50', 50), ('720p29.97', 29.97)])
+def test_native_source_metadata_does_not_change_geometry_or_sampling(processor, native, fps, monkeypatch):
+    import sfde
+    processor.stream_quality = native
+    processor.requested_quality = '480p'
+    monkeypatch.setattr(sfde, 'resolve_media', Mock(return_value={
+        'stream_quality': native, 'height': int(native.split('p')[0]), 'fps': fps,
+        'url': 'https://cdn.example/video.m3u8', 'headers': {}, 'resolver': 'streamlink',
+    }))
+    assert processor._resolve_stream() == 'https://cdn.example/video.m3u8'
+    assert processor.quality == '480p'
+    assert processor.config['processing']['frame_rate'] == 0.5
+    assert processor.video_fps == fps
+    assert processor.formatted_quality == native
+    sfde.resolve_media.assert_called_once_with('twitch', '123', '480p', stream_quality=native)
+
+
+@pytest.mark.parametrize('config,geometry,fps', [
+    ({'quality': '720p48'}, '720p', 48),
+    ({'quality': '1080p50'}, '1080p', 50),
+    ({'quality': '720p29.97'}, '720p', 29.97),
+    ({'quality': '480p', 'stream_quality': '720p48'}, '480p', 48),
+    ({'quality': '480p', 'video_fps': '29.97'}, '480p', 29.97),
+    ({'quality': '480p', 'video_fps': ''}, '480p', None),
+    ({'quality': '720p48', 'old_templates': True}, '480p', 48),
+])
+def test_source_fps_is_optional_metadata_during_initialization(processor, config, geometry, fps):
+    value = SFDEProcessor({'chunk_id': 'test', 'test_mode': True, **config})
+    assert value.quality == geometry
+    assert value.frame_processor is not None
+    assert value.video_fps == fps
+    assert value.config['processing']['frame_rate'] == 0.5
 
 
 def test_unclaimed_chunk_does_not_delete_or_rewrite_other_worker(processor):

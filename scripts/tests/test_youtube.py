@@ -90,7 +90,7 @@ class YouTubeTests(unittest.TestCase):
                    for name in ('480p', '480p60')}
         with patch('media_source.subprocess.run', return_value=SimpleNamespace(returncode=0, stdout=json.dumps({'streams': streams}))):
             self.assertEqual(resolve_media('twitch', '123', '480p60')['fps'], 60)
-            self.assertEqual(resolve_media('twitch', '123', '480p')['fps'], 30)
+            self.assertIsNone(resolve_media('twitch', '123', '480p')['fps'])
 
     def test_processed_duration_change_requires_explicit_revision_handling(self):
         with patch('video_catalog.api', side_effect=[[{'id': 12, 'duration_seconds': 123,

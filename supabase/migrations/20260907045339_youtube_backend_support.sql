@@ -27,7 +27,7 @@ ALTER TABLE public.vods
   ADD COLUMN recorded_at timestamptz,
   ADD COLUMN template_version text NOT NULL DEFAULT 'auto' CHECK (template_version IN ('auto', 'old', 'current')),
   ADD COLUMN content_kind text NOT NULL DEFAULT 'archive' CHECK (content_kind IN ('archive', 'upload')),
-  ADD COLUMN notifications_enabled boolean NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS notifications_enabled boolean NOT NULL DEFAULT true,
   ADD CONSTRAINT vods_platform_account_source_fkey FOREIGN KEY (platform_account_id, source)
     REFERENCES public.platform_accounts(id, source);
 CREATE INDEX vods_platform_account_idx ON public.vods(platform_account_id);

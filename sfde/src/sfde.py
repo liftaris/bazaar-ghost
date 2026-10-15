@@ -26,6 +26,7 @@ os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 # Import worker modules
 from video import timestamped_frames
 from media_source import ffmpeg_input_args, resolve_media, validate_source_id
+from renditions import QUALITY_RESOLUTIONS, parse_rendition, processing_quality
 from frame_processor import FrameProcessor
 from supabase_client import SupabaseClient
 from json_logger import JSONFormatter
@@ -39,13 +40,6 @@ from telemetry import (
     shutdown_telemetry,
 )
 
-QUALITY_RESOLUTIONS = {
-    '360p': (640, 360),
-    '480p': (854, 480),
-    '720p': (1280, 720),
-    '1080p': (1920, 1080),
-}
-
 
 class SFDEProcessor:
     """Main SFDE processor orchestrator"""
@@ -55,16 +49,20 @@ class SFDEProcessor:
         self.chunk_id = config["chunk_id"]
         self.test_mode = config.get("test_mode", False)
         requested_quality = config.get('quality', '480p')
-        self.quality = requested_quality.removesuffix('60')
-        if self.quality not in QUALITY_RESOLUTIONS:
-            raise ValueError(f'Unsupported QUALITY: {requested_quality}')
+        self.requested_quality = requested_quality
+        self.quality = processing_quality(requested_quality)
         self.old_templates = config.get('old_templates', False)
-        if self.old_templates and self.quality != '480p':
-            raise ValueError('Old templates require 480p quality')
-        self.video_fps = 60 if requested_quality.endswith('60') else config.get('video_fps', 30)
-        if self.video_fps not in (30, 60):
-            raise ValueError('VIDEO_FPS must be 30 or 60')
-        self.formatted_quality = f'{self.quality}60' if self.video_fps == 60 else self.quality
+        if self.old_templates:
+            self.quality = '480p'
+        self.stream_quality = config.get('stream_quality') or None
+        _, native_fps = parse_rendition(self.stream_quality or requested_quality)
+        supplied_fps = config.get('video_fps')
+        self.video_fps = native_fps
+        if self.video_fps is None and supplied_fps not in (None, ''):
+            self.video_fps = float(supplied_fps)
+        if self.video_fps is not None and (not math.isfinite(self.video_fps) or self.video_fps <= 0):
+            raise ValueError('VIDEO_FPS must be positive and finite when provided')
+        self.formatted_quality = self.stream_quality or self.quality
 
         # Load configuration
         self.config = self._load_config()
@@ -478,6 +476,8 @@ class SFDEProcessor:
                     "start_time": self.start_time,
                     "end_time": self.end_time,
                     "quality": self.quality,
+                    "stream_quality": self.stream_quality,
+                    "video_fps": self.video_fps,
                 }
 
             except Exception as e:
@@ -532,9 +532,14 @@ class SFDEProcessor:
         Piping a Streamlink segment rebases timestamps at a rounded segment
         boundary. Seeking the playlist itself preserves the requested offset.
         """
-        media = resolve_media(self.source, self.vod_id, self.formatted_quality)
+        preference = self.quality if self.old_templates else self.requested_quality
+        media = resolve_media(self.source, self.vod_id, preference, stream_quality=self.stream_quality)
+        self.stream_quality = media.get('stream_quality')
+        self.video_fps = media['fps']
+        self.formatted_quality = self.stream_quality or self.quality
         self._media_input_args = ffmpeg_input_args(media)
-        self.logger.info('Media resolved with %s (%sp input)', media['resolver'], media['height'])
+        self.logger.info('Media resolved with %s (%sp input, nominal FPS %s)',
+                         media['resolver'], media['height'], self.video_fps)
         return media['url']
 
     def ffmpeg_worker(self) -> None:
@@ -779,6 +784,8 @@ class SFDEProcessor:
                     'chunk_id': self.chunk_id, 'vod_id': self.vod_id, 'source': self.source,
                     'vod_pk': self.vod_pk, 'streamer': self.streamer,
                     'start_time': self.start_time, 'end_time': self.end_time, 'quality': self.formatted_quality,
+                    'processing_quality': self.quality, 'stream_quality': self.stream_quality,
+                    'video_fps': self.video_fps,
                     'frames_processed': self.frames_processed, 'matchups_found': len(self.all_detections),
                     'detections': self.all_detections,
                 }, destination, indent=2)
@@ -823,7 +830,8 @@ def main() -> None:
         "test_mode": os.getenv("TEST_MODE", "false").lower() == "true",
         "quality": os.getenv("QUALITY", "480p"),
         "old_templates": os.getenv("OLD_TEMPLATES", "false").lower() == "true",
-        "video_fps": int(os.getenv("VIDEO_FPS", "30")),  # Actual video FPS (30 or 60)
+        "stream_quality": os.getenv("STREAM_QUALITY") or None,
+        "video_fps": os.getenv("VIDEO_FPS") or None,  # Optional source FPS metadata; sampling comes from config.yaml.
     }
 
     if not config["chunk_id"]:

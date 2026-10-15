@@ -1,4 +1,4 @@
-streamlink>=8.0.0,<9
+streamlink==8.6.2
 yt-dlp[default]>=2026.7.4,<2027
 opencv-python-headless==4.11.0.86
 paddleocr==3.3.2

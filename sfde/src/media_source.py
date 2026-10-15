@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 from bilibili_source import split_identity
+from renditions import parse_rendition, processing_quality, select_rendition
 
 
 logger = logging.getLogger('sfde.media')
@@ -60,10 +61,7 @@ def watch_url(source: str, source_id: str, timestamp: Optional[int] = None) -> s
 
 
 def _height(quality: str) -> int:
-    match = re.fullmatch(r'(360|480|720|1080)p(?:60)?', quality)
-    if not match:
-        raise ValueError('Unsupported processing quality')
-    return int(match[1])
+    return parse_rendition(processing_quality(quality))[0]
 
 
 def _rendition_score(height: int, fps: float, target: int,
@@ -73,7 +71,7 @@ def _rendition_score(height: int, fps: float, target: int,
     return (height < target, abs(height - target), fps < 50 if prefer_high_fps else fps > 30)
 
 
-def _http_media(url: str, headers: Dict[str, Any], resolver: str, height: int, fps: float) -> Dict[str, Any]:
+def _http_media(url: str, headers: Dict[str, Any], resolver: str, height: int, fps: Optional[float]) -> Dict[str, Any]:
     parsed = urlparse(url)
     if parsed.scheme not in ('http', 'https') or not parsed.hostname or '\n' in url or '\r' in url:
         raise ValueError('Resolver did not return an HTTP media URL')
@@ -87,14 +85,19 @@ def _http_media(url: str, headers: Dict[str, Any], resolver: str, height: int, f
     return {'url': url, 'headers': safe_headers, 'resolver': resolver, 'height': height, 'fps': fps}
 
 
-def resolve_media(source: str, source_id: str, quality: str = '480p') -> Dict[str, Any]:
+def resolve_media(source: str, source_id: str, quality: str = '480p',
+                  stream_quality: Optional[str] = None) -> Dict[str, Any]:
     """Resolve a fresh seekable locator. Fall back to yt-dlp only for YouTube.
 
     Resolution does not mark a video unavailable; transient extraction failures
     must remain distinct from platform visibility. FFmpeg owns the source seek.
+    Twitch can require an exact native label selected during workflow preparation;
+    if it disappears, fail rather than silently switching the prepared rendition.
     """
     url = watch_url(source, source_id)
     target = _height(quality)
+    if source == 'twitch' and stream_quality:
+        parse_rendition(stream_quality)
     failure = 'no supported renditions'
     try:
         command = ['streamlink', '--no-config', '--json']
@@ -104,14 +107,31 @@ def resolve_media(source: str, source_id: str, quality: str = '480p') -> Dict[st
                                   capture_output=True, text=True, timeout=90, check=False)
         if response.returncode == 0:
             streams = json.loads(response.stdout).get('streams', {})
+            streams = {name: stream for name, stream in streams.items()
+                       if stream.get('url') and stream.get('type') in ('http', 'hls')}
+            if source == 'twitch':
+                if stream_quality and stream_quality not in streams:
+                    raise RuntimeError('Prepared Twitch rendition is no longer available')
+                selected = select_rendition(
+                    {stream_quality: streams[stream_quality]} if stream_quality else streams,
+                    quality,
+                )
+                name = selected['stream_quality']
+                height, fps = parse_rendition(name)
+                stream = streams[name]
+                media = _http_media(stream['url'], stream.get('headers') or {}, 'streamlink', height, fps)
+                media['stream_quality'] = name
+                logger.info('Resolved %s video via Streamlink at %s', source, name)
+                return media
             candidates = []
             for name, stream in streams.items():
-                match = re.fullmatch(r'(\d+)p(\d+)?', name)
-                if match and stream.get('url') and stream.get('type') in ('http', 'hls'):
-                    height, fps = int(match[1]), float(match[2] or 30)
-                    candidates.append((height, fps, stream))
+                try:
+                    height, fps = parse_rendition(name)
+                except ValueError:
+                    continue
+                candidates.append((height, fps, stream))
             if candidates:
-                height, fps, stream = min(candidates, key=lambda item: _rendition_score(item[0], item[1], target, quality.endswith('60')))
+                height, fps, stream = min(candidates, key=lambda item: _rendition_score(item[0], item[1] or 30, target, quality.endswith('60')))
                 logger.info('Resolved %s video via Streamlink at %sp', source, height)
                 return _http_media(stream['url'], stream.get('headers') or {}, 'streamlink', height, fps)
         failure = f'Streamlink exit code {response.returncode}'
@@ -131,7 +151,7 @@ def resolve_media(source: str, source_id: str, quality: str = '480p') -> Dict[st
         raise RuntimeError('No supported YouTube video rendition')
     selected = min(candidates, key=lambda f: _rendition_score(f['height'], f.get('fps') or 30, target, quality.endswith('60')))
     return _http_media(selected['url'], selected.get('http_headers') or {}, 'yt-dlp',
-                       selected['height'], selected.get('fps') or 30)
+                       selected['height'], selected.get('fps'))
 
 
 def youtube_metadata(source_id: str) -> Dict[str, Any]:

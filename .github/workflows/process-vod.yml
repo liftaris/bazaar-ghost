@@ -60,6 +60,7 @@ jobs:
       chunk_uuids: ${{ steps.prepare.outputs.chunk_uuids }}
       old_templates: ${{ steps.prepare.outputs.old_templates }}
       quality: ${{ steps.prepare.outputs.quality }}
+      stream_quality: ${{ steps.prepare.outputs.stream_quality }}
       video_fps: ${{ steps.prepare.outputs.video_fps }}
       sfde_profile: ${{ steps.prepare.outputs.sfde_profile }}
     steps:
@@ -67,7 +68,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - run: pip install 'streamlink>=8,<9' 'yt-dlp[default]>=2026.7.4,<2027'
+      - run: pip install 'streamlink==8.6.2' 'yt-dlp[default]>=2026.7.4,<2027'
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
@@ -92,6 +93,7 @@ jobs:
       SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
       CHUNK_ID: ${{ matrix.chunk_id }}
       QUALITY: ${{ needs.prepare.outputs.quality }}
+      STREAM_QUALITY: ${{ needs.prepare.outputs.stream_quality }}
       VIDEO_FPS: ${{ needs.prepare.outputs.video_fps }}
       SFDE_PROFILE: ${{ needs.prepare.outputs.sfde_profile }}
       OLD_TEMPLATES: ${{ needs.prepare.outputs.old_templates }}
@@ -118,7 +120,7 @@ jobs:
           docker run --rm --network host \
             -v "$PWD/output:/app/output" \
             -e SUPABASE_URL -e SUPABASE_SECRET_KEY -e CHUNK_ID \
-            -e QUALITY -e VIDEO_FPS -e SFDE_PROFILE -e OLD_TEMPLATES \
+            -e QUALITY -e STREAM_QUALITY -e VIDEO_FPS -e SFDE_PROFILE -e OLD_TEMPLATES \
             -e ENVIRONMENT -e OTEL_EXPORTER_OTLP_ENDPOINT -e OTEL_EXPORTER_OTLP_HEADERS \
             sfde:dev
       - name: Fail unclaimed chunk
