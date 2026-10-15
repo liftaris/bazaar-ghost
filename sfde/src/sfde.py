@@ -550,7 +550,12 @@ class SFDEProcessor:
         """Decode frames and enqueue each image together with its timestamp."""
         # Limit demuxing before sampling. An output -t is rounded to the encoder's
         # coarse FPS time base and can discard a valid final partial interval.
-        cmd = ['ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'info',
+        # showinfo is our timestamp protocol. FFmpeg 5's threaded H.264
+        # decoder can splice a multi-part warning into a showinfo record,
+        # losing its filter prefix. Keep decoding on one thread and disable
+        # progress output rather than accepting unattributed timestamps.
+        cmd = ['ffmpeg', '-nostdin', '-nostats', '-hide_banner', '-loglevel', 'info',
+               '-threads', '1',
                '-t', str(self.end_time - self.start_time)]
         # Read the opening chunk directly. FFmpeg 5's HLS input seek at zero
         # can skip opening frames when the transport timestamp origin is nonzero.

@@ -127,6 +127,25 @@ Video count alone is not a source-hours budget: a long archive can create many p
 
 ## Evidence to retain
 
+### Local YouTube acceptance, October 14, 2026
+
+Fresh public discovery returned 17 candidates with yt-dlp 2026.8.19. Two bounded runs through the actual local Worker catalog API processed 20 durable jobs: discovery, an account poll, and 18 video catalog operations, with zero errors and all leases finished. No GitHub dispatch was requested. Discovery and account polling can return different or overlapping candidates; these counts are operations, not distinct videos.
+
+Four real chunks from three discovered recordings completed against local D1/R2 using the production processor, current templates, and a reviewed standard gameplay profile (nameplate `[0.5726,0.729,0.35,0.121]`, day `[0.1458,0.4509,0.013,0.0231]`). The generic local seed profile is a fixture and was not used for these runs.
+
+| YouTube recording | Source range | Samples | Persisted matchups | Non-null IGD |
+|---|---:|---:|---:|---:|
+| `jwxFzTcvWLs` | `[0,1800)` | 900 | 6 | 3 |
+| `Bfr68889LR0` | `[0,1800)` | 900 | 9 | 5 |
+| `62BIbb1liSU` | `[0,1800)` | 900 | 7 | 5 |
+| `jwxFzTcvWLs` | `[1800,3600)` | 900 | 7 | 5 |
+
+Each run verified all 54,000 decoded source-frame timestamps and all 900 sampling ticks. Public rows matched the reported names, ranks, days, source identities, and timestamps; all 29 JPEGs decoded successfully. The continuation preserved the earlier public rows exactly. Representative nameplate images were visually reviewed; non-null day counts do not imply exhaustive visual certification. These are completed chunks, not completed whole recordings.
+
+The first recording exposed an intermittent FFmpeg 5 H.264 diagnostic collision: a decoder warning replaced a `showinfo` filter prefix, causing strict timestamp validation to fail. Single-thread input decoding and disabled progress output prevent that collision without accepting missing/unattributed timestamps. Failed attempts remain in the private evidence, followed by explicit local operator retries. The 47 existing pipeline tests passed; no new unit tests were added.
+
+Evidence is under `.ignore/youtube-readiness/`: discovery and durable-job logs, failed decoder traces, per-recording processing logs, terminal chunk state, public rows, and `proof.json`. This demonstrates local feasibility after the dependency update. It does not prove GitHub-hosted YouTube access, Worker-to-Actions dispatch, or public WebSub delivery. Those hosted gates below still apply; validation outbound integrations remain disabled.
+
 For each hosted recording, retain its source identity, complete reviewed range, profile/template era, workflow run and commit, completed chunk/VOD state, frame count, detections, and retrievable screenshot checks. Validate source-relative timestamps, especially nonzero starts and Bilibili part timelines. Compare against prior known detections without presenting sample agreement as exhaustive recall.
 
 The original source branch observed both successful and blocked Bilibili uploader feeds from the local machine. That proves feasibility for specific feeds from that network, not sustained GitHub-runner reliability.

@@ -13,6 +13,8 @@ This is the acceptance record for the dedicated Cloudflare migration environment
 
 ## Capability acceptance
 
+Local YouTube evidence was refreshed on October 14, 2026: real discovery and 20 durable ingestion jobs succeeded, followed by four completed 30-minute OCR chunks across three recordings. All 29 public detections and JPEGs were verified, including nonzero-start continuation and preservation of prior results. This found and fixed an FFmpeg diagnostic/timestamp collision. See [local YouTube acceptance](platform-ingestion.md#local-youtube-acceptance-october-14-2026); these local runs do not change the hosted deployment or acceptance claims below.
+
 | Capability | Established evidence | Remaining acceptance |
 |---|---|---|
 | Multiplatform catalog and processing contracts | Twitch/YouTube/Bilibili source identity, account/profile controls, chunk ownership, lease fencing, and retry eligibility have local runtime tests. A hosted synthetic fixture verifies required profile/template expectations, stale-claim rejection, semantic numeric equality and active-profile edit conflicts. Actual Bilibili and YouTube recordings persisted through the hosted API. | A complete real Twitch recording on this validation backend. |
