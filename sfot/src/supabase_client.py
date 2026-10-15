@@ -169,7 +169,9 @@ class SupabaseClient:
                                 vod_id_cache[source_id] = vod_response.data['id']
                             except Exception as e:
                                 self.logger.error(f"Failed to find VOD with source_id {source_id}: {e}")
-                                continue
+                                # Retry the whole batch; skipping this row would
+                                # silently report success with missing detections.
+                                raise
 
                         actual_vod_id = vod_id_cache[source_id]
 

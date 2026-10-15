@@ -271,6 +271,31 @@ class PipelineTests(unittest.TestCase):
             self.processor.process_vod_chunk()
         self.assert_failed()
 
+    def test_only_named_matchups_are_counted_uploaded_and_summarized(self):
+        self.decode_frames([5, 7, 9, 11, 13, 15, 17])
+        self.processor.frame_processor.process_frame.side_effect = [
+            None,
+            {'timestamp': 7, 'is_matchup': True, 'username': None},
+            {'timestamp': 9, 'is_matchup': True, 'username': ''},
+            {'timestamp': 11, 'is_matchup': True, 'username': 'First', 'confidence': 0.9},
+            {'timestamp': 13, 'is_matchup': False, 'username': 'Ignored'},
+            {'timestamp': 15, 'is_matchup': True},
+            {'timestamp': 17, 'is_matchup': True, 'username': 'Second', 'confidence': 0.95},
+        ]
+        with patch.object(runtime, 'record_counter') as counters:
+            result = self.processor.process_vod_chunk()
+        self.assertEqual(result['frames_processed'], 7)
+        self.assertEqual(result['matchups_found'], 2)
+        self.assertEqual([row['username'] for row in self.processor.all_detections], ['First', 'Second'])
+        self.processor.supabase.upload_batch.assert_called_once()
+        uploaded = self.processor.supabase.upload_batch.call_args.args[0]
+        self.assertEqual([row['username'] for row in uploaded], ['First', 'Second'])
+        self.assertEqual(sum(call.args[1] for call in counters.call_args_list
+                             if call.args[0] == 'matchups_detected'), 2)
+        completed = [call for call in self.processor.supabase.update_chunk.call_args_list
+                     if call.args[1] == 'completed']
+        self.assertEqual(completed[0].kwargs['detections_count'], 2)
+
     def test_one_deadline_cancels_workers(self):
         self.processor.config['processing']['timeout'] = 0.05
         self.processor.ffmpeg_worker = lambda: self.processor.shutdown.wait(2)
