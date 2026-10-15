@@ -20,5 +20,5 @@ jobs:
       BAZAARGHOST_API_URL: ${{ vars.BAZAARGHOST_API_URL }}
       BAZAARGHOST_ADMIN_KEY: ${{ secrets.BAZAARGHOST_ADMIN_KEY }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7.0.1
       - run: python scripts/clear_dev_storage.py

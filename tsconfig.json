@@ -3,18 +3,26 @@
     "target": "ES2023",
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "lib": ["ES2023"],
+    "lib": [
+      "ES2023"
+    ],
     "strict": true,
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "types": [
-      "./worker-configuration.d.ts",
+      "./.cloudflare/types/index.d.ts",
       "node",
-      "@cloudflare/vitest-pool-workers/types"
+      "@cloudflare/vitest-plugin/types"
     ],
     "noUnusedLocals": true,
-    "noUnusedParameters": true
+    "noUnusedParameters": true,
+    "resolveJsonModule": true
   },
-  "include": ["worker/**/*.ts", "vitest.config.ts"]
+  "include": [
+    "worker/**/*.ts",
+    "vitest.config.ts",
+    "cloudflare.config.ts",
+    "wrangler.config.ts"
+  ]
 }

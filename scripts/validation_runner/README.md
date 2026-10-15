@@ -4,15 +4,16 @@ This runs one **GitHub Actions job** inside the local, tested SFDE container. It
 
 Only `liftaris/bazaar-ghost`, `migration/cloudflare`, `workflow_dispatch`, and `validate-recording.yml` pass the image-owned pre-job hook. The runner has one random label, no default labels, and unregisters after one job. Its container runs as UID 1000 with dropped capabilities, no Docker socket, no host filesystem mounts, no host home, and no host network mode. All runner credentials and checked-out files live in the disposable container layer. GitHub supplies only the validation environment's catalog/processor capabilities to the processing step; the OCR subprocess receives the processor key alone.
 
-The runner is pinned to the official [v2.337.0 release](https://github.com/actions/runner/releases/tag/v2.337.0), with the release's SHA-256 verified during build. Its registration token is read once from stdin and passed to the official runner as `ACTIONS_RUNNER_INPUT_TOKEN` only for configuration. It is never put in argv, a file, Docker configuration, or printed. The parent process does not pass that variable to the listening runner. See the official [runner argument reader](https://github.com/actions/runner/blob/v2.337.0/src/Runner.Listener/CommandSettings.cs), [ephemeral runner documentation](https://docs.github.com/en/actions/reference/runners/self-hosted-runners#ephemeral-runners-for-autoscaling), and [job hook documentation](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/run-scripts).
+The runner is pinned to the official [v2.338.0 release](https://github.com/actions/runner/releases/tag/v2.338.0), with the release's SHA-256 verified during build. Its registration token is read once from stdin and passed to the official runner as `ACTIONS_RUNNER_INPUT_TOKEN` only for configuration. It is never put in argv, a file, Docker configuration, or printed. The parent process does not pass that variable to the listening runner. See the official [runner argument reader](https://github.com/actions/runner/blob/v2.338.0/src/Runner.Listener/CommandSettings.cs), [ephemeral runner documentation](https://docs.github.com/en/actions/reference/runners/self-hosted-runners#ephemeral-runners-for-autoscaling), and [job hook documentation](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/run-scripts).
 
 ## Build and local checks
 
 From the repository root:
 
 ```sh
-docker build --build-arg BASE_IMAGE=sfde:cloudflare-platform-test \
-  -t bazaarghost-validation-runner:2.337.0 scripts/validation_runner
+docker build --target production -t sfde:runtime sfde
+docker build --build-arg BASE_IMAGE=sfde:runtime \
+  -t bazaarghost-validation-runner:2.338.0 scripts/validation_runner
 python3 -m unittest discover -s scripts/tests -p test_validation_runner.py
 ```
 

@@ -65,16 +65,16 @@ jobs:
       LIMIT: ${{ inputs.limit }}
       ENABLE_PROCESSING: ${{ inputs.enable_processing }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7.0.1
       - name: Verify backend environment
         run: python scripts/backend_environment.py
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.11'
-      - uses: denoland/setup-deno@v2
+      - uses: denoland/setup-deno@v2.0.5
         with:
-          deno-version: v2.x
-      - run: pip install 'yt-dlp[default]>=2026.7.4,<2027'
+          deno-version: v2.9.7
+      - run: pip install 'yt-dlp[default]==2026.8.19'
       - name: Catalog a bounded page
         shell: bash
         run: |
@@ -92,7 +92,7 @@ jobs:
           fi
           if [ "$ENABLE_PROCESSING" = true ]; then args+=(--enable-processing); fi
           python scripts/catalog_youtube.py "${args[@]}" > catalog-result.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: youtube-catalog
           path: catalog-result.json

@@ -19,16 +19,16 @@ class DeploymentTests(unittest.TestCase):
         self.root = Path(self.directory.name)
         self.configs = {}
         for number, target in enumerate(deployment.BRANCHES, 1):
-            config = deployment.read_jsonc(ROOT / f'wrangler.{target}.jsonc')
-            config['d1_databases'][0]['database_id'] = f'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaa{number}'
-            config['workers_dev'] = True
+            config = deployment.read_environments()[target]
+            config['database']['id'] = f'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaa{number}'
+            config['workersDev'] = True
             config['vars']['PUBLIC_URL'] = f'https://bazaarghost-{target}.example.workers.dev'
             self.configs[target] = config
         self.write_configs()
 
     def write_configs(self):
-        for target, config in self.configs.items():
-            (self.root / f'wrangler.{target}.jsonc').write_text(json.dumps(config))
+        (self.root / 'config').mkdir(exist_ok=True)
+        (self.root / 'config/environments.json').write_text(json.dumps(self.configs))
 
     def validate(self, target='validation', ref=None):
         self.write_configs()
@@ -42,11 +42,10 @@ class DeploymentTests(unittest.TestCase):
     def test_auth_maintenance_is_the_only_validation_schedule_and_preserves_other_environments(self):
         provider_schedules = ['*/3 * * * *', '0 * * * *', '0 0,12 * * *', '0 2 * * *', '0 3 * * *']
         for target in ['local', 'dev', 'production', 'validation']:
-            filename = 'wrangler.jsonc' if target == 'local' else f'wrangler.{target}.jsonc'
-            config = deployment.read_jsonc(ROOT / filename)
+            config = deployment.read_environments()[target]
             with self.subTest(target=target):
                 expected = ['* * * * *'] + ([] if target == 'validation' else provider_schedules)
-                self.assertEqual(config['triggers']['crons'], expected)
+                self.assertEqual(config['crons'], expected)
                 self.assertEqual(config['vars']['ENVIRONMENT'], target)
                 self.assertEqual(config['vars']['OUTBOUND_ENABLED'], 'false')
 
@@ -56,7 +55,7 @@ class DeploymentTests(unittest.TestCase):
                 self.validate(ref=ref)
 
     def test_rejects_production_database_even_when_uuid_case_differs(self):
-        self.configs['validation']['d1_databases'][0]['database_id'] = self.configs['production']['d1_databases'][0]['database_id'].upper()
+        self.configs['validation']['database']['id'] = self.configs['production']['database']['id'].upper()
         with self.assertRaisesRegex(ValueError, 'must not share a database'):
             self.validate()
 
@@ -68,22 +67,22 @@ class DeploymentTests(unittest.TestCase):
             if field == 'name':
                 config['name'] = 'bazaarghost-production'
             elif field == 'database':
-                config['d1_databases'][0]['database_name'] = 'bazaarghost-production'
+                config['database']['name'] = 'bazaarghost-production'
             else:
-                config['r2_buckets'][0]['bucket_name'] = 'bazaarghost-detections-production'
+                config['buckets']['DETECTIONS'] = 'bazaarghost-detections-production'
             with self.subTest(field=field), self.assertRaises(ValueError):
                 self.validate()
 
     def test_rejects_primary_and_dead_letter_queue_reuse(self):
         original = copy.deepcopy(self.configs['validation'])
-        for key in ['queue', 'dead_letter_queue']:
+        for key in ['name', 'deadLetterQueue']:
             self.configs['validation'] = copy.deepcopy(original)
-            self.configs['validation']['queues']['consumers'][0][key] = 'bazaarghost-production'
+            self.configs['validation']['queue'][key] = 'bazaarghost-production'
             with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'queues'):
                 self.validate()
 
     def test_rejects_any_custom_domain_in_validation(self):
-        for key in ['route', 'routes']:
+        for key in ['domains', 'routes']:
             self.configs['validation'][key] = ['bazaarghost.stream/*'] if key == 'routes' else 'bazaarghost.stream/*'
             with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'dedicated workers.dev'):
                 self.validate()
@@ -91,7 +90,7 @@ class DeploymentTests(unittest.TestCase):
 
     def test_rejects_placeholder_database_and_unsafe_urls(self):
         original = copy.deepcopy(self.configs['validation'])
-        self.configs['validation']['d1_databases'][0]['database_id'] = deployment.ZERO_UUID
+        self.configs['validation']['database']['id'] = deployment.ZERO_UUID
         with self.assertRaisesRegex(ValueError, 'provisioned D1'):
             self.validate()
         for url in ['http://example.com', 'https://user:password@example.com', 'https://example.com/path',
@@ -103,35 +102,16 @@ class DeploymentTests(unittest.TestCase):
                 self.validate()
 
     def test_detects_queue_collision_from_the_other_configuration(self):
-        self.configs['production']['queues']['consumers'][0]['dead_letter_queue'] = 'bazaarghost-validation-dlq'
+        self.configs['production']['queue']['deadLetterQueue'] = 'bazaarghost-validation-dlq'
         with self.assertRaisesRegex(ValueError, 'must not share a queue'):
             self.validate()
 
     def test_missing_comparison_configuration_fails_closed(self):
-        (self.root / 'wrangler.production.jsonc').unlink()
+        del self.configs['production']
+        self.write_configs()
         with self.assertRaisesRegex(ValueError, 'Missing comparison'):
             deployment.validate('validation', self.root)
 
-    def test_jsonc_preserves_string_content_and_accepts_comments_and_trailing_commas(self):
-        path = self.root / 'syntax.jsonc'
-        path.write_text(r'''{
-            // Comment containing "quotes"
-            "url": "https://example.com/with//slashes",
-            "text": "/* literal */ ,} ,] escaped \"quote\"",
-            "array": [1, /* after comma */ 2,],
-        }''')
-        self.assertEqual(deployment.read_jsonc(path), {
-            'url': 'https://example.com/with//slashes',
-            'text': '/* literal */ ,} ,] escaped "quote"',
-            'array': [1, 2],
-        })
-
-    def test_jsonc_does_not_join_invalid_tokens(self):
-        path = self.root / 'invalid.jsonc'
-        for text in ['{"number": 1 2}', '{"number": 1/* comment */2}', '{/*unclosed']:
-            path.write_text(text)
-            with self.subTest(text=text), self.assertRaises(ValueError):
-                deployment.read_jsonc(path)
 
 
 if __name__ == '__main__':

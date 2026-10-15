@@ -1,6 +1,6 @@
 # Cloudflare backend migration
 
-This worktree replaces the backend's Supabase runtime with one Cloudflare Worker, D1, R2, Queues, and Cron Triggers. OCR, Docker builds, tests, processing jobs, Discord command registration, and the weekly dev storage purge remain in **GitHub Actions**. The frontend repository is untouched. The original migration at `6a6d0ae` was local only; the subsequent platform and auth/social backend is deployed to the isolated [validation Worker](https://bazaarghost-validation.kaio-8df.workers.dev/health). Validation deployment currently uses authenticated local Wrangler because the dedicated GitHub deployment token is not configured. Existing dev/production services have not been migrated. See the [current work log](platform-work-log.md) for deployment evidence and unfinished hosted checks.
+This worktree replaces the backend's Supabase runtime with one Cloudflare Worker, D1, R2, Queues, and Cron Triggers. OCR, Docker builds, tests, processing jobs, Discord command registration, and the weekly dev storage purge remain in **GitHub Actions**. The frontend repository is untouched. The original migration at `6a6d0ae` was local only; the subsequent platform and auth/social backend is deployed to the isolated [validation Worker](https://bazaarghost-validation.kaio-8df.workers.dev/health). The last hosted deployment used Wrangler; subsequent tooling uses `cf`. See [tooling](tooling.md) for its separate authentication and build/deploy commands. Dedicated GitHub deployment credentials remain necessary for automatic deployment. Existing dev/production services have not been migrated. See the [current work log](platform-work-log.md) for deployment evidence and unfinished hosted checks.
 
 ## Service mapping
 
@@ -31,7 +31,7 @@ npm run db:seed
 npm run dev
 ```
 
-Wrangler listens at `http://localhost:8787`. D1, both R2 buckets, and Queues are simulated locally and persisted under `.wrangler/`. All integrations are disabled by `OUTBOUND_ENABLED=false`; scheduled events stay idle until that setting is explicitly enabled. Local processor requests still work. `.dev.vars` contains disposable local keys, never hosted credentials.
+`cf dev` listens at `http://localhost:8787`. D1, both R2 buckets, and Queues are simulated locally and persisted under `.wrangler/state/` (cf's current bundler default). All integrations are disabled by `OUTBOUND_ENABLED=false`; scheduled events stay idle until that setting is explicitly enabled. Local processor requests still work. `.dev.vars` contains disposable local keys, never hosted credentials.
 
 The default fixture profile uses the whole frame and is only a placeholder. Real streamers must use their imported or individually configured crop profiles. Discovery still enables newly cataloged streamers by default, with profile ID 1, so import/configure that profile before enabling discovery.
 
@@ -52,7 +52,7 @@ npm run types
 npm run typecheck
 npm test
 python3 -m unittest discover -s scripts/tests
-npm run build                       # Wrangler deploy --dry-run only
+npm run build                       # cf local build; no deployment
 
 docker build --target test -t sfde:test sfde/
 docker run --rm --network none sfde:test
@@ -64,10 +64,10 @@ The compatibility date is pinned to `2026-08-22`, supported by both installed Wr
 
 This test creates three 12-second videos from committed, labeled image crops, decodes them with FFmpeg, runs actual OpenCV/PaddleOCR, and checks the resulting names, ranks, database records, and JPEG downloads. It uses no Twitch data downloads. It is a synthetic integration test, not a hosted VOD recall measurement.
 
-Start Wrangler and apply the ordinary fixture seed first, then:
+Start `npm run dev` and apply the ordinary fixture seed first, then:
 
 ```bash
-npx wrangler d1 execute DB --local --file worker/fixtures/ocr-smoke.sql
+python3 scripts/database.py execute --environment local --file worker/fixtures/ocr-smoke.sql
 docker build --target test -t sfde:test sfde/
 docker run --rm --network host --entrypoint python \
   -v "$PWD/scripts/local_ocr_smoke.py:/smoke.py:ro" \
@@ -118,10 +118,10 @@ The old `generate-seed-data` endpoint is replaced by the offline snapshot tools 
 
 ## Preparing the eventual dev/production cutover
 
-These steps describe the eventual dev/production cutover. Those existing environments remain untouched. The separate validation environment has already been provisioned and deployed using `wrangler.validation.jsonc`; its hosted processing checks are still incomplete.
+These steps describe the eventual dev/production cutover. Those existing environments remain untouched. The separate validation environment has already been provisioned and deployed with the validation resources now recorded in `config/environments.json`; its hosted processing checks are still incomplete.
 
-1. Provision separate dev/production D1 databases, R2 `detections` and `logs` buckets, a queue and dead-letter queue per environment. Use the names in `wrangler.dev.jsonc` and `wrangler.production.jsonc`.
-2. Fill in each D1 ID and public HTTPS URL. Configure a Worker route/custom domain, or deliberately enable `workers_dev` and use that URL. Both are disabled/unset in the templates.
+1. Provision separate dev/production D1 databases, R2 `detections` and `logs` buckets, a queue and dead-letter queue per environment. Use the dev/production entries in `config/environments.json`.
+2. Fill in each D1 ID and public HTTPS URL. Enable `workersDev` and use that origin for initial verification. Custom domains require an explicit configuration and guard update; they are not configured in these templates.
 3. Set Worker secrets: `ADMIN_KEY`, `PROCESSOR_KEY`, `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `TWITCH_EVENTSUB_SECRET`, `GITHUB_TOKEN`, `DISCORD_PUBLIC_KEY`, and `DISCORD_BOT_TOKEN`. Use distinct dev/production credentials. GitHub dispatch needs Actions write access to this repository.
 4. Keep `OUTBOUND_ENABLED=false` during data migration and initial read verification. Apply D1 migrations and import data, then verify counts, search examples, profiles, foreign keys, and object samples.
 5. Configure GitHub environments with the new URL and keys. The optional dev/production deploy workflow needs a scoped Cloudflare API token/account ID and `CLOUDFLARE_BACKEND_ENABLED=true`. It is manual-only, requires the matching `dev`/`main` branch, and validates the target config and separation of dev/production databases and buckets. Protect the production GitHub environment. The dedicated validation branch has its own push pipeline; it does not enable these dev/production deployments.

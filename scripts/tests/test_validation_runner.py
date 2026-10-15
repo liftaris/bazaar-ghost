@@ -97,7 +97,7 @@ class ValidationRunnerTests(unittest.TestCase):
         self.assertNotIn('--replace', command)
 
     def test_container_has_no_host_mount_or_network_host_or_credential_argument(self):
-        command = launcher.container_command('bazaarghost-validation-' + 'b' * 32, 'bazaarghost-validation-runner:2.337.0')
+        command = launcher.container_command('bazaarghost-validation-' + 'b' * 32, 'bazaarghost-validation-runner:2.338.0')
         for flag in ('-v', '--volume', '--mount', '--privileged', '--network=host', '--network', '--env-file'):
             self.assertNotIn(flag, command)
         self.assertIn('--cap-drop=ALL', command)

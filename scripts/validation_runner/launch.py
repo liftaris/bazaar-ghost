@@ -19,7 +19,7 @@ def container_command(label, image):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--label', required=True)
-    parser.add_argument('--image', default='bazaarghost-validation-runner:2.337.0')
+    parser.add_argument('--image', default='bazaarghost-validation-runner:2.338.0')
     args = parser.parse_args()
     command = container_command(args.label, args.image)
     token = sys.stdin.readline(2050).strip()

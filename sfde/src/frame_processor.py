@@ -143,6 +143,8 @@ class FrameProcessor:
                 use_doc_orientation_classify=False,
                 use_doc_unwarping=False,
                 use_textline_orientation=False,
+                # Paddle 3.3's oneDNN executor cannot run these mobile model graphs.
+                enable_mkldnn=False,
                 text_rec_score_thresh=self.ocr_confidence_threshold,
             )
             self.logger.info("Initialized PaddleOCR (mobile models)")

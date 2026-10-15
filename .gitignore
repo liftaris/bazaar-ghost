@@ -21,3 +21,5 @@ dist/
 !worker/fixtures/seed.sql
 # Generated locally and in CI by npm run types.
 worker-configuration.d.ts
+
+.cloudflare/

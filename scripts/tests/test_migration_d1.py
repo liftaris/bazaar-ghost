@@ -28,25 +28,15 @@ class FullTargetD1Tests(unittest.TestCase):
             directory = tempfile.TemporaryDirectory(prefix='bazaarghost-d1-import-')
             self.addCleanup(directory.cleanup)
             self.root = Path(directory.name)
-        self.config = self.root / 'wrangler.json'
-        self.config.write_text(json.dumps({
-            'name': 'bazaarghost-local-import-proof', 'compatibility_date': '2026-08-22',
-            'd1_databases': [{'binding': 'DB', 'database_name': 'bazaarghost-local-import-proof',
-                'database_id': '00000000-0000-0000-0000-000000000000',
-                'migrations_dir': str(conversion.ROOT / 'worker/migrations')}],
-        }))
-        self.config.chmod(0o600)
-        with conversion.private_open(self.root / 'wrangler.log'):
-            pass
+        self.database = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
         self.calls = 0
 
     def cli(self, *arguments, state='populated', succeeds=True):
         self.calls += 1
-        command = [str(conversion.ROOT / 'node_modules/.bin/wrangler'), 'd1', *arguments,
-            '--config', str(self.config), '--env-file', '/dev/null', '--local', '--persist-to', str(self.root / state)]
+        command = [str(conversion.ROOT / 'node_modules/.bin/cf'), 'd1', *arguments,
+            '--mode', 'local', '--local', '--persist-to', str(self.root / state)]
         process = subprocess.run(command, cwd=conversion.ROOT, text=True, capture_output=True, timeout=90,
-            env={**os.environ, 'CI': 'true', 'WRANGLER_SEND_METRICS': 'false',
-                 'WRANGLER_LOG_PATH': str(self.root / 'wrangler.log')})
+            env={**os.environ, 'CI': 'true', 'CF_SEND_TELEMETRY': 'false'})
         log = self.root / f'command-{self.calls:02}.log'
         log.write_text(process.stdout + '\n' + process.stderr)
         log.chmod(0o600)
@@ -57,10 +47,19 @@ class FullTargetD1Tests(unittest.TestCase):
             self.assertIn('valid_mutation', process.stdout + process.stderr)
         return process.stdout
 
+    def migrate(self, state='populated'):
+        return self.cli('migrations', 'apply', self.database, '--dir', str(conversion.ROOT / 'worker/migrations'), state=state)
+
+    def execute_file(self, path, **kwargs):
+        body = self.root / 'query.json'
+        conversion.private_json(body, {'sql': path.read_text()})
+        return self.cli('raw', self.database, '--body', '@' + str(body), **kwargs)
+
     def query(self, sql, state='populated'):
-        result = json.loads(self.cli('execute', 'DB', '--command', sql, '--json', state=state))
+        result = json.loads(self.cli('raw', self.database, '--sql', sql, state=state))
         self.assertTrue(all(item['success'] for item in result))
-        return result[0]['results']
+        data = result[0]['results']
+        return [dict(zip(data['columns'], row)) for row in data['rows']]
 
     def test_generated_populated_snapshot_into_full_target_with_guards(self):
         source, destination = self.root / 'source', self.root / 'converted'
@@ -73,10 +72,10 @@ class FullTargetD1Tests(unittest.TestCase):
             conversion.convert(source, destination)
         manifest = json.loads((destination / 'manifest.json').read_text())
         self.assertEqual(manifest['target_schema_version'], 7)
-        self.cli('migrations', 'apply', 'DB')
+        self.migrate()
         before_triggers = self.query("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name")
         for part in sorted(destination.glob('import-*.sql')):
-            self.cli('execute', 'DB', '--file', str(part), '--json', '--yes')
+            self.execute_file(part)
         counts_sql = 'SELECT ' + ','.join(f'(SELECT count(*) FROM {table}) AS "{table}"' for table in manifest['target_counts'])
         counts = self.query(counts_sql)[0]
         self.assertEqual(counts, manifest['target_counts'])
@@ -101,7 +100,7 @@ class FullTargetD1Tests(unittest.TestCase):
         self.assertEqual(self.query('SELECT id,revision FROM public_cache_state'),[{'id':1,'revision':0}])
         for table in ['app_users','user_accounts','user_sessions','auth_verifications','auth_flows','auth_rate_limits','clip_comments','clip_likes','clip_favorites','social_reports','social_moderation_audit','platform_ingestion_dispatch']:
             self.assertEqual(counts[table],0,table)
-        self.cli('execute','DB','--file',str(destination/'import.sql'),'--json','--yes',succeeds=False)
+        self.execute_file(destination/'import.sql',succeeds=False)
         self.assertEqual(self.query(counts_sql)[0],counts)
         self.assertEqual(self.query("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name"),before_triggers)
         # The full-target triggers still operate on the imported clips and public views.
@@ -109,20 +108,20 @@ class FullTargetD1Tests(unittest.TestCase):
         self.assertEqual(self.query('SELECT revision FROM public_cache_state'),[{'revision':1}])
         self.assertEqual(self.query('SELECT count(*) n FROM detection_search'),[{'n':0}])
         self.assertEqual(self.query('SELECT count(*) n FROM video_detections'),[{'n':3}])
-        self.cli('migrations','apply','DB',state='occupied-auth')
+        self.migrate(state='occupied-auth')
         self.query("INSERT INTO app_users(id,name,email,emailVerified,createdAt,updatedAt) VALUES('existing','Existing','fixture@invalid.test',0,'2026-09-07T00:00:00.000Z','2026-09-07T00:00:00.000Z')",state='occupied-auth')
-        self.cli('execute','DB','--file',str(destination/'import.sql'),'--json','--yes',state='occupied-auth',succeeds=False)
+        self.execute_file(destination/'import.sql',state='occupied-auth',succeeds=False)
         self.assertEqual(self.query('SELECT count(*) n FROM app_users',state='occupied-auth'),[{'n':1}])
         self.assertEqual(self.query('SELECT count(*) n FROM vods',state='occupied-auth'),[{'n':0}])
         self.query('DELETE FROM app_users;DELETE FROM public_cache_state',state='occupied-auth')
-        self.cli('execute','DB','--file',str(destination/'import.sql'),'--json','--yes',state='occupied-auth',succeeds=False)
-        self.cli('migrations','apply','DB',state='occupied-dispatch')
+        self.execute_file(destination/'import.sql',state='occupied-auth',succeeds=False)
+        self.migrate(state='occupied-dispatch')
         self.query('''INSERT INTO platform_ingestion_dispatch
             (id,ticket_id,state,lease_expires_at,next_attempt_at,last_attempt_at,run_id,run_attempt)
             VALUES(1,'old-environment-ticket','running','2099-01-01T00:00:00.000Z',
             '2026-09-08T00:00:00.000Z','2026-09-08T00:00:00.000Z','123456','1')''',state='occupied-dispatch')
         owner = self.query('SELECT * FROM platform_ingestion_dispatch',state='occupied-dispatch')
-        self.cli('execute','DB','--file',str(destination/'import.sql'),'--json','--yes',state='occupied-dispatch',succeeds=False)
+        self.execute_file(destination/'import.sql',state='occupied-dispatch',succeeds=False)
         self.assertEqual(self.query('SELECT * FROM platform_ingestion_dispatch',state='occupied-dispatch'),owner)
         self.assertEqual(self.query('SELECT count(*) n FROM vods',state='occupied-dispatch'),[{'n':0}])
         self.assertEqual(self.query("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name",state='occupied-dispatch'),before_triggers)

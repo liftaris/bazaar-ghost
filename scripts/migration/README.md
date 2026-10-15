@@ -35,7 +35,7 @@ python scripts/deployment_check.py validation --ref refs/heads/migration/cloudfl
 
 Verify output table counts against `manifest.json`, run `PRAGMA foreign_key_check`, inspect source-specific video/search results and stored screenshot objects, and confirm there are no pending historical notification records. Database import does not copy R2/storage objects. No source export or hosted import is performed automatically by tests or deployment.
 
-The tests exercise populated Twitch/YouTube/Bilibili snapshots, cross-platform appearances, paused ingestion state, capability rotation, private file permissions, deleted-ID sequence preservation, full-target trigger behavior and rejection paths. A real local workerd/D1 proof is opt-in because Wrangler needs local listeners:
+The tests exercise populated Twitch/YouTube/Bilibili snapshots, cross-platform appearances, paused ingestion state, capability rotation, private file permissions, deleted-ID sequence preservation, full-target trigger behavior and rejection paths. A real local workerd/D1 proof is opt-in because `cf` needs local listeners:
 
 ```sh
 RUN_LOCAL_D1_MIGRATION_TESTS=1 python -m unittest scripts.tests.test_migration_d1 -v

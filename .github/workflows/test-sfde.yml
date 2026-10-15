@@ -2,10 +2,10 @@ name: Tests
 on:
   push:
     branches: [main, dev]
-    paths: ["sfde/**", "worker/**", "package*.json", "wrangler*.jsonc", "vitest.config.ts", "tsconfig.json", "scripts/**", ".github/workflows/**"]
+    paths: ["sfde/**", "worker/**", "package*.json", "cloudflare.config.ts", "wrangler.config.ts", "config/**", "vitest.config.ts", "tsconfig.json", "scripts/**", ".github/workflows/**"]
   pull_request:
     branches: [main, dev]
-    paths: ["sfde/**", "worker/**", "package*.json", "wrangler*.jsonc", "vitest.config.ts", "tsconfig.json", "scripts/**", ".github/workflows/**"]
+    paths: ["sfde/**", "worker/**", "package*.json", "cloudflare.config.ts", "wrangler.config.ts", "config/**", "vitest.config.ts", "tsconfig.json", "scripts/**", ".github/workflows/**"]
   workflow_dispatch:
   workflow_call:
 permissions:
@@ -15,9 +15,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v5
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+      - uses: actions/checkout@v7.0.1
+      - uses: docker/setup-buildx-action@v4.4.1
+      - uses: docker/build-push-action@v7.4.0
         with:
           context: ./sfde
           target: test
@@ -37,7 +37,7 @@ jobs:
           docker cp sfde-tests:/app/tests/last_run.txt . || true
           if [ -f last_run_summary.md ]; then cat last_run_summary.md >> "$GITHUB_STEP_SUMMARY"; fi
           docker rm -f sfde-tests || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: sfde-test-report
@@ -49,15 +49,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: "24"
           cache: npm
       - run: npm ci --ignore-scripts
       - run: cp .dev.vars.example .dev.vars
-      - run: npm run types
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
       - run: python -m unittest discover -s scripts/tests
+      - name: Verify cf local D1 imports
+        run: RUN_LOCAL_D1_MIGRATION_TESTS=1 python -m unittest scripts.tests.test_migration_d1

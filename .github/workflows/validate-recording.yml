@@ -65,7 +65,7 @@ jobs:
     # checkout, preparation, public/JPEG verification and artifact upload.
     timeout-minutes: 450
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -85,7 +85,7 @@ jobs:
           VALIDATION_MINIMUM_DETECTIONS: ${{ inputs.minimum_detections }}
           VALIDATION_REQUIRE_IGD: ${{ inputs.require_igd }}
         run: python scripts/validation_runner/validate.py
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: validation-${{ inputs.source }}-${{ inputs.video_id }}-${{ github.run_id }}

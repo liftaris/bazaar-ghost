@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise real FFmpeg/OpenCV/PaddleOCR against a running local Wrangler backend.
+"""Exercise real FFmpeg/OpenCV/PaddleOCR against a running local cf backend.
 
 Run inside the SFDE test image with this repo mounted at /repo and cwd=/app.
 Seeds synthetic VODs through the local D1 CLI before invoking this script (see docs).
@@ -27,7 +27,7 @@ def api(path, data=None):
 
 def main():
     if api('/health')['environment'] != 'local':
-        raise SystemExit('This smoke test only supports local Wrangler')
+        raise SystemExit('This smoke test only supports local cf')
     annotations = json.loads(Path('/app/tests/fixtures/annotations.json').read_text())
     fixtures = [a for a in annotations.values() if a.get('validated') and a['category'] == 'clean' and a['quality'] == '480p'][:3]
     output = Path('/tmp/bazaarghost-smoke')

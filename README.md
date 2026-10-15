@@ -26,7 +26,7 @@ npm run db:seed
 npm run dev
 ```
 
-Wrangler serves `http://localhost:8787` with local D1/R2/Queues. External integrations are disabled by default. No Cloudflare login is needed. Use Node 24+; Docker supplies the Python/OCR runtime.
+`cf dev` serves `http://localhost:8787` with local D1/R2/Queues. External integrations are disabled by default. No Cloudflare login is needed. Use Node 24+; Docker supplies the Python/OCR runtime.
 
 ```bash
 npm run types
@@ -36,7 +36,7 @@ python3 -m unittest discover -s scripts/tests
 npm run build  # dry-run bundle; does not deploy
 ```
 
-See [Cloudflare setup, API contracts, migration and cutover](docs/cloudflare-migration.md) for the real local OCR smoke test and deployment prerequisites. See [SFDE usage](sfde/README.md) for processor details. The dedicated `migration/cloudflare` branch and GitHub `validation` environment isolate platform testing from existing dev/production. See [work log and verification](docs/platform-work-log.md) for current deployment status.
+See [CLI commands and dependency compatibility](docs/tooling.md) for the `cf` setup. See [Cloudflare setup, API contracts, migration and cutover](docs/cloudflare-migration.md) for the real local OCR smoke test and deployment prerequisites. See [SFDE usage](sfde/README.md) for processor details. The dedicated `migration/cloudflare` branch and GitHub `validation` environment isolate platform testing from existing dev/production. See [work log and verification](docs/platform-work-log.md) for current deployment status.
 
 ## Layout
 

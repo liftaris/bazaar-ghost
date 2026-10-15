@@ -1,0 +1,131 @@
+{
+  "local": {
+    "name": "bazaarghost-local",
+    "accountId": null,
+    "workersDev": false,
+    "previewUrls": false,
+    "vars": {
+      "ENVIRONMENT": "local",
+      "BUILD_COMMIT": "local",
+      "PUBLIC_URL": "http://localhost:8787",
+      "OUTBOUND_ENABLED": "false",
+      "AUTH_ENABLED": "false",
+      "CORS_ORIGINS": "http://localhost:3000,https://bazaarghost.stream"
+    },
+    "database": {
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "name": "bazaarghost-local"
+    },
+    "buckets": {
+      "DETECTIONS": "bazaarghost-detections-local",
+      "LOGS": "bazaarghost-logs-local"
+    },
+    "queue": {
+      "name": "bazaarghost-local",
+      "deadLetterQueue": "bazaarghost-local-dlq"
+    },
+    "crons": [
+      "* * * * *",
+      "*/3 * * * *",
+      "0 * * * *",
+      "0 0,12 * * *",
+      "0 2 * * *",
+      "0 3 * * *"
+    ]
+  },
+  "dev": {
+    "name": "bazaarghost-dev",
+    "accountId": null,
+    "workersDev": false,
+    "previewUrls": false,
+    "vars": {
+      "ENVIRONMENT": "dev",
+      "PUBLIC_URL": "https://REPLACE_ME",
+      "OUTBOUND_ENABLED": "false",
+      "AUTH_ENABLED": "false",
+      "CORS_ORIGINS": "https://bazaarghost.stream"
+    },
+    "database": {
+      "id": "00000000-0000-0000-0000-000000000000",
+      "name": "bazaarghost-dev"
+    },
+    "buckets": {
+      "DETECTIONS": "bazaarghost-detections-dev",
+      "LOGS": "bazaarghost-logs-dev"
+    },
+    "queue": {
+      "name": "bazaarghost-dev",
+      "deadLetterQueue": "bazaarghost-dev-dlq"
+    },
+    "crons": [
+      "* * * * *",
+      "*/3 * * * *",
+      "0 * * * *",
+      "0 0,12 * * *",
+      "0 2 * * *",
+      "0 3 * * *"
+    ]
+  },
+  "production": {
+    "name": "bazaarghost-production",
+    "accountId": null,
+    "workersDev": false,
+    "previewUrls": false,
+    "vars": {
+      "ENVIRONMENT": "production",
+      "PUBLIC_URL": "https://REPLACE_ME",
+      "OUTBOUND_ENABLED": "false",
+      "AUTH_ENABLED": "false",
+      "CORS_ORIGINS": "https://bazaarghost.stream"
+    },
+    "database": {
+      "id": "00000000-0000-0000-0000-000000000000",
+      "name": "bazaarghost-production"
+    },
+    "buckets": {
+      "DETECTIONS": "bazaarghost-detections-production",
+      "LOGS": "bazaarghost-logs-production"
+    },
+    "queue": {
+      "name": "bazaarghost-production",
+      "deadLetterQueue": "bazaarghost-production-dlq"
+    },
+    "crons": [
+      "* * * * *",
+      "*/3 * * * *",
+      "0 * * * *",
+      "0 0,12 * * *",
+      "0 2 * * *",
+      "0 3 * * *"
+    ]
+  },
+  "validation": {
+    "name": "bazaarghost-validation",
+    "accountId": "8df695f5ca97195e8c6f4896b81be028",
+    "workersDev": true,
+    "previewUrls": false,
+    "vars": {
+      "ENVIRONMENT": "validation",
+      "BUILD_COMMIT": "unreleased",
+      "PUBLIC_URL": "https://bazaarghost-validation.kaio-8df.workers.dev",
+      "OUTBOUND_ENABLED": "false",
+      "AUTH_ENABLED": "true",
+      "CORS_ORIGINS": "https://bazaarghost-validation.kaio-8df.workers.dev"
+    },
+    "database": {
+      "id": "4159adb1-b0af-4a3e-9a0c-755dfe5d822c",
+      "name": "bazaarghost-validation"
+    },
+    "buckets": {
+      "DETECTIONS": "bazaarghost-validation-detections",
+      "LOGS": "bazaarghost-validation-logs"
+    },
+    "queue": {
+      "name": "bazaarghost-validation-jobs",
+      "deadLetterQueue": "bazaarghost-validation-dlq"
+    },
+    "crons": [
+      "* * * * *"
+    ]
+  }
+}

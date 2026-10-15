@@ -86,8 +86,8 @@ jobs:
       INGEST_LIMIT: ${{ inputs.limit }}
       INGEST_SECONDS: ${{ inputs.seconds }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.11'
       - name: Verify backend environment
@@ -95,11 +95,11 @@ jobs:
       - name: Start ingestion runner
         id: runner
         run: python scripts/catalog_api.py runner-start
-      - uses: denoland/setup-deno@v2
+      - uses: denoland/setup-deno@v2.0.5
         if: steps.runner.outputs.proceed == 'true'
         with:
-          deno-version: v2.x
-      - run: pip install 'yt-dlp[default]>=2026.7.4,<2027'
+          deno-version: v2.9.7
+      - run: pip install 'yt-dlp[default]==2026.8.19'
         if: steps.runner.outputs.proceed == 'true'
       - name: Enroll optional account
         if: steps.runner.outputs.proceed == 'true' && steps.runner.outputs.automatic == 'false' && inputs.identity != '' && inputs.source != 'none'
@@ -117,7 +117,7 @@ jobs:
           fi
           set -o pipefail
           python scripts/platform_ingestion.py "${args[@]}" | tee ingestion-result.jsonl
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: platform-ingestion
