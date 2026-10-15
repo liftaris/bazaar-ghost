@@ -1,0 +1,30 @@
+name: Check YouTube runner access
+on:
+  workflow_dispatch:
+    inputs:
+      video_id:
+        description: Public recording ID to check without cataloging or processing
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  check:
+    if: github.ref == 'refs/heads/migration/cloudflare'
+    runs-on: ubuntu-latest
+    environment: validation
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.11'
+      - uses: denoland/setup-deno@v2.0.5
+        with:
+          deno-version: v2.9.7
+      - run: pip install 'streamlink==8.6.2' 'yt-dlp[default]==2026.8.19'
+      - name: Check metadata and decode one frame
+        env:
+          VIDEO_ID: ${{ inputs.video_id }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+        run: python scripts/check_youtube_access.py
