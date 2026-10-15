@@ -43,6 +43,20 @@ Build once, then check and deploy that exact artifact with the same mode. `BUILD
 
 Set secrets in the Cloudflare dashboard, or pass a private JSON file to `cf deploy --prebuilt --mode validation --secrets-file <PATH>`. This uploads secrets as part of a deployment. Never commit the file or put secret values in command arguments. Existing hosted secrets are preserved by normal deployments. Local `.dev.vars` remains local; optional disabled provider integrations are not made required by the configuration migration.
 
+### Configured validation deployment
+
+On October 14, 2026, the validation GitHub environment was configured with `CLOUDFLARE_VALIDATION_API_TOKEN` and its existing account ID. [Run 38674960947](https://github.com/liftaris/bazaar-ghost/actions/runs/38674960947) completed tests, the cf build/prebuilt dry-run, remote D1 migrations, deployment, and exact-commit health verification. A green deploy job now represents an actual deployment when these credentials remain configured.
+
+The dedicated account-owned token is named `bazaarghost-validation-github-deploy`. Its permissions are Workers Scripts Write, D1 Write, Queues Write, and Workers R2 Storage Metadata Read on the configured account. These service permissions are account-scoped; the token name and GitHub environment do not restrict it to individual validation resources. Existing branch/resource guards remain required. Renew or replace it before `2027-01-13T00:00:00Z` (January 12, 2027, 4 p.m. Pacific), then update the GitHub environment secret.
+
+The validation Worker has its GitHub dispatch secret, and validation has a YouTube API key for the read-only runner check:
+
+```sh
+gh workflow run check-youtube-access.yml --ref migration/cloudflare -f video_id=jwxFzTcvWLs
+```
+
+This check reads official metadata and decodes one real video frame. It performs no catalog writes or OCR dispatch. [Hosted run 38675486605](https://github.com/liftaris/bazaar-ghost/actions/runs/38675486605) could read metadata but failed playback with `auth_required`; the same check passed locally. An API key does not provide media playback access. Recurring processing remains disabled until the chosen Actions runner passes playback and the pending ingestion backlog is reviewed. The normal catalog path still uses yt-dlp; the preflight does not silently change its readiness or duration semantics.
+
 ## October 2026 dependency update
 
 Npm dependencies are exact-pinned in `package.json` and `package-lock.json`; Python direct dependencies are pinned in `sfde/requirements.txt`. GitHub Actions, Deno, and the disposable runner are also pinned to reviewed releases.

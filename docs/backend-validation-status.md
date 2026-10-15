@@ -6,10 +6,10 @@ This is the acceptance record for the dedicated Cloudflare migration environment
 
 - Branch: `migration/cloudflare`; existing `dev`, `main`, and the separate frontend remain untouched.
 - Hosted Worker: `bazaarghost-validation`, at `https://bazaarghost-validation.kaio-8df.workers.dev`.
-- Verified deployed application: `1fea42911143514376882d9345fe5ce1f803c230`; Worker version `20fa6904-f2c2-4f2b-8ca6-5ea78a6685b7`; migrations `0001`–`0007` applied.
+- Verified deployed application: `6f9c1c8167b527f36d5725832d5bcd7377210878`; Worker version `640f8303-05f0-4a0d-91e1-fe2e7d7ed0ac`; migrations `0001`–`0007` applied. Deployment and exact-commit public health were verified on October 14, 2026.
 - D1, both R2 buckets, the queue, and dead-letter queue belong to validation. Auth is enabled; outbound integrations are disabled. The provider endpoint reports no configured login providers. Auth maintenance at `* * * * *` is the only configured Cron; actual successful minute invocations and an expired-counter deletion have been observed.
 - OCR and workflow execution stay in GitHub Actions. Successful YouTube jobs used disposable, one-job local-container Actions runners. Those runners and containers were removed afterward.
-- [CI 34296335605](https://github.com/liftaris/bazaar-ghost/actions/runs/34296335605) passed for the deployed commit; the same application source passed 211 local Worker tests, 128 Python tests and 129 offline OCR tests. Its deployment steps were skipped. The application was subsequently deployed through authenticated local Wrangler and independently checked over HTTP; CI success alone is not deployment evidence.
+- [CI 38675469292](https://github.com/liftaris/bazaar-ghost/actions/runs/38675469292) passed 211 Worker tests, the 148-test Python script suite, 244 offline OCR tests, and the real local D1 import check. Its deployment steps actually ran: cf build/prebuilt validation, remote migrations, deployment, and exact-commit health verification. An independent public health request and Cloudflare deployment listing confirmed the serving version. Historical hosted proofs below retain their original dates and builds.
 
 ## Capability acceptance
 
@@ -61,7 +61,7 @@ The profile/claim revision is deployed on `1fea429` with schema 7. Its hosted sy
 
 Dedicated provider applications and user consent are needed for [real OAuth acceptance](user-auth.md#verification-and-remaining-acceptance). Outbound enablement must be reviewed alongside pending ingestion work because the same switch controls multiple integrations. Existing provider callbacks must remain unchanged.
 
-Unattended deployment requires the dedicated validation Cloudflare CI credential. Worker dispatch also needs a repository-scoped Actions-write credential. Local Wrangler reauthentication restored management access and deployment; it does not establish either automation credential.
+Validation CI deployment credentials and the Worker's GitHub dispatch credential were configured on October 14, 2026. [Run 38674960947](https://github.com/liftaris/bazaar-ghost/actions/runs/38674960947) performed an actual cf deployment and exact-commit health verification. The supplied GitHub credential also successfully dispatched a bounded catalog workflow. See [configured validation deployment](tooling.md#configured-validation-deployment) for permissions and renewal. Recurring provider processing is still disabled: the read-only hosted access check confirmed official YouTube metadata access but a playback sign-in restriction. An accessible Actions runner remains necessary before activation.
 
 A separate temporary database was prepared for remote import rehearsal, but automatic approval review rejected resource creation pending explicit permission. No such database was created, and that approval remains pending. This does not prevent work in the already provisioned validation environment.
 
