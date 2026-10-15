@@ -3,8 +3,10 @@ CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 SET search_path = public, extensions;
 SELECT plan(14);
 
-INSERT INTO platform_accounts(id, source, source_id, display_name, processing_enabled)
-VALUES ('00000000-0000-4000-8000-000000920001', 'youtube', 'UC0000000000000000000000', 'YouTube only', true);
+INSERT INTO sfde_profiles(id, profile_name, crop_region)
+OVERRIDING SYSTEM VALUE VALUES (920001, 'youtube-test', ARRAY[0.5,0.5,0.4,0.2]);
+INSERT INTO platform_accounts(id, source, source_id, display_name, processing_enabled, sfde_profile_id)
+VALUES ('00000000-0000-4000-8000-000000920001', 'youtube', 'UC0000000000000000000000', 'YouTube only', true, 920001);
 INSERT INTO vods(id, source, source_id, platform_account_id, title, duration_seconds,
   bazaar_chapters, ready_for_processing, published_at, notifications_enabled)
 OVERRIDING SYSTEM VALUE VALUES (920001, 'youtube', 'YouTube0001',

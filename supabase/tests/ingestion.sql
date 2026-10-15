@@ -2,10 +2,12 @@ BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 SET search_path = public, extensions;
 SELECT plan(17);
+INSERT INTO sfde_profiles(id, profile_name, crop_region)
+OVERRIDING SYSTEM VALUE VALUES (960001, 'ingestion-test', ARRAY[0.5,0.5,0.4,0.2]);
 -- Isolate work selection; this transaction rolls back all fixture changes.
 UPDATE platform_ingestion_jobs SET status = 'completed';
-INSERT INTO platform_accounts(id, source, source_id, display_name, processing_enabled)
-VALUES ('00000000-0000-4000-8000-000000960001', 'youtube', 'UC0000000000000000960001', 'Ingestion fixture', true);
+INSERT INTO platform_accounts(id, source, source_id, display_name, processing_enabled, sfde_profile_id)
+VALUES ('00000000-0000-4000-8000-000000960001', 'youtube', 'UC0000000000000000960001', 'Ingestion fixture', true, 960001);
 SELECT is((SELECT count(*)::integer FROM platform_ingestion_jobs WHERE account_id = '00000000-0000-4000-8000-000000960001'),
   1, 'enabling a new creator schedules polling');
 UPDATE platform_ingestion_jobs SET status = 'completed' WHERE kind = 'account';

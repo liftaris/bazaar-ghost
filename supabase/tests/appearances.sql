@@ -2,8 +2,10 @@ BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 SET search_path = public, extensions;
 SELECT plan(10);
-INSERT INTO platform_accounts(id, source, source_id, display_name, processing_enabled)
-VALUES ('00000000-0000-4000-8000-000000940001', 'youtube', 'UC0000000000000000009400', 'Overlap fixture', true);
+INSERT INTO sfde_profiles(id, profile_name, crop_region)
+OVERRIDING SYSTEM VALUE VALUES (940001, 'appearances-test', ARRAY[0.5,0.5,0.4,0.2]);
+INSERT INTO platform_accounts(id, source, source_id, display_name, processing_enabled, sfde_profile_id)
+VALUES ('00000000-0000-4000-8000-000000940001', 'youtube', 'UC0000000000000000009400', 'Overlap fixture', true, 940001);
 INSERT INTO vods(id, source, source_id, platform_account_id, duration_seconds,
   bazaar_chapters, ready_for_processing, notifications_enabled)
 OVERRIDING SYSTEM VALUE VALUES

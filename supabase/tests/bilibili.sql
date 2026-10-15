@@ -2,8 +2,10 @@ BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 SET search_path = public, extensions;
 SELECT plan(9);
-INSERT INTO platform_accounts(id, source, source_id, display_name, processing_enabled)
-VALUES ('00000000-0000-4000-8000-000000930001', 'bilibili', '930001', 'Bilibili fixture', true);
+INSERT INTO sfde_profiles(id, profile_name, crop_region)
+OVERRIDING SYSTEM VALUE VALUES (930001, 'bilibili-test', ARRAY[0.5,0.5,0.4,0.2]);
+INSERT INTO platform_accounts(id, source, source_id, display_name, processing_enabled, sfde_profile_id)
+VALUES ('00000000-0000-4000-8000-000000930001', 'bilibili', '930001', 'Bilibili fixture', true, 930001);
 INSERT INTO vods(id, source, source_id, source_video_id, source_part_id, source_part_index,
   platform_account_id, duration_seconds, bazaar_chapters, ready_for_processing, notifications_enabled)
 OVERRIDING SYSTEM VALUE VALUES
