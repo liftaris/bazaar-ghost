@@ -13,7 +13,7 @@ This is the acceptance record for the dedicated Cloudflare migration environment
 
 ## Capability acceptance
 
-Local YouTube evidence was refreshed on October 14, 2026: real discovery and 20 durable ingestion jobs succeeded, followed by four completed 30-minute OCR chunks across three recordings. All 29 public detections and JPEGs were verified, including nonzero-start continuation and preservation of prior results. This found and fixed an FFmpeg diagnostic/timestamp collision. See [local YouTube acceptance](platform-ingestion.md#local-youtube-acceptance-october-14-2026); these local runs do not change the hosted deployment or acceptance claims below.
+Local YouTube evidence was refreshed on October 14, 2026: real discovery and 20 durable ingestion jobs succeeded, followed by seven completed OCR chunks covering three full recordings (4,278 samples). All 35 public detections and JPEGs were verified, including nonzero-start continuation and preservation of prior results. This found and fixed an FFmpeg diagnostic/timestamp collision. See [local YouTube acceptance](platform-ingestion.md#local-youtube-acceptance-october-14-2026); these local runs do not change the hosted deployment or acceptance claims below.
 
 | Capability | Established evidence | Remaining acceptance |
 |---|---|---|
