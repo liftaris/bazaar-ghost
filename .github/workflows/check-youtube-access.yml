@@ -10,6 +10,11 @@ on:
         description: Public recording ID to check without cataloging or processing
         required: true
         type: string
+      probe:
+        description: Existing pipeline or a comparison with yt-dlp PO-token support
+        type: choice
+        default: baseline
+        options: [baseline, po_token]
 permissions:
   contents: read
 jobs:
@@ -17,7 +22,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/migration/cloudflare'
     runs-on: ubuntu-latest
     environment: validation
-    timeout-minutes: 8
+    timeout-minutes: 18
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.0.0
@@ -27,8 +32,42 @@ jobs:
         with:
           deno-version: v2.9.7
       - run: pip install 'streamlink==8.6.2' 'yt-dlp[default]==2026.8.19'
-      - name: Check metadata and decode one frame
+      - name: Check baseline metadata and playback before installing the plugin
+        continue-on-error: ${{ inputs.probe == 'po_token' }}
         env:
           VIDEO_ID: ${{ inputs.video_id }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-        run: python scripts/check_youtube_access.py
+        run: |
+          mkdir -p .ignore/youtube-pot
+          python scripts/check_youtube_access.py | tee .ignore/youtube-pot/baseline.json
+      - name: Install and start the pinned PO-token provider
+        if: inputs.probe == 'po_token'
+        run: |
+          pip install 'bgutil-ytdlp-pot-provider==2.0.2'
+          docker run --name youtube-pot-provider -d --init \
+            -p 127.0.0.1:4416:4416 \
+            brainicism/bgutil-ytdlp-pot-provider:2.0.2@sha256:d7d34108b76e52c7d3b575fe9e797e4bf41c1b2a08f80c5292eff6f851ce8472
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:4416/ping >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - name: Compare baseline and token-assisted media playback
+        if: inputs.probe == 'po_token'
+        env:
+          VIDEO_ID: ${{ inputs.video_id }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          YOUTUBE_PROBE_OUTPUT: .ignore/youtube-pot
+        run: python scripts/check_youtube_pot.py
+      - name: Save safe reports and decoded frames
+        if: always() && inputs.probe == 'po_token'
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: youtube-pot-${{ inputs.video_id }}
+          path: .ignore/youtube-pot/
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Stop token provider
+        if: always() && inputs.probe == 'po_token'
+        run: docker rm -f youtube-pot-provider
