@@ -57,6 +57,45 @@ gh workflow run check-youtube-access.yml --ref migration/cloudflare -f video_id=
 
 This check reads official metadata and decodes one real video frame. It performs no catalog writes or OCR dispatch. [Hosted run 38675486605](https://github.com/liftaris/bazaar-ghost/actions/runs/38675486605) could read metadata but failed playback with `auth_required`; the same check passed locally. An API key does not provide media playback access. Recurring processing remains disabled until the chosen Actions runner passes playback and the pending ingestion backlog is reviewed. The normal catalog path still uses yt-dlp; the preflight does not silently change its readiness or duration semantics.
 
+### YouTube PO-token probe
+
+The same manual workflow can compare the existing resolver with yt-dlp's
+[documented token-provider setup](https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide):
+
+```sh
+gh workflow run check-youtube-access.yml --ref migration/cloudflare \
+  -f video_id=jwxFzTcvWLs -f probe=po_token
+```
+
+It checks the baseline before installing the plugin, then starts the
+`bgutil-ytdlp-pot-provider` 2.0.2 service on loopback and installs its matching
+plugin. The container is pinned by digest. It tries `mweb`, then the provider's
+documented `mweb,tv,web_safari` alternative if needed. Success requires evidence
+that yt-dlp retrieved a PO token and decoded frames at the start, 220 seconds,
+1800 seconds, and near the end, using an available video rendition of at least
+480p. Shorter recordings use bounded timestamps.
+
+The artifact contains safe JSON reports and successfully decoded JPEGs. Token
+values, signed URLs, and verbose extractor output are never included. The job
+stops the provider afterward. This is a read-only experiment, with no catalog
+writes, OCR dispatch, cookies, or changes to normal processing dependencies.
+
+On October 14, 2026, all three GitHub-hosted probes failed during extraction:
+
+| Recording | Run | Result for both client configurations |
+| --- | --- | --- |
+| `jwxFzTcvWLs` | [38682275472](https://github.com/liftaris/bazaar-ghost/actions/runs/38682275472) | `auth_required`; no token request reached the provider |
+| `Bfr68889LR0` | [38682278954](https://github.com/liftaris/bazaar-ghost/actions/runs/38682278954) | `auth_required`; no token request reached the provider |
+| `62BIbb1liSU` | [38682281142](https://github.com/liftaris/bazaar-ghost/actions/runs/38682281142) | `auth_required`; no token request reached the provider |
+
+Each runner could read official metadata, and each baseline also failed with
+`auth_required`. The matching plugin loaded and the service passed its version
+check. The local control did retrieve tokens, but direct 480p FFmpeg reads were
+denied with HTTP 403; a separate bounded native yt-dlp download succeeded once.
+Neither result establishes full playback readiness. The hosted failure happens
+before the token-generation step, so adding this provider alone did not resolve
+the sign-in restriction. Keep recurring YouTube processing disabled.
+
 ## October 2026 dependency update
 
 Npm dependencies are exact-pinned in `package.json` and `package-lock.json`; Python direct dependencies are pinned in `sfde/requirements.txt`. GitHub Actions, Deno, and the disposable runner are also pinned to reviewed releases.
