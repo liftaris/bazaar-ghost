@@ -37,7 +37,7 @@ on:
         type: string
         default: ""
       old_templates:
-        description: "Use old templates (requires 480p quality)"
+        description: "Use old templates (normalize processing to 480p)"
         required: false
         type: boolean
         default: false
@@ -55,129 +55,32 @@ jobs:
       quality: ${{ steps.check.outputs.quality }}
       available: ${{ steps.check.outputs.available }}
       video_fps: ${{ steps.check.outputs.video_fps }}
+      stream_quality: ${{ steps.check.outputs.stream_quality }}
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install streamlink
-        run: pip install streamlink
+        if: ${{ !inputs.local }}
+        run: pip install streamlink==8.6.2
 
       - name: Check VOD availability and quality
-        if: ${{ !inputs.local }}
         id: check
-        run: |
-          echo "Checking VOD ${{ inputs.vod_id }} availability and qualities..."
-          VOD_URL="https://www.twitch.tv/videos/${{ inputs.vod_id }}"
+        env:
+          VOD_ID: ${{ inputs.vod_id }}
+          REQUESTED_QUALITY: ${{ inputs.quality }}
+          OLD_TEMPLATES: ${{ inputs.old_templates }}
+          LOCAL: ${{ inputs.local }}
+        run: python scripts/prepare_twitch_rendition.py
 
-          # Get available streams in JSON format
-          STREAMS_JSON=$(streamlink --json "$VOD_URL" 2>/dev/null || echo '{"error": "failed"}')
-
-          # Check if VOD is available
-          if echo "$STREAMS_JSON" | grep -q '"error"'; then
-            echo "VOD ${{ inputs.vod_id }} is not available"
-            echo "$STREAMS_JSON"
-            echo "available=false" >> $GITHUB_OUTPUT
-            exit 1
-          fi
-
-          # Extract available streams
-          echo "Available streams JSON:"
-          echo "$STREAMS_JSON" | jq '.streams | keys'
-
-          # Determine best quality based on old_templates flag
-          SELECTED_STREAM=""
-          OLD_TEMPLATES="${{ inputs.old_templates }}"
-
-          if [ "$OLD_TEMPLATES" = "true" ]; then
-            echo "Older vod, using smaller templates - checking for 480p quality only"
-
-            # Check for 480p or 480p60
-            if echo "$STREAMS_JSON" | jq -e '.streams["480p"]' > /dev/null 2>&1; then
-              SELECTED_STREAM="480p"
-            elif echo "$STREAMS_JSON" | jq -e '.streams["480p60"]' > /dev/null 2>&1; then
-              SELECTED_STREAM="480p60"
-            else
-              echo "ERROR: Small templates are 480p only, 480p stream not found"
-              echo "Available qualities:"
-              echo "$STREAMS_JSON" | jq '.streams | keys'
-
-              # Mark VOD as failed since required quality not available
-              echo "No 480p quality available for old templates, marking vod as failed"
-              curl -fsSL -X PATCH "$SUPABASE_URL/rest/v1/vods?source_id=eq.${{ inputs.vod_id }}" \
-                -H "apikey: $SUPABASE_SECRET_KEY" \
-                -H "Authorization: Bearer $SUPABASE_SECRET_KEY" \
-                -H "Content-Type: application/json" \
-                -H "Prefer: return=minimal" \
-                -d "{\"status\": \"failed\"}"
-
-              echo "available=false" >> $GITHUB_OUTPUT
-              exit 1
-            fi
-          else
-            # Normal quality selection (preference: 480p -> 720p -> 1080p)
-            if echo "$STREAMS_JSON" | jq -e '.streams["480p"]' > /dev/null 2>&1; then
-              SELECTED_STREAM="480p"
-            elif echo "$STREAMS_JSON" | jq -e '.streams["480p60"]' > /dev/null 2>&1; then
-              SELECTED_STREAM="480p60"
-            elif echo "$STREAMS_JSON" | jq -e '.streams["720p"]' > /dev/null 2>&1; then
-              SELECTED_STREAM="720p"
-            elif echo "$STREAMS_JSON" | jq -e '.streams["720p60"]' > /dev/null 2>&1; then
-              SELECTED_STREAM="720p60"
-            elif echo "$STREAMS_JSON" | jq -e '.streams["1080p"]' > /dev/null 2>&1; then
-              SELECTED_STREAM="1080p"
-            elif echo "$STREAMS_JSON" | jq -e '.streams["1080p60"]' > /dev/null 2>&1; then
-              SELECTED_STREAM="1080p60"
-            else
-              # No supported qualities available
-              echo "No supported qualities available, marking vod as failed"
-              curl -fsSL -X PATCH "$SUPABASE_URL/rest/v1/vods?source_id=eq.${{ inputs.vod_id }}" \
-                -H "apikey: $SUPABASE_SECRET_KEY" \
-                -H "Authorization: Bearer $SUPABASE_SECRET_KEY" \
-                -H "Content-Type: application/json" \
-                -H "Prefer: return=minimal" \
-                -d "{\"status\": \"failed\"}"
-
-              echo "available=false" >> $GITHUB_OUTPUT
-              exit 1
-            fi
-          fi
-
-          echo "Selected stream: $SELECTED_STREAM"
-
-          # Extract base quality (remove 60 suffix if present) and FPS
-          if [[ "$SELECTED_STREAM" == *"60" ]]; then
-            QUALITY="${SELECTED_STREAM%60}"
-            VIDEO_FPS="60"
-          else
-            QUALITY="$SELECTED_STREAM"
-            VIDEO_FPS="30"
-          fi
-
-          echo "Resolution: $QUALITY"
-          echo " Video FPS: $VIDEO_FPS"
-
-          echo "quality=$QUALITY" >> $GITHUB_OUTPUT
-          echo "video_fps=$VIDEO_FPS" >> $GITHUB_OUTPUT
-          echo "available=true" >> $GITHUB_OUTPUT
-
-      - name: Update VOD status to failed if not available
-        if: failure()
-        run: |
-          echo "Updating VOD ${{ inputs.vod_id }} status to 'failed' - VOD not available"
-
-          # Update VOD status to failed and availability to unavailable with timestamp
-          CURRENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
-          curl -fsSL -X PATCH "$SUPABASE_URL/rest/v1/vods?source_id=eq.${{ inputs.vod_id }}" \
-            -H "apikey: $SUPABASE_SECRET_KEY" \
-            -H "Authorization: Bearer $SUPABASE_SECRET_KEY" \
-            -H "Content-Type: application/json" \
-            -H "Prefer: return=minimal" \
-            -d "{\"status\": \"failed\", \"availability\": \"unavailable\", \"unavailable_since\": \"$CURRENT_TIME\", \"last_availability_check\": \"$CURRENT_TIME\"}"
-
-          echo "VOD marked as failed and unavailable"
+  # Preflight failures leave existing VOD/chunk state unchanged.
+  # VOD status is derived by database triggers from individual chunk statuses.
 
   # Fetch chunks from Supabase if not provided
   fetch-chunks:
@@ -194,57 +97,45 @@ jobs:
     steps:
       - name: Determine chunk UUIDs
         id: fetch
+        env:
+          VOD_ID: ${{ inputs.vod_id }}
+          INPUT_CHUNKS: ${{ inputs.chunk_uuids }}
         run: |
-          # Check if chunk_uuids was provided as input
-          INPUT_CHUNKS='${{ inputs.chunk_uuids }}'
+          [[ "$VOD_ID" =~ ^[0-9]+$ ]] || exit 1
+          UUID_PATTERN='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+          validate_chunks() {
+            jq -ce --arg pattern "$UUID_PATTERN" '
+              if type == "array" and all(.[]; type == "string" and test($pattern))
+              then . else error("Expected an array of chunk UUIDs") end'
+          }
 
-          if [ -n "$INPUT_CHUNKS" ] && [ "$INPUT_CHUNKS" != "[]" ]; then
-            echo "Using provided chunk UUIDs: $INPUT_CHUNKS"
-            echo "chunk_uuids=$INPUT_CHUNKS" >> $GITHUB_OUTPUT
-          else
-            echo "No chunk UUIDs provided, fetching from Supabase for VOD ${{ inputs.vod_id }}..."
+          CHUNK_IDS="[]"
+          if [ -n "$INPUT_CHUNKS" ]; then
+            CHUNK_IDS=$(validate_chunks <<< "$INPUT_CHUNKS")
+          fi
 
-            # Call Supabase RPC function to get pending chunks
-            RESPONSE=$(curl -fsSL -X POST "$SUPABASE_URL/rest/v1/rpc/get_pending_chunks_for_vod" \
+          if [ "$CHUNK_IDS" = "[]" ]; then
+            echo "Fetching pending chunks for VOD $VOD_ID"
+            RPC_REQUEST=$(jq -nc --arg source "$VOD_ID" '{p_source_id: $source}')
+            if ! RESPONSE=$(curl -fsSL -X POST "$SUPABASE_URL/rest/v1/rpc/get_pending_chunks_for_vod" \
               -H "apikey: $SUPABASE_SECRET_KEY" \
               -H "Authorization: Bearer $SUPABASE_SECRET_KEY" \
               -H "Content-Type: application/json" \
               -H "Prefer: return=representation" \
-              -d "{\"p_source_id\": \"${{ inputs.vod_id }}\"}")
-
-            CURL_EXIT=$?
-
-            if [ $CURL_EXIT -ne 0 ]; then
-              echo "Failed to fetch chunks from Supabase (exit code: $CURL_EXIT)"
-              echo "Response: $RESPONSE"
+              --data "$RPC_REQUEST"); then
+              echo "Failed to fetch pending chunks"
               exit 1
             fi
-
-            # Extract chunk IDs and format as JSON array
-            CHUNK_IDS=$(echo "$RESPONSE" | jq -c '[.[] | .chunk_id]' 2>/dev/null || echo "[]")
-
-            # Check if we got any chunks
-            if [ "$CHUNK_IDS" = "[]" ] || [ -z "$CHUNK_IDS" ]; then
-              echo "No pending chunks found for VOD ${{ inputs.vod_id }}"
-              echo "Full response: $RESPONSE"
-
-              # Update VOD status to indicate no chunks available
-              curl -fsSL -X PATCH "$SUPABASE_URL/rest/v1/vods?source_id=eq.${{ inputs.vod_id }}" \
-                -H "apikey: $SUPABASE_SECRET_KEY" \
-                -H "Authorization: Bearer $SUPABASE_SECRET_KEY" \
-                -H "Content-Type: application/json" \
-                -H "Prefer: return=minimal" \
-                -d '{"status": "no_chunks"}'
-
-              echo "chunk_uuids=[]" >> $GITHUB_OUTPUT
-              exit 1
-            fi
-
-            CHUNK_COUNT=$(echo "$CHUNK_IDS" | jq 'length')
-            echo "Found $CHUNK_COUNT pending chunks for VOD ${{ inputs.vod_id }}"
-            echo "Chunk UUIDs: $CHUNK_IDS"
-            echo "chunk_uuids=$CHUNK_IDS" >> $GITHUB_OUTPUT
+            CHUNK_IDS=$(jq -ce 'if type == "array" then map(.chunk_id) else error("Invalid chunk response") end' <<< "$RESPONSE" | validate_chunks)
           fi
+
+          if [ "$CHUNK_IDS" = "[]" ]; then
+            echo "No pending chunks for VOD $VOD_ID; existing state is unchanged"
+            exit 1
+          fi
+          CHUNK_COUNT=$(jq 'length' <<< "$CHUNK_IDS")
+          echo "Processing $CHUNK_COUNT explicitly selected chunks for VOD $VOD_ID"
+          echo "chunk_uuids=$CHUNK_IDS" >> "$GITHUB_OUTPUT"
 
   # Process all chunks in parallel using matrix strategy
   process-chunk:
@@ -285,35 +176,25 @@ jobs:
       - name: Process chunk with SFOT
         id: sfot
         timeout-minutes: 25
+        env:
+          QUALITY: ${{ needs.check-vod.outputs.quality }}
+          STREAM_QUALITY: ${{ needs.check-vod.outputs.stream_quality }}
+          VIDEO_FPS: ${{ needs.check-vod.outputs.video_fps }}
+          SFOT_PROFILE: ${{ inputs.sfot_profile }}
         run: |
           # Create output directory with write permissions for container user (UID 1000)
           mkdir -p ./output
           chmod 777 ./output
 
-          # Set quality and FPS (use defaults for local testing if check-vod was skipped)
-          QUALITY="${{ needs.check-vod.outputs.quality }}"
-          VIDEO_FPS="${{ needs.check-vod.outputs.video_fps }}"
-
-          if [ -z "$QUALITY" ]; then
-            QUALITY="${{ inputs.quality }}"
-            echo "Using default quality: $QUALITY (check-vod skipped)"
-          else
-            echo "Using quality: $QUALITY"
-          fi
-
-          if [ -z "$VIDEO_FPS" ]; then
-            VIDEO_FPS="60"
-            echo "Using default FPS: $VIDEO_FPS (check-vod skipped)"
-          else
-            echo "Video FPS: $VIDEO_FPS"
-          fi
+          echo "Using processing quality: $QUALITY"
+          echo "Using exact source rendition: $STREAM_QUALITY"
+          echo "Source FPS: ${VIDEO_FPS:-unknown}"
 
           echo "Processing chunk ${{ matrix.chunk_id }} for VOD ${{ inputs.vod_id }}"
           echo "Small templates mode: ${{ inputs.old_templates }}"
           echo "Environment: ${{ inputs.environment }}"
 
           # Parse SFOT profile if provided
-          SFOT_PROFILE='${{ inputs.sfot_profile }}'
           if [ -n "$SFOT_PROFILE" ] && [ "$SFOT_PROFILE" != "" ]; then
             echo "Using SFOT profile"
             echo "$SFOT_PROFILE" | jq '.'
@@ -330,6 +211,7 @@ jobs:
             -e CHUNK_ID="${{ matrix.chunk_id }}" \
             -e TEST_MODE="false" \
             -e QUALITY="$QUALITY" \
+            -e STREAM_QUALITY="$STREAM_QUALITY" \
             -e VIDEO_FPS="$VIDEO_FPS" \
             -e OLD_TEMPLATES="${{ inputs.old_templates }}" \
             -e SFOT_PROFILE="$SFOT_PROFILE" \
@@ -405,18 +287,3 @@ jobs:
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
-
-      - name: Update VOD status to failed
-        if: failure()
-        run: |
-          echo "Updating VOD ${{ inputs.vod_id }} status to 'failed' due to chunk processing failure"
-
-          # Update VOD status to failed using Supabase API
-          curl -fsSL -X PATCH "$SUPABASE_URL/rest/v1/vods?source_id=eq.${{ inputs.vod_id }}" \
-            -H "apikey: $SUPABASE_SECRET_KEY" \
-            -H "Authorization: Bearer $SUPABASE_SECRET_KEY" \
-            -H "Content-Type: application/json" \
-            -H "Prefer: return=minimal" \
-            -d '{"status": "failed"}'
-
-          echo "VOD status updated to failed"
