@@ -496,7 +496,7 @@ class SFOTProcessor:
             result = self.frame_processor.process_frame(frame_data, timestamp, self.vod_id, self.chunk_id)
             self.frames_processed += 1
             record_counter('frames_processed', 1, metric_attrs)
-            if result and result.get('is_matchup'):
+            if result and result.get('is_matchup') and result.get('username'):
                 self._put(self.result_queue, result)
                 self.matchups_found += 1
                 self.logger.info(json.dumps({
