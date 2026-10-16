@@ -319,3 +319,23 @@ it('limits automatic dispatch to reviewed VODs and keeps platform ingestion paus
   expect(await hasDueIngestionDispatch(runtime)).toBe(false);
   expect(await dispatchIngestion(runtime)).toEqual({ dispatched: false });
 });
+
+it('uses one EventSub filter and matches both event type and this environment callback', async () => {
+  await env.DB.prepare("INSERT INTO streamers(id,login) VALUES(1,'reviewed')").run();
+  const twitch = new Twitch({ ...env, PUBLIC_URL: 'https://validation.example' });
+  const helix = vi.spyOn(twitch, 'helix').mockImplementation(async (endpoint, params, method, body) => {
+    expect(endpoint).toBe('eventsub/subscriptions');
+    if (method === 'POST') {
+      expect(body).toMatchObject({ type: 'stream.offline', transport: { callback: 'https://validation.example/functions/v1/process-vod' } });
+      return { data: [{ id: 'new-validation-subscription' }] };
+    }
+    expect(params).toEqual({ user_id: '1' });
+    return { data: [
+      { id: 'production', type: 'stream.offline', condition: { broadcaster_user_id: '1' }, status: 'enabled', transport: { callback: 'https://production.example/functions/v1/process-vod' } },
+      { id: 'other-event', type: 'stream.online', condition: { broadcaster_user_id: '1' }, status: 'enabled', transport: { callback: 'https://validation.example/functions/v1/process-vod' } },
+    ], pagination: {} };
+  });
+  await twitch.ensureSubscription(1);
+  expect(helix).toHaveBeenCalledTimes(2);
+  expect((await one(env, 'SELECT eventsub_subscription_id FROM streamers WHERE id=1'))!.eventsub_subscription_id).toBe('new-validation-subscription');
+});

@@ -93,12 +93,13 @@ export class Twitch {
     let cursor: string | undefined;
     do {
       const result = await this.helix("eventsub/subscriptions", {
-        type: "stream.offline",
+        // Twitch accepts only one filter (type, status, or user_id).
         user_id: String(id),
         ...(cursor ? { after: cursor } : {}),
       });
       const matching = result.data?.find(
         (s: any) =>
+          s.type === "stream.offline" &&
           s.condition.broadcaster_user_id === String(id) &&
           s.transport.callback === callback &&
           ["enabled", "webhook_callback_verification_pending"].includes(
