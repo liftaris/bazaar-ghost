@@ -257,3 +257,65 @@ it("empty imported chapter lists cannot starve eligible VODs in the scheduler", 
     { type: "process", id: 5 },
   ]);
 });
+
+it('discovers offline creators from recent archives, preserves disables, and catalogs immediately', async () => {
+  await env.DB.prepare("INSERT INTO streamers(id,login,processing_enabled) VALUES(2,'disabled',0)").run();
+  const send = vi.fn().mockResolvedValue(undefined);
+  const twitch = new Twitch({ ...env, JOBS: { send } as unknown as Queue });
+  vi.spyOn(twitch, 'gameId').mockResolvedValue('bazaar');
+  const helix = vi.spyOn(twitch, 'helix').mockImplementation(async (endpoint, params) => {
+    if (endpoint === 'videos') {
+      expect(params).toEqual({ game_id: 'bazaar', first: '100', type: 'archive', sort: 'time' });
+      return { data: [{ user_id: '1' }, { user_id: '1' }, { user_id: '2' }], pagination: { cursor: 'next' } };
+    }
+    expect(endpoint).toBe('users');
+    expect((params as URLSearchParams).getAll('id')).toEqual(['1', '2']);
+    return { data: [{ id: '1', login: 'Offline', display_name: 'Offline', profile_image_url: '' },
+      { id: '2', login: 'disabled', display_name: 'Disabled', profile_image_url: '' }] };
+  });
+  expect(await twitch.discover()).toEqual({ streamersChecked: 2 });
+  expect(helix).toHaveBeenCalledTimes(2);
+  expect(await rows(env, 'SELECT id,processing_enabled FROM streamers ORDER BY id')).toEqual([
+    { id: 1, processing_enabled: 1 }, { id: 2, processing_enabled: 0 }]);
+  expect(send.mock.calls.map(([job]) => job)).toEqual([
+    { type: 'catalog', id: 1 }, { type: 'catalog', id: 2 }, { type: 'discover', cursor: 'next', page: 1 }]);
+});
+
+it('bounds recent-archive discovery to five pages and rejects stuck pagination', async () => {
+  const send = vi.fn().mockResolvedValue(undefined);
+  const twitch = new Twitch({ ...env, JOBS: { send } as unknown as Queue });
+  vi.spyOn(twitch, 'gameId').mockResolvedValue('bazaar');
+  vi.spyOn(twitch, 'helix').mockResolvedValue({ data: [], pagination: { cursor: 'same' } });
+  await twitch.discover('previous', 4);
+  expect(send).not.toHaveBeenCalled();
+  await expect(twitch.discover('same', 2)).rejects.toThrow('did not advance');
+});
+
+it('limits validation discovery without changing the production default', async () => {
+  await env.DB.prepare("INSERT INTO processing_config(key,value) VALUES('twitch_discovery_streamer_ids','[\"2\"]')").run();
+  const send = vi.fn().mockResolvedValue(undefined);
+  const twitch = new Twitch({ ...env, JOBS: { send } as unknown as Queue });
+  vi.spyOn(twitch, 'gameId').mockResolvedValue('bazaar');
+  vi.spyOn(twitch, 'helix').mockImplementation(async (endpoint, params) => {
+    if (endpoint === 'videos') return { data: [{ user_id: '1' }, { user_id: '2' }], pagination: {} };
+    expect((params as URLSearchParams).getAll('id')).toEqual(['2']);
+    return { data: [{ id: '2', login: 'reviewed', display_name: 'Reviewed', profile_image_url: '' }] };
+  });
+  await twitch.discover();
+  expect(await rows(env, 'SELECT id FROM streamers')).toEqual([{ id: 2 }]);
+  expect(send).toHaveBeenCalledExactlyOnceWith({ type: 'catalog', id: 2 });
+});
+
+it('limits automatic dispatch to reviewed VODs and keeps platform ingestion paused', async () => {
+  await env.DB.prepare("INSERT INTO streamers(id,login) VALUES(1,'reviewed')").run();
+  for (const id of ['111', '222']) await env.DB.prepare("INSERT INTO vods(streamer_id,source_id,duration_seconds,published_at,bazaar_chapters,ready_for_processing) VALUES(1,?,12,'2026-10-16T00:00:00Z','[0,12]',1)").bind(id).run();
+  await env.DB.prepare("INSERT INTO processing_config(key,value) VALUES('automatic_vods','[\"twitch:111\"]'),('automatic_platform_ingestion','false')").run();
+  const { pendingVideos, dispatchAutomatic } = await import('../processing');
+  const { hasDueIngestionDispatch, dispatchIngestion } = await import('../platform-ingestion-dispatch');
+  const vods = await rows(env, 'SELECT id,source_id FROM vods ORDER BY id');
+  expect(await pendingVideos(env)).toEqual([{ id: vods[0].id }]);
+  expect(await dispatchAutomatic(env, vods[1].id)).toEqual([]);
+  const runtime = { ...env, ENVIRONMENT: 'validation', OUTBOUND_ENABLED: 'true', GITHUB_TOKEN: 'test' };
+  expect(await hasDueIngestionDispatch(runtime)).toBe(false);
+  expect(await dispatchIngestion(runtime)).toEqual({ dispatched: false });
+});

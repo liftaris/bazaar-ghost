@@ -215,7 +215,7 @@ async function route(req: Request, env: Env): Promise<Response> {
       );
       const result = await statement(
         env,
-        `UPDATE chunks SET status='failed',last_error=?,updated_at=? WHERE id IN(SELECT value FROM json_each(?)) AND status='queued' AND queued_at=? RETURNING id`,
+        `UPDATE chunks SET status='failed',attempt_count=attempt_count+1,last_error=?,updated_at=? WHERE id IN(SELECT value FROM json_each(?)) AND status='queued' AND queued_at=? RETURNING id`,
         String(input.error || "Runner preparation failed").slice(0, 2000),
         now(),
         JSON.stringify(input.ids),

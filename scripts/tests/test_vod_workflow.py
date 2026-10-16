@@ -13,9 +13,8 @@ class WorkflowTests(unittest.TestCase):
     def test_respects_requested_quality(self):
         self.assertEqual(workflow.select_quality({'480p': {}, '720p60': {}}, '720p', False), '720p60')
 
-    def test_old_templates_require_480p(self):
-        with self.assertRaises(ValueError):
-            workflow.select_quality({'720p': {}}, '720p', True)
+    def test_old_templates_can_normalize_other_sources_to_480p(self):
+        self.assertEqual(workflow.select_quality({'720p': {}}, '720p', True), '720p')
         self.assertEqual(workflow.select_quality({'720p': {}, '480p60': {}}, '720p', True), '480p60')
 
     def test_unsupported_quality_is_rejected(self):
@@ -101,6 +100,23 @@ class WorkflowTests(unittest.TestCase):
                 self.assertEqual(outputs['old_templates'], 'true')
                 self.assertEqual(outputs['sfde_profile']['profile_name'], 'Renamed metadata')
                 self.assertIs(type(outputs['sfde_profile']['id']), int)
+
+class NativePreparationTests(unittest.TestCase):
+    def test_native_label_and_template_geometry_cross_the_workflow_boundary(self):
+        vod = {'id': 1, 'source': 'twitch', 'processing_enabled': True, 'ready_for_processing': True,
+               'availability': 'available', 'old_templates': True,
+               'profile': {'id': 1, 'crop_region': [0, 0, 1, 1], 'opaque_edge': True}}
+        from types import SimpleNamespace
+        for native in ('720p48', '936p60', '720p29.97'):
+            with self.subTest(native=native), patch.dict(workflow.os.environ, {'VOD_ID': '123'}, clear=True), \
+                    patch.object(workflow, 'get_vod', return_value=vod), \
+                    patch.object(workflow, 'api', return_value=[{'id': 'chunk'}]), \
+                    patch.object(workflow.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=json.dumps({'streams': {native: {}}}))), \
+                    patch.object(workflow, 'output') as output:
+                workflow.prepare()
+                values = dict(call.args for call in output.call_args_list)
+                self.assertEqual(values['quality'], '480p')
+                self.assertEqual(values['stream_quality'], native)
 
 
 if __name__ == '__main__':

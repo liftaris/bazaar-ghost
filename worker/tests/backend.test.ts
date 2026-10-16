@@ -533,3 +533,32 @@ it("a delayed GitHub attempt cannot claim or fail a newer dispatch", async () =>
   ).toBe("queued");
   expect((await claim(env, chunk.id, fresh)).claimed).toBe(true);
 });
+
+it('retries failed processing after backoff, fences the old owner, and stops at three attempts', async () => {
+  const [chunk, sibling] = await planned();
+  const { updateChunk } = await import('../processing');
+  const siblingToken = (await claim(env, sibling.id)).claim_token!;
+  await updateChunk(env, sibling.id, siblingToken, { status: 'completed' });
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const token = (await claim(env, chunk.id)).claim_token!;
+    expect(token).toBeTruthy();
+    await updateChunk(env, chunk.id, token, { status: 'failed', error: 'Transient decoder failure' });
+    await recover(env);
+    expect((await one(env, 'SELECT status FROM chunks WHERE id=?', chunk.id))!.status).toBe('failed');
+    await statement(env, "UPDATE chunks SET updated_at='2000-01-01T00:00:00Z' WHERE id=?", chunk.id).run();
+    await recover(env);
+    expect((await one(env, 'SELECT status FROM chunks WHERE id=?', chunk.id))!.status).toBe(attempt < 3 ? 'pending' : 'failed');
+    await expect(updateChunk(env, chunk.id, token, { status: 'completed' })).rejects.toMatchObject({ status: 409 });
+  }
+  expect((await one(env, 'SELECT status FROM chunks WHERE id=?', sibling.id))!.status).toBe('completed');
+  expect((await one(env, 'SELECT attempt_count FROM chunks WHERE id=?', chunk.id))!.attempt_count).toBe(3);
+});
+
+it('counts expired unclaimed dispatches toward the retry budget', async () => {
+  const [chunk] = await planned();
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    await statement(env, "UPDATE chunks SET status='queued',queued_at='2000-01-01T00:00:00Z' WHERE id=?", chunk.id).run();
+    await recover(env);
+    expect(await one(env, 'SELECT status,attempt_count FROM chunks WHERE id=?', chunk.id)).toEqual({ status: attempt < 3 ? 'pending' : 'failed', attempt_count: attempt });
+  }
+});

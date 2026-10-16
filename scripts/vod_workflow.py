@@ -17,22 +17,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'sfde' / 'src'))
 from backend_environment import open_backend, verify_backend
 from media_source import resolve_media, validate_source_id
+from renditions import select_rendition
 
 SUPPORTED = ('360p', '480p', '720p', '1080p')
 
 
 def select_quality(streams: Dict[str, Any], preferred: str, old_templates: bool) -> str:
-    base = preferred.removesuffix('60')
-    if base not in SUPPORTED:
-        raise ValueError(f'Unsupported quality: {preferred}')
-    candidates = ['480p', '480p60'] if old_templates else [
-        preferred, f'{base}60', base, '480p', '480p60', '720p', '720p60',
-        '1080p', '1080p60', '360p', '360p60',
-    ]
-    for candidate in candidates:
-        if candidate in streams:
-            return candidate
-    raise ValueError('No supported rendition is available for these templates')
+    return select_rendition(streams, preferred, old_templates)['stream_quality']
 
 
 def api(path: str, params: Dict[str, str] = None, body: Any = None, method: str = 'GET') -> Any:
@@ -143,15 +134,22 @@ def prepare() -> None:
         if os.getenv('LOCAL') != 'true':
             resolve_media(vod['source'], os.environ['VOD_ID'], selected)
     elif os.getenv('LOCAL') == 'true':
-        selected = select_quality({preferred: {}}, preferred, old)
+        selected = preferred
     else:
         result = subprocess.run(['streamlink', '--no-config', '--json', f'https://www.twitch.tv/videos/{os.environ["VOD_ID"]}'], capture_output=True, text=True, timeout=60)
         if result.returncode:
             raise RuntimeError('Streamlink could not fetch renditions; availability was not changed')
         streams = json.loads(result.stdout).get('streams', {})
         selected = select_quality(streams, preferred, old)
-    output('quality', selected.removesuffix('60'))
-    output('video_fps', '60' if selected.endswith('60') else '30')
+    if vod['source'] == 'twitch':
+        rendition = select_rendition({selected: {}}, preferred, old)
+        output('quality', rendition['quality'])
+        output('stream_quality', rendition['stream_quality'])
+        output('video_fps', rendition['video_fps'] if rendition['video_fps'] is not None else '')
+    else:
+        output('quality', selected.removesuffix('60'))
+        output('stream_quality', '')
+        output('video_fps', '')
     output('sfde_profile', profile)
 
 

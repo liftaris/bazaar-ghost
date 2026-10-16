@@ -146,15 +146,21 @@ export class Twitch {
       now(),
     ).run();
   }
-  async discover(cursor?: string) {
-    const page = await this.helix("streams", {
+  async discover(cursor?: string, pageNumber = 0) {
+    requireValue(Number.isInteger(pageNumber) && pageNumber >= 0 && pageNumber < 5, "Invalid discovery page");
+    const page = await this.helix("videos", {
       game_id: await this.gameId(),
       first: "100",
+      type: "archive",
+      sort: "time",
       ...(cursor ? { after: cursor } : {}),
     });
+    const scope = await one(this.env, "SELECT value FROM processing_config WHERE key='twitch_discovery_streamer_ids'");
+    const allowed: unknown = scope ? JSON.parse(scope.value) : null;
+    requireValue(allowed === null || (Array.isArray(allowed) && allowed.every(id => typeof id === 'string' && /^\d+$/.test(id))), "Invalid Twitch discovery scope");
     const ids = [
       ...new Set<string>((page.data || []).map((s: any) => s.user_id)),
-    ];
+    ].filter(id => allowed === null || (allowed as string[]).includes(id));
     if (ids.length) {
       const users = await this.helix(
         "users",
@@ -162,14 +168,19 @@ export class Twitch {
       );
       for (const user of users.data) {
         await this.syncUser(user);
-        await this.env.JOBS.send({ type: "subscribe", id: Number(user.id) });
+        // Catalog immediately: an offline streamer may not emit another event
+        // soon. Cataloging also ensures the stream.offline subscription.
+        await this.env.JOBS.send({ type: "catalog", id: Number(user.id) });
       }
     }
-    if (page.pagination?.cursor)
+    if (page.pagination?.cursor && pageNumber < 4) {
+      requireValue(page.pagination.cursor !== cursor, "Discovery pagination did not advance");
       await this.env.JOBS.send({
         type: "discover",
         cursor: page.pagination.cursor,
+        page: pageNumber + 1,
       });
+    }
     return { streamersChecked: ids.length };
   }
   async catalog(

@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlparse
 
 from bilibili_source import split_identity
 from extraction_errors import ExtractionError, extraction_error, safe_error_category
+from renditions import parse_rendition, select_rendition
 
 
 logger = logging.getLogger('sfde.media')
@@ -74,7 +75,7 @@ def _rendition_score(height: int, fps: float, target: int,
     return (height < target, abs(height - target), fps < 50 if prefer_high_fps else fps > 30)
 
 
-def _http_media(url: str, headers: Dict[str, Any], resolver: str, height: int, fps: float) -> Dict[str, Any]:
+def _http_media(url: str, headers: Dict[str, Any], resolver: str, height: int, fps: Optional[float]) -> Dict[str, Any]:
     parsed = urlparse(url)
     if parsed.scheme not in ('http', 'https') or not parsed.hostname or '\n' in url or '\r' in url:
         raise ValueError('Resolver did not return an HTTP media URL')
@@ -88,7 +89,7 @@ def _http_media(url: str, headers: Dict[str, Any], resolver: str, height: int, f
     return {'url': url, 'headers': safe_headers, 'resolver': resolver, 'height': height, 'fps': fps}
 
 
-def resolve_media(source: str, source_id: str, quality: str = '480p') -> Dict[str, Any]:
+def resolve_media(source: str, source_id: str, quality: str = '480p', *, stream_quality: Optional[str] = None) -> Dict[str, Any]:
     """Resolve a fresh seekable locator. Fall back to yt-dlp only for YouTube.
 
     Resolution does not mark a video unavailable; transient extraction failures
@@ -105,6 +106,20 @@ def resolve_media(source: str, source_id: str, quality: str = '480p') -> Dict[st
                                   capture_output=True, text=True, timeout=90, check=False)
         if response.returncode == 0:
             streams = json.loads(response.stdout).get('streams', {})
+            if source == 'twitch':
+                playable = {name: stream for name, stream in streams.items()
+                            if stream.get('url') and stream.get('type') in ('http', 'hls')}
+                if stream_quality:
+                    parse_rendition(stream_quality)
+                    if stream_quality not in playable:
+                        raise ValueError('Selected Twitch rendition is no longer available')
+                    name = stream_quality
+                else:
+                    name = select_rendition(playable, quality)['stream_quality']
+                height, fps = parse_rendition(name)
+                stream = playable[name]
+                return {**_http_media(stream['url'], stream.get('headers') or {}, 'streamlink', height, fps),
+                        'stream_quality': name}
             candidates = []
             for name, stream in streams.items():
                 match = re.fullmatch(r'(\d+)p(\d+)?', name)

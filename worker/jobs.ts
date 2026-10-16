@@ -1,6 +1,6 @@
 import { one, rows, statement, requireValue } from "./http";
 import { Twitch, type CatalogStats } from "./twitch";
-import { dispatch, pendingVideos, plan, recover } from "./processing";
+import { dispatchAutomatic, pendingVideos, plan, recover } from "./processing";
 import { notify } from "./discord";
 import { cleanupAuth } from "./auth";
 import { dispatchIngestion, hasDueIngestionDispatch } from "./platform-ingestion-dispatch";
@@ -105,7 +105,7 @@ export async function handleJob(env: Env, job: Job) {
   const twitch = new Twitch(env);
   switch (job.type) {
     case "discover":
-      return twitch.discover(job.cursor);
+      return twitch.discover(job.cursor, job.page);
     case "subscribe":
       return twitch.ensureSubscription(Number(job.id));
     case "catalog":
@@ -122,7 +122,7 @@ export async function handleJob(env: Env, job: Job) {
     case "plan":
       return plan(env, Number(job.id));
     case "process":
-      return dispatch(env, Number(job.id));
+      return dispatchAutomatic(env, Number(job.id));
     case "platform-ingestion":
       return dispatchIngestion(env);
     case "notify":

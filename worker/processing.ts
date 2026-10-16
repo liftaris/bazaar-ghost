@@ -159,10 +159,17 @@ export async function recover(env: Env) {
   const time = now();
   await statement(
     env,
-    "UPDATE chunks SET status=CASE WHEN attempt_count<3 THEN 'pending' ELSE 'failed' END,claim_token=NULL,lease_expires_at=NULL,last_error='Lease expired',updated_at=? WHERE (status='processing' AND lease_expires_at<?) OR (status='queued' AND queued_at<?)",
+    `UPDATE chunks SET
+      status=CASE WHEN attempt_count+CASE WHEN status='queued' THEN 1 ELSE 0 END<3 THEN 'pending' ELSE 'failed' END,
+      attempt_count=attempt_count+CASE WHEN status='queued' THEN 1 ELSE 0 END,
+      claim_token=NULL,lease_expires_at=NULL,
+      last_error=CASE WHEN status='failed' THEN last_error ELSE 'Lease expired' END,updated_at=?
+      WHERE (status='processing' AND lease_expires_at<?) OR (status='queued' AND queued_at<?)
+        OR (status='failed' AND attempt_count<3 AND updated_at<=?)`,
     time,
     time,
     new Date(Date.now() - 35 * 60_000).toISOString(),
+    new Date(Date.now() - 5 * 60_000).toISOString(),
   ).run();
 }
 export async function pendingVideos(env: Env, limit = 3, platformsOnly = false) {
@@ -170,12 +177,20 @@ export async function pendingVideos(env: Env, limit = 3, platformsOnly = false) 
   return rows(env, `SELECT v.id FROM vod_processing_context v
     WHERE v.processing_enabled=1 AND v.ready_for_processing=1 AND v.availability='available'
     AND v.status IN('pending','partial','failed') AND json_array_length(v.bazaar_chapters)>0
+    AND (NOT EXISTS(SELECT 1 FROM processing_config WHERE key='automatic_vods') OR
+      v.source||':'||v.source_id IN(SELECT value FROM json_each((SELECT value FROM processing_config WHERE key='automatic_vods'))))
     ${platformsOnly ? "AND v.source IN('youtube','bilibili')" : ''}
     AND (NOT EXISTS(SELECT 1 FROM chunks WHERE vod_id=v.id) OR EXISTS(
       SELECT 1 FROM chunks WHERE vod_id=v.id AND status='pending' AND (scheduled_for IS NULL OR scheduled_for<=?)))
     ORDER BY coalesce((SELECT max(priority) FROM chunks WHERE vod_id=v.id AND status='pending'
       AND (scheduled_for IS NULL OR scheduled_for<=?)),CASE WHEN v.source='twitch' THEN 0 ELSE -10 END) DESC,
       v.published_at DESC,v.id LIMIT ?`, time,time,integer(limit,'pending video limit',1,100));
+}
+export async function dispatchAutomatic(env: Env, vodId: number) {
+  const allowed = await one(env, `SELECT 1 FROM vods v WHERE id=? AND
+    (NOT EXISTS(SELECT 1 FROM processing_config WHERE key='automatic_vods') OR
+    v.source||':'||v.source_id IN(SELECT value FROM json_each((SELECT value FROM processing_config WHERE key='automatic_vods'))))`, vodId);
+  return allowed ? dispatch(env, vodId) : [];
 }
 export async function dispatch(env: Env, vodId: number) {
   const pending = await plan(env, vodId);
@@ -340,7 +355,9 @@ export async function updateChunk(
     if (data[field] != null) changes[field] = integer(data[field], field);
   if (data.quality != null) {
     requireValue(
-      /^(360|480|720|1080)p(60)?$/.test(data.quality),
+      typeof data.quality === 'string' && data.quality.length <= 32 &&
+        /^[1-9]\d*p(?:\d+(?:\.\d+)?)?$/.test(data.quality) &&
+        (!data.quality.split('p')[1] || Number(data.quality.split('p')[1]) > 0),
       "Invalid quality",
     );
     changes.quality = data.quality;

@@ -39,15 +39,15 @@ class DeploymentTests(unittest.TestCase):
             with self.subTest(target=target):
                 self.assertEqual(self.validate(target)['vars']['ENVIRONMENT'], target)
 
-    def test_auth_maintenance_is_the_only_validation_schedule_and_preserves_other_environments(self):
+    def test_validation_twitch_schedules_preserve_other_environments(self):
         provider_schedules = ['*/3 * * * *', '0 * * * *', '0 0,12 * * *', '0 2 * * *', '0 3 * * *']
         for target in ['local', 'dev', 'production', 'validation']:
             config = deployment.read_environments()[target]
             with self.subTest(target=target):
-                expected = ['* * * * *'] + ([] if target == 'validation' else provider_schedules)
+                expected = ['* * * * *'] + (['*/3 * * * *', '0 * * * *', '0 2 * * *'] if target == 'validation' else provider_schedules)
                 self.assertEqual(config['crons'], expected)
                 self.assertEqual(config['vars']['ENVIRONMENT'], target)
-                self.assertEqual(config['vars']['OUTBOUND_ENABLED'], 'false')
+                self.assertEqual(config['vars']['OUTBOUND_ENABLED'], 'true' if target == 'validation' else 'false')
 
     def test_rejects_cross_environment_branch_and_tags(self):
         for ref in ['refs/heads/dev', 'refs/heads/main', 'refs/tags/migration/cloudflare']:

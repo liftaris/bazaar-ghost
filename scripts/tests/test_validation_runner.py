@@ -162,7 +162,7 @@ class ValidationRunnerTests(unittest.TestCase):
         profile = {'id': 1, 'crop_region': [1, 2, 3, 4]}
         prepared = {'sfde_profile': json.dumps(profile), 'old_templates': 'false', 'quality': '480p', 'video_fps': '60'}
         self.assertEqual(validation.verify_prepared(prepared, selected, profile), profile)
-        for change in ({'quality': '720p'}, {'video_fps': '29.97'}, {'old_templates': 'true'},
+        for change in ({'quality': '720p'}, {'stream_quality': 'audio_only'}, {'old_templates': 'true'},
                        {'sfde_profile': '{"id":1,"crop_region":[4,3,2,1]}'}, {'sfde_profile': '{"id":2}'}):
             with self.subTest(change=change), self.assertRaises(validation.ValidationFailure):
                 validation.verify_prepared({**prepared, **change}, selected, profile)
@@ -182,7 +182,7 @@ class ValidationRunnerTests(unittest.TestCase):
         prepared = dict(call.args for call in output.call_args_list)
         self.assertEqual(prepared['chunk_uuids'], [CHUNK['id']])
         self.assertEqual(prepared['quality'], '720p')
-        self.assertEqual(prepared['video_fps'], '60')
+        self.assertEqual(prepared['stream_quality'], '720p60')
         self.assertEqual(prepared['sfde_profile'], vod['profile'])
 
     def test_public_proof_reads_past_first_page_and_exact_page_boundary_without_ignoring_extras(self):
@@ -396,6 +396,7 @@ class ValidationRunnerTests(unittest.TestCase):
                     self.assertEqual(kwargs['env']['SFDE_PROFILE'], '')
                     self.assertEqual(kwargs['env']['LOCAL'], 'false')
                     prepared = {'chunk_uuids': json.dumps([chunk['id'] for chunk in chunks]), 'quality': '480p', 'video_fps': fps,
+                                'stream_quality': ('480p60' if fps == '60' else '480p') if source == 'twitch' else '',
                                 'old_templates': 'false', 'sfde_profile': json.dumps(profile), **(prepare_change or {})}
                     Path(kwargs['env']['GITHUB_OUTPUT']).write_text(''.join(f'{key}={value}\n' for key, value in prepared.items()))
                 else:

@@ -11,7 +11,7 @@ export const CLAIMABLE_INGESTION = `(
  (j.status IN('pending','waiting') AND j.next_attempt_at<=${CLOCK}) OR
  (j.status='processing' AND j.lease_expires_at<=${CLOCK}))
  AND (j.account_id IS NULL OR a.processing_enabled=1)`;
-const DUE = `EXISTS(SELECT 1 FROM platform_ingestion_jobs j
+const DUE = `NOT EXISTS(SELECT 1 FROM processing_config WHERE key='automatic_platform_ingestion' AND value='false') AND EXISTS(SELECT 1 FROM platform_ingestion_jobs j
  LEFT JOIN platform_accounts a ON a.id=j.account_id WHERE ${CLAIMABLE_INGESTION})`;
 const DISPATCH_AVAILABLE = `(state='idle' OR lease_expires_at<=${CLOCK}) AND next_attempt_at<=${CLOCK}`;
 

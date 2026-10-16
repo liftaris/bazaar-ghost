@@ -27,6 +27,7 @@ sys.path.insert(0, str(ROOT / 'sfde' / 'src'))
 from backend_environment import open_backend, verify_backend
 from catalog_youtube import ensure_account, normalize_video
 from media_source import youtube_metadata
+from renditions import parse_rendition
 from video_catalog import save_video
 import vod_workflow
 from guard import validate_job
@@ -268,9 +269,14 @@ def verify_twitch_catalog(vod, selected, *, completed=False):
 
 def verify_prepared(prepared, selected, catalog_profile=None):
     profile = json.loads(prepared['sfde_profile'])
+    if prepared.get('stream_quality'):
+        try:
+            parse_rendition(prepared['stream_quality'])
+        except ValueError:
+            raise ValidationFailure('Invalid prepared native rendition') from None
     if (profile.get('id') != selected['profile_id']
             or prepared.get('old_templates') != str(selected['templates'] == 'old').lower()
-            or prepared.get('quality') != selected['quality'] or prepared.get('video_fps') not in ('30', '60')
+            or prepared.get('quality') != selected['quality']
             or (catalog_profile is not None and profile != catalog_profile)):
         raise ValidationFailure('Prepared profile, template era or rendition differs from the reviewed inputs')
     return profile
@@ -460,7 +466,7 @@ def processor_environment(prepared, chunk_id):
     allowed = ('PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK',
                'BAZAARGHOST_API_URL', 'BAZAARGHOST_PROCESSOR_KEY', 'ENVIRONMENT', 'GITHUB_ACTIONS', 'GITHUB_REF')
     result = {key: os.environ[key] for key in allowed if key in os.environ}
-    result.update(CHUNK_ID=chunk_id, QUALITY=prepared['quality'], VIDEO_FPS=prepared['video_fps'],
+    result.update(CHUNK_ID=chunk_id, QUALITY=prepared['quality'], STREAM_QUALITY=prepared.get('stream_quality', ''),
                   SFDE_PROFILE=prepared['sfde_profile'], OLD_TEMPLATES=prepared['old_templates'],
                   TEST_MODE='false', OMP_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1')
     return result
@@ -522,7 +528,7 @@ def main():
         chunks = [vod_workflow.api(f'chunks/{chunk_id}') for chunk_id in ids]
         verify_plan(chunks, selected, saved['id'])
         profile = verify_prepared(prepared, selected, existing_catalog['profile'] if existing_catalog else None)
-        quality = prepared['quality'] + ('60' if prepared['video_fps'] == '60' else '')
+        quality = prepared.get('stream_quality') or prepared['quality']
         report['quality'] = quality
         report['profile'] = {key: profile.get(key) for key in ('id', 'profile_name', 'crop_region', 'igd_crop_region', 'scale', 'custom_edge', 'opaque_edge', 'from_date', 'to_date')}
         supervisor.phase('ocr')

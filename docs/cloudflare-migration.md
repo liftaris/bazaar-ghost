@@ -161,3 +161,27 @@ The original local smoke evidence is in `.ignore/cloudflare-local-evidence.json`
 ## Cost context
 
 The earlier measured production storage was about 13.44 GB of detections plus 0.25 GB of archived logs. With OCR and Actions staying on GitHub, the assessment estimated roughly **$5–7/month** for Workers Paid, D1 and R2 at current scale, excluding optional image transformations. This is an estimate, not a billing measurement of this implementation. D1 row scans and the trigram index need production-volume measurement before treating that range as a guarantee. See the local assessment in `.ignore/cloudflare-assessment/report.md` for dated sources and assumptions.
+
+## Twitch processing controls
+
+Discovery reads the 500 most recent Bazaar archives (five queued pages), including
+creators who are offline. Each discovered creator is cataloged immediately;
+existing processing disables and crop profiles are preserved. Cataloging also
+registers the environment's EventSub callback.
+
+Twitch source rendition names are preserved independently of template geometry.
+For example, `936p60` can be decoded into the supported `720p` geometry, while
+historical templates always normalize to `480p`. Sampling precedes scaling.
+Explicit failures retry after five minutes, and interrupted leases are recovered;
+three failed attempts stop automatic retries. Preparation failures count toward
+that limit. Completed sibling chunks are retained.
+
+Optional `processing_config` entries bound an automatic rollout:
+
+- `twitch_discovery_streamer_ids`: JSON array of Twitch user ID strings; absent means all discovered creators.
+- `automatic_vods`: JSON array of `source:source_id` strings; absent means all eligible recordings. This constrains the scheduler and queued processing dispatch, not an explicit administrator request.
+- `automatic_platform_ingestion`: set to `false` to pause automatic YouTube/Bilibili catalog dispatch without pausing Twitch.
+
+Empty arrays allow no entries. Set rollout controls before enabling outbound calls
+and provider schedules. The isolated Twitch acceptance run uses these controls;
+production behavior remains unrestricted when the entries are absent.

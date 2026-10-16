@@ -27,6 +27,7 @@ os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 from video import SourceTimeline, timestamped_frames
 from video_endpoint import VideoEndpointError, verify_video_endpoint
 from media_source import ffmpeg_input_args, resolve_media, validate_source_id
+from renditions import parse_rendition, processing_quality
 from frame_processor import FrameProcessor
 from backend_client import BackendClient
 from json_logger import JSONFormatter
@@ -56,16 +57,15 @@ class SFDEProcessor:
         self.chunk_id = config["chunk_id"]
         self.test_mode = config.get("test_mode", False)
         requested_quality = config.get('quality', '480p')
-        self.quality = requested_quality.removesuffix('60')
+        self.quality = processing_quality(requested_quality)
         if self.quality not in QUALITY_RESOLUTIONS:
             raise ValueError(f'Unsupported QUALITY: {requested_quality}')
         self.old_templates = config.get('old_templates', False)
         if self.old_templates and self.quality != '480p':
             raise ValueError('Old templates require 480p quality')
-        self.video_fps = 60 if requested_quality.endswith('60') else config.get('video_fps', 30)
-        if self.video_fps not in (30, 60):
-            raise ValueError('VIDEO_FPS must be 30 or 60')
-        self.formatted_quality = f'{self.quality}60' if self.video_fps == 60 else self.quality
+        self.stream_quality = config.get('stream_quality') or None
+        _, self.video_fps = parse_rendition(self.stream_quality or requested_quality)
+        self.formatted_quality = self.stream_quality or requested_quality
 
         # Load configuration
         self.config = self._load_config()
@@ -541,7 +541,8 @@ class SFDEProcessor:
         Piping a Streamlink segment rebases timestamps at a rounded segment
         boundary. Seeking the playlist itself preserves the requested offset.
         """
-        media = resolve_media(self.source, self.vod_id, self.formatted_quality)
+        media = resolve_media(self.source, self.vod_id, self.quality,
+                              **({'stream_quality': self.stream_quality} if self.source == 'twitch' and self.stream_quality else {}))
         self._media_input_args = ffmpeg_input_args(media)
         self.logger.info('Media resolved with %s (%sp input)', media['resolver'], media['height'])
         return media['url']
@@ -788,7 +789,7 @@ class SFDEProcessor:
                         igd_scan_active = False
 
                 # --- Handle new matchup detection ---
-                if result and result.get("is_matchup"):
+                if result and result.get("is_matchup") and result.get("username"):
                     if igd_enabled:
                         # If a previous IGD scan is still active, flush it
                         if igd_scan_active and pending_detection is not None:
@@ -927,7 +928,7 @@ def main() -> None:
         "test_mode": os.getenv("TEST_MODE", "false").lower() == "true",
         "quality": os.getenv("QUALITY", "480p"),
         "old_templates": os.getenv("OLD_TEMPLATES", "false").lower() == "true",
-        "video_fps": int(os.getenv("VIDEO_FPS", "30")),  # Actual video FPS (30 or 60)
+        "stream_quality": os.getenv("STREAM_QUALITY"),
     }
 
     if not config["chunk_id"]:

@@ -69,7 +69,7 @@ jobs:
       chunk_uuids: ${{ steps.prepare.outputs.chunk_uuids }}
       old_templates: ${{ steps.prepare.outputs.old_templates }}
       quality: ${{ steps.prepare.outputs.quality }}
-      video_fps: ${{ steps.prepare.outputs.video_fps }}
+      stream_quality: ${{ steps.prepare.outputs.stream_quality }}
       sfde_profile: ${{ steps.prepare.outputs.sfde_profile }}
     steps:
       - uses: actions/checkout@v7.0.1
@@ -92,7 +92,7 @@ jobs:
     if: needs.prepare.result == 'success' && needs.prepare.outputs.chunk_uuids != '[]'
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
-    timeout-minutes: 45
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       max-parallel: 4
@@ -104,7 +104,7 @@ jobs:
       BAZAARGHOST_PROCESSOR_KEY: ${{ secrets.BAZAARGHOST_PROCESSOR_KEY }}
       CHUNK_ID: ${{ matrix.chunk_id }}
       QUALITY: ${{ needs.prepare.outputs.quality }}
-      VIDEO_FPS: ${{ needs.prepare.outputs.video_fps }}
+      STREAM_QUALITY: ${{ needs.prepare.outputs.stream_quality }}
       SFDE_PROFILE: ${{ needs.prepare.outputs.sfde_profile }}
       OLD_TEMPLATES: ${{ needs.prepare.outputs.old_templates }}
       ENVIRONMENT: ${{ inputs.environment }}
@@ -126,13 +126,14 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Process chunk
+        timeout-minutes: 35
         run: |
           mkdir -p output
           chmod 777 output
           docker run --rm --network host \
             -v "$PWD/output:/app/output" \
             -e BAZAARGHOST_API_URL -e BAZAARGHOST_PROCESSOR_KEY -e CHUNK_ID -e QUEUED_AT \
-            -e QUALITY -e VIDEO_FPS -e SFDE_PROFILE -e OLD_TEMPLATES \
+            -e QUALITY -e STREAM_QUALITY -e SFDE_PROFILE -e OLD_TEMPLATES \
             -e ENVIRONMENT -e OTEL_EXPORTER_OTLP_ENDPOINT -e OTEL_EXPORTER_OTLP_HEADERS \
             sfde:dev
       - name: Fail unclaimed chunk

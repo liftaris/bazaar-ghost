@@ -440,3 +440,14 @@ def test_new_matchup_day_is_not_assigned_to_previous_matchup(processor):
     assert [row['username'] for row in results] == ['first', 'second']
     assert all(row.get('igd') is None for row in results)
     processor.frame_processor.extract_igd.assert_not_called()
+
+
+def test_unreadable_username_is_not_counted_or_published(processor):
+    processor.frame_processor.process_frame = lambda *args: {'is_matchup': True, 'username': '', 'timestamp': 0}
+    processor.ffmpeg_worker = lambda: processor._put(processor.frame_queue, (b'frame', 0))
+    result = processor.process_vod_chunk()
+    assert result['status'] == 'completed'
+    assert processor.frames_processed == 1
+    assert processor.matchups_found == 0
+    assert processor.all_detections == []
+    processor.backend.upload_batch.assert_not_called()

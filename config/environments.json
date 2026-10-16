@@ -108,7 +108,7 @@
       "ENVIRONMENT": "validation",
       "BUILD_COMMIT": "unreleased",
       "PUBLIC_URL": "https://bazaarghost-validation.kaio-8df.workers.dev",
-      "OUTBOUND_ENABLED": "false",
+      "OUTBOUND_ENABLED": "true",
       "AUTH_ENABLED": "true",
       "CORS_ORIGINS": "https://bazaarghost-validation.kaio-8df.workers.dev"
     },
@@ -125,7 +125,10 @@
       "deadLetterQueue": "bazaarghost-validation-dlq"
     },
     "crons": [
-      "* * * * *"
+      "* * * * *",
+      "*/3 * * * *",
+      "0 * * * *",
+      "0 2 * * *"
     ]
   }
 }
