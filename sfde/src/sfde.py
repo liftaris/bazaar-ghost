@@ -559,8 +559,9 @@ class SFDEProcessor:
             cmd += ['-rw_timeout', '30000000', '-ss', str(self.start_time), '-i', url]
         width, height = QUALITY_RESOLUTIONS[self.quality]
         w, h, x, y = self._combined_crop
+        # Decode all source frames, then sample before the costly spatial filters.
         filters = (
-            f'scale={width}:{height},fps={self.config["processing"]["frame_rate"]},'
+            f'fps={self.config["processing"]["frame_rate"]},scale={width}:{height},'
             f'crop={w}:{h}:{x}:{y}:exact=1,showinfo'
         )
         cmd += [
