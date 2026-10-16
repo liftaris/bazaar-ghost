@@ -106,6 +106,18 @@ class WorkflowFetchTests(unittest.TestCase):
         # marks every sibling failed, including already completed chunks.
         self.assertNotIn('/rest/v1/vods?', WORKFLOW.read_text())
 
+    def test_worker_deadline_fits_processing_step_and_job_setup_budget(self):
+        workflow = WORKFLOW.read_text().split('  process-chunk:\n', 1)[1]
+        job_minutes = int(re.search(r'^    timeout-minutes: (\d+)', workflow, re.MULTILINE)[1])
+        worker = workflow.split('      - name: Process chunk with SFOT\n', 1)[1]
+        step_minutes = int(re.search(r'^        timeout-minutes: (\d+)', worker, re.MULTILINE)[1])
+        config = (WORKFLOW.parents[2] / 'sfot' / 'config.yaml').read_text()
+        runtime_seconds = int(re.search(r'^  timeout: (\d+)', config, re.MULTILINE)[1])
+        self.assertEqual(runtime_seconds, 1800)
+        self.assertGreaterEqual(step_minutes * 60 - runtime_seconds, 300)
+        # Leave 15 minutes outside the processing step for Buildx/build/setup.
+        self.assertGreaterEqual(job_minutes - step_minutes, 15)
+
 
 if __name__ == '__main__':
     unittest.main()
