@@ -18,7 +18,7 @@ jobs:
   test:
     name: test
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -41,3 +41,14 @@ jobs:
         # Tests use the standard library and generated media; production OCR,
         # Supabase credentials, and the heavyweight runtime are not required.
         run: python -m unittest discover -s tests -p 'test_*.py' -v
+
+      - name: Set up container builder
+        uses: docker/setup-buildx-action@v3
+
+      - name: Verify the shipped decoder can seek fragmented MP4 streams
+        uses: docker/build-push-action@v6
+        with:
+          context: ./sfot
+          target: ffmpeg-test
+          cache-from: type=gha,scope=ffmpeg-test
+          cache-to: type=gha,mode=max,scope=ffmpeg-test
