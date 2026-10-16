@@ -142,7 +142,7 @@ jobs:
     needs: [check-vod, fetch-chunks]
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
-    timeout-minutes: 30 # Overall job timeout
+    timeout-minutes: 50 # Build/setup headroom plus the processing step and cleanup
     env:
       SUPABASE_URL: ${{ vars.SUPABASE_URL }}
       SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
@@ -175,7 +175,7 @@ jobs:
 
       - name: Process chunk with SFOT
         id: sfot
-        timeout-minutes: 25
+        timeout-minutes: 35 # Exceeds the worker's 30-minute deadline so it can clean up
         env:
           QUALITY: ${{ needs.check-vod.outputs.quality }}
           STREAM_QUALITY: ${{ needs.check-vod.outputs.stream_quality }}

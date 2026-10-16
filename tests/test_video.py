@@ -8,8 +8,9 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from test_pipeline import make_processor
+from test_pipeline import make_processor, runtime
 from video import read_jpegs, timestamped_frames
 
 
@@ -49,9 +50,66 @@ class VideoIntegrationTests(unittest.TestCase):
             ('24', '160x90', '480p', False), ('48', '320x180', '720p', False),
             ('50', '256x144', '1080p', False), ('30000/1001', '180x120', '360p', False),
             ('60', '192x108', '480p', True),
+            ('120', '320x180', '480p', False),
         ]:
             with self.subTest(rate=rate, size=size, quality=quality, old=old), tempfile.TemporaryDirectory() as directory:
                 self.check_hls_decode(Path(directory), rate, size, quality, old)
+
+    def test_sample_before_scale_preserves_120fps_pixels_and_pts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            media = Path(directory) / 'moving.mp4'
+            subprocess.run([
+                'ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error',
+                '-f', 'lavfi', '-i', 'testsrc2=s=320x180:r=120:d=10',
+                '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '120', str(media),
+            ], capture_output=True, check=True, timeout=30)
+            reference = self.decode_actual_worker(media, reference_order=True)
+            candidate = self.decode_actual_worker(media, reference_order=False)
+            # Moving source pixels catch selecting a different native frame even
+            # when the output timestamps and flat-color tests still look right.
+            self.assertEqual(candidate, reference)
+            self.assertEqual([pts for _, pts in candidate], [0.0, 2.0])
+            self.assertNotEqual(candidate[0][0], candidate[1][0])
+
+    def decode_actual_worker(self, media, reference_order):
+        processor = make_processor()
+        processor.test_mode = False
+        processor.end_time = 9
+        processor._resolve_stream = lambda: str(media)
+        processor.profile['crop_region'] = [100 / 854, 50 / 480, 200 / 854, 80 / 480]
+        actual_popen = subprocess.Popen
+        actual_reader = timestamped_frames
+        observed = []
+
+        def spawn(command, *args, **kwargs):
+            filters = command[command.index('-vf') + 1].split(',')
+            self.assertEqual(filters[:2], ['fps=0.5', 'scale=854:480'])
+            self.assertTrue(filters[2].startswith('crop='))
+            self.assertEqual(filters[3], 'showinfo')
+            self.assertNotIn('-skip_frame', command)
+            self.assertNotIn('-r', command)
+            if reference_order:
+                command = list(command)
+                command[command.index('-vf') + 1] = ','.join([filters[1], filters[0], *filters[2:]])
+            return actual_popen(command, *args, **kwargs)
+
+        def read(*args):
+            for pixels, pts in actual_reader(*args):
+                observed.append((pixels, pts))
+                yield pixels, pts
+
+        try:
+            with patch.object(runtime.subprocess, 'Popen', side_effect=spawn), patch.object(runtime, 'timestamped_frames', side_effect=read):
+                processor.ffmpeg_worker()
+            self.assertEqual([processor.frame_queue.get_nowait()[1] for _ in range(processor.frame_queue.qsize())], [5, 7])
+            return observed
+        finally:
+            if processor.ffmpeg_proc is not None:
+                if processor.ffmpeg_proc.poll() is None:
+                    processor.ffmpeg_proc.kill()
+                    processor.ffmpeg_proc.wait(timeout=5)
+                processor.ffmpeg_proc.stdout.close()
+                processor.ffmpeg_proc.stderr.close()
 
     def check_hls_decode(self, directory, rate, size, quality, old):
         # A color change at six seconds catches rounded segment seeking: the
