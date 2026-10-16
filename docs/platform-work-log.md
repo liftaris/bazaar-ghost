@@ -6,7 +6,9 @@ Integrate the multiplatform backend from thread `01a07a18-dac2-7571-993b-3c00d03
 
 Work branch: `migration/cloudflare`, starting at migration commit `6a6d0ae`. Reviewed source platform commits: `c7c3863` and `ec4b870` on `dev`. The first integrated platform commit is `2923d2a`.
 
-## Current state — 2026-09-08, after profile-claim deployment
+Current deployment and acceptance are maintained in [backend-validation-status.md](backend-validation-status.md). On October 16, three Twitch VODs completed through hosted discovery, scheduling and GitHub OCR, including automatic interruption recovery. The checkpoints below are historical.
+
+## Historical state — 2026-09-08, after profile-claim deployment
 
 - Validation runs `1fea429` with all seven database migrations applied. Auth/social routes, the multiplatform retry correction and the minute auth cleanup Cron are deployed; outbound integrations remain disabled and no login providers are configured.
 - Hosted session/social mechanics passed with two short-lived synthetic identities, including CSRF/privacy/ownership, deletion/revocation, and public search/screenshot moderation. All fixture identities and owned rows were removed, and the real clip/image were restored unchanged. Real OAuth consent/browser behavior remains pending.

@@ -1,6 +1,6 @@
 # Cloudflare backend migration
 
-This worktree replaces the backend's Supabase runtime with one Cloudflare Worker, D1, R2, Queues, and Cron Triggers. OCR, Docker builds, tests, processing jobs, Discord command registration, and the weekly dev storage purge remain in **GitHub Actions**. The frontend repository is untouched. The original migration at `6a6d0ae` was local only; the subsequent platform and auth/social backend is deployed to the isolated [validation Worker](https://bazaarghost-validation.kaio-8df.workers.dev/health). The last hosted deployment used Wrangler; subsequent tooling uses `cf`. See [tooling](tooling.md) for its separate authentication and build/deploy commands. Dedicated GitHub deployment credentials remain necessary for automatic deployment. Existing dev/production services have not been migrated. See the [current work log](platform-work-log.md) for deployment evidence and unfinished hosted checks.
+This worktree replaces the backend's Supabase runtime with one Cloudflare Worker, D1, R2, Queues, and Cron Triggers. OCR, Docker builds, tests, processing jobs, Discord command registration, and the weekly dev storage purge remain in **GitHub Actions**. The frontend repository is untouched. The original migration at `6a6d0ae` was local only; the subsequent platform and auth/social backend is deployed to the isolated [validation Worker](https://bazaarghost-validation.kaio-8df.workers.dev/health). Hosted deployment now uses `cf`, including the validation CI workflow. See [tooling](tooling.md) for its separate authentication and build/deploy commands. Dedicated validation deployment and dispatch credentials are configured. Existing dev/production services have not been migrated. See the [current work log](platform-work-log.md) for deployment evidence and unfinished hosted checks.
 
 ## Service mapping
 
@@ -83,7 +83,7 @@ The Linux host-network mode lets the container reach localhost. Docker Desktop n
 - An atomic claim returns a unique attempt token. Every screenshot upload, detection write, cleanup, and terminal update requires it. A runner that loses its lease cannot publish over its replacement. The processor has a 30-minute deadline and a 35-minute lease.
 - HTTP claims also require the processor's `expected_profile` and boolean `expected_old_templates`. Their consumed values must match the catalog inside the claim transaction. Profile edits that affect queued/processing chunks return 409; metadata-only edits and effective-profile no-ops remain allowed. Deploy the matching processor revision with this API revision: older processor images omit the required claim fields and will be rejected before processing.
 - Screenshots live under `source_id/chunk_id/claim_token/`. Required uploads precede detection insertion. UUID5 detection IDs are stable across retries. Unique inserts create one outbox entry, avoiding duplicate detection-trigger notifications.
-- Expired processing leases are reclaimed up to three attempts, then require an explicit retry. Failed chunks remain failed until an operator retries them. Successful siblings are preserved by the default retry mode.
+- Expired processing leases and explicit failures recover up to three attempts. Failed chunks wait five minutes; exhausted attempts require an explicit operator retry. Successful siblings are preserved.
 - GitHub dispatches use the environment's paired branch: `dev`, `main` for production, or `migration/cloudflare` for validation. D1 enforces the configured global queued/processing limit (default 10), including concurrent dispatches. Matrices never exceed 256 entries. Failed dispatches release only their own queued rows. An internal dispatch timestamp also prevents a delayed GitHub job from claiming or failing a newer dispatch of the same chunk.
 - A chunk finishes only after SFDE drains frames, OCR, and uploads. VOD status follows its chunks. Optional IGD and truncation flags survive the new adapter and search API.
 - Public detection reads require available VODs and confidence above 0.7. Name search retains word padding, unique trigrams, similarity ordering, filters, totals, and pagination. Unicode trigrams are represented directly rather than PostgreSQL's internal hashed representation; pathological hash collisions are not reproduced.
@@ -167,7 +167,10 @@ The earlier measured production storage was about 13.44 GB of detections plus 0.
 Discovery reads the 500 most recent Bazaar archives (five queued pages), including
 creators who are offline. Each discovered creator is cataloged immediately;
 existing processing disables and crop profiles are preserved. Cataloging also
-registers the environment's EventSub callback.
+registers the environment's EventSub callback. Routine catalog reconciliation uses
+Helix pagination over at most the latest 100 archives (five pages of 20), with
+per-video GraphQL chapter reads. Streamer archive counts describe that recent
+window, not lifetime history; older stored VODs are retained.
 
 Twitch source rendition names are preserved independently of template geometry.
 For example, `936p60` can be decoded into the supported `720p` geometry, while

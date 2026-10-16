@@ -2,7 +2,7 @@
 
 The Worker stores durable discovery, creator-poll, and video-readiness jobs in D1. When provider scheduling is activated, its existing three-minute processing schedule queues a bounded GitHub Actions ingestion run for due work. That runner reads platform metadata through yt-dlp/public endpoints and sends validated catalog changes back to the Worker. Finite playable recordings then enter the existing GitHub OCR workflow. Nothing records a live stream.
 
-Validation still has `OUTBOUND_ENABLED=false` and only the auth-maintenance Cron. The recurring caller has local implementation and test coverage; a healthy hosted automatic catalog → dispatch → OCR → persistence run remains unproven.
+Validation now enables bounded Twitch discovery, hourly catalog reconciliation and three-minute processing. Three real Twitch VODs completed through Worker queues and GitHub-hosted OCR, including automatic interruption recovery. YouTube/Bilibili ingestion dispatch remains paused. See [current acceptance and scope](backend-validation-status.md#twitch-acceptance-october-16-2026).
 
 This ports the ingestion follow-up from `ec4b870`. The separate [multiplatform backend guide](multiplatform-backend.md) describes source identities, profiles, manual backfills, processing, and appearance grouping.
 
@@ -77,7 +77,7 @@ Bilibili jobs process up to 20 parts per lease and continue by seen CID, rather 
 
 A notification arriving during active work sets `rerun_requested`. The finishing transaction schedules another pass rather than discarding that notification. GitHub runner crashes leave reclaimable leases; a failed individual job is recorded while the runner continues other healthy work. A run containing errors exits unsuccessfully so the workflow makes partial outages visible.
 
-Ingestion retries and OCR retries are separate. Expired OCR processing claims recover up to three attempts. Chunks persisted as failed after preparation, media, profile or decoder errors require an operator to use `/api/admin/retry-vod`. A rejected claim never takes ownership or replaces detections; a manual pending chunk may remain pending when the claim is rejected. The caller does not reset failed chunks to make automatic processing appear successful. Completed siblings remain preserved by the default retry mode.
+Ingestion retries and OCR retries are separate. Expired OCR processing claims and explicitly failed chunks recover up to three attempts. Failed chunks have a five-minute backoff; expired unclaimed dispatches also consume the attempt budget. Exhausted chunks require an operator to use `/api/admin/retry-vod`. A rejected claim never takes ownership or replaces detections; a manual pending chunk may remain pending when the claim is rejected. The caller does not reset failed chunks to make automatic processing appear successful. Completed siblings remain preserved by the default retry mode.
 
 ## YouTube WebSub lifecycle
 
@@ -121,7 +121,7 @@ The workflow has no GitHub schedule and currently has no checked-in `workflow_ca
 
 Environment preflight verifies HTTPS origin, unauthenticated `/health`, and GitHub branch pairing before sending catalog/processor keys. The Worker separately checks the requested environment before dispatching OCR. Validation resource names, credentials, queues, and callbacks are separate from dev and production. Weekly deletion of the existing dev bucket does not apply to validation.
 
-The OCR dispatcher selects at most three due platform videos per ingestion run and retains the global active-chunk cap. Once provider scheduling is activated, the same three-minute `processPending` path independently dispatches remaining pending OCR chunks across sources, including a long recording's tail after earlier chunks finish. No ingestion poll is required merely to continue that OCR work. Validation's auth-only schedule does not provide this continuation.
+The OCR dispatcher selects at most three due platform videos per ingestion run and retains the global active-chunk cap. Once provider scheduling is activated, the same three-minute `processPending` path independently dispatches remaining pending OCR chunks across sources, including a long recording's tail after earlier chunks finish. No ingestion poll is required merely to continue that OCR work. Validation's bounded Twitch acceptance has exercised this continuation on the actual three-minute schedule.
 
 Video count alone is not a source-hours budget: a long archive can create many pending chunks. Broad discovery/enrollment should follow measured queue age, error rates, and processing cost, with an explicit capacity policy.
 
@@ -143,7 +143,7 @@ The existing source-timeline verifier confirmed all 4,278 expected sampling tick
 
 The first recording exposed an intermittent FFmpeg 5 H.264 diagnostic collision: a decoder warning replaced a `showinfo` filter prefix, causing strict timestamp validation to fail. Single-thread input decoding and disabled progress output prevent that collision without accepting missing/unattributed timestamps. Failed attempts remain in the private evidence, followed by explicit local operator retries. The 47 existing pipeline tests passed; no new unit tests were added.
 
-Evidence is under `.ignore/youtube-readiness/`: discovery and durable-job logs, failed decoder traces, per-recording processing logs, terminal chunk state, public rows, and `proof.json`. This demonstrates local feasibility after the dependency update. It does not prove GitHub-hosted YouTube access, Worker-to-Actions dispatch, or public WebSub delivery. Those hosted gates below still apply; validation outbound integrations remain disabled.
+Evidence is under `.ignore/youtube-readiness/`: discovery and durable-job logs, failed decoder traces, per-recording processing logs, terminal chunk state, public rows, and `proof.json`. This demonstrates local feasibility after the dependency update. It does not prove GitHub-hosted YouTube access, Worker-to-Actions dispatch, or public WebSub delivery. Those YouTube hosted gates below still apply; the later bounded Twitch activation is described in the current acceptance record.
 
 For each hosted recording, retain its source identity, complete reviewed range, profile/template era, workflow run and commit, completed chunk/VOD state, frame count, detections, and retrievable screenshot checks. Validate source-relative timestamps, especially nonzero starts and Bilibili part timelines. Compare against prior known detections without presenting sample agreement as exhaustive recall.
 

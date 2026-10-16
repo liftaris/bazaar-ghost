@@ -55,7 +55,7 @@ The validation Worker has its GitHub dispatch secret, and validation has a YouTu
 gh workflow run check-youtube-access.yml --ref migration/cloudflare -f video_id=jwxFzTcvWLs
 ```
 
-This check reads official metadata and decodes one real video frame. It performs no catalog writes or OCR dispatch. [Hosted run 38675486605](https://github.com/liftaris/bazaar-ghost/actions/runs/38675486605) could read metadata but failed playback with `auth_required`; the same check passed locally. An API key does not provide media playback access. Recurring processing remains disabled until the chosen Actions runner passes playback and the pending ingestion backlog is reviewed. The normal catalog path still uses yt-dlp; the preflight does not silently change its readiness or duration semantics.
+This check reads official metadata and decodes one real video frame. It performs no catalog writes or OCR dispatch. [Hosted run 38675486605](https://github.com/liftaris/bazaar-ghost/actions/runs/38675486605) could read metadata but failed playback with `auth_required`; the same check passed locally. An API key does not provide media playback access. Recurring YouTube processing remains disabled until the chosen Actions runner passes playback and the pending ingestion backlog is reviewed. Twitch has separate [hosted acceptance](backend-validation-status.md#twitch-acceptance-october-16-2026). The normal catalog path still uses yt-dlp; the preflight does not silently change its readiness or duration semantics.
 
 ### YouTube PO-token probe
 
