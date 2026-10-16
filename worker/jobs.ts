@@ -114,6 +114,7 @@ export async function handleJob(env: Env, job: Job) {
         job.cursor,
         false,
         job.catalogStats,
+        job.page,
       );
     case "catalog-all":
       return enqueueCatalog(env, job.after);

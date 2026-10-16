@@ -382,3 +382,24 @@ it("paginates archives through Helix, reads chapters by ID and publishes totals 
   await expect(twitch.catalog(1, "helix-next")).rejects.toThrow("pagination did not advance");
   expect(gql).toHaveBeenCalledTimes(2);
 });
+
+it("bounds routine catalog reconciliation to five pages and retires older unbounded continuations", async () => {
+  const send = vi.fn().mockResolvedValue(undefined);
+  const twitch = new Twitch({ ...env, JOBS: { send } as unknown as Queue });
+  await env.DB.prepare("INSERT INTO streamers(id,login,processing_enabled) VALUES(1,'bounded',0)").run();
+  const helix = vi.spyOn(twitch, "helix").mockImplementation(async endpoint => {
+    if (endpoint === "users") return { data: [{ id: "1", login: "bounded" }] };
+    if (endpoint === "streams") return { data: [] };
+    if (endpoint === "search/categories") return { data: [{ id: "bazaar", name: "The Bazaar" }] };
+    return { data: [{ id: "99" }], pagination: { cursor: "more-history" } };
+  });
+  vi.spyOn(twitch, "gql").mockResolvedValue({ video: { id: "99", title: "Other game", lengthSeconds: 60,
+    publishedAt: "2026-09-01T00:00:00Z", game: { id: "other" }, moments: { edges: [] } } });
+  await twitch.catalog(1, "fifth-page", false, { total: 80, bazaar: 50, oldest: null }, 4);
+  expect(send).not.toHaveBeenCalled();
+  expect(await one(env, "SELECT num_vods,num_bazaar_vods FROM streamers WHERE id=1"))
+    .toEqual({ num_vods: 81, num_bazaar_vods: 50 });
+  helix.mockClear();
+  await twitch.catalog(1, "old-unbounded-page", false, { total: 120, bazaar: 60, oldest: null });
+  expect(helix).not.toHaveBeenCalled();
+});

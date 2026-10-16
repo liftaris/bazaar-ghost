@@ -189,7 +189,11 @@ export class Twitch {
     cursor?: string,
     dryRun = false,
     prior: CatalogStats = { total: 0, bazaar: 0, oldest: null },
+    pageNumber = Math.floor(prior.total / 20),
   ) {
+    // Routine reconciliation covers the latest 100 archives, not years of history.
+    // This also retires continuations from the previously unbounded deployment.
+    if (pageNumber >= 5) return { streamerId: id, limitReached: true };
     const users = await this.helix("users", { id: String(id) }),
       user = users.data?.[0];
     if (!user) throw new Error("Twitch user not found");
@@ -263,15 +267,17 @@ export class Twitch {
         );
         if (v) await this.env.JOBS.send({ type: "plan", id: v.id });
       }
-      if (nextCursor) {
+      const hasNextPage = Boolean(nextCursor) && pageNumber < 4;
+      if (hasNextPage) {
         await this.env.JOBS.send({
           type: "catalog",
           id,
           cursor: nextCursor,
           catalogStats: stats,
+          page: pageNumber + 1,
         });
       }
-      if (!nextCursor) {
+      if (!hasNextPage) {
         await statement(
           this.env,
           "UPDATE streamers SET num_vods=?,num_bazaar_vods=?,has_vods=?,oldest_vod=?,updated_at=? WHERE id=?",
@@ -283,6 +289,7 @@ export class Twitch {
           id,
         ).run();
       }
+      if (!hasNextPage) console.log(JSON.stringify({ event: "catalog_complete", id, scope: "latest_100_archives", pages: pageNumber + 1, ...stats }));
       await this.ensureSubscription(id);
     }
     return {
