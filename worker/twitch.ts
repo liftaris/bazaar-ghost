@@ -196,19 +196,28 @@ export class Twitch {
     if (!dryRun) await this.syncUser(user);
     const live =
       (await this.helix("streams", { user_id: String(id) })).data?.length > 0;
-    const result = await this.gql(VOD_QUERY, {
-      login: user.login,
-      first: 100,
-      after: cursor ?? null,
+    // Helix owns archive pagination. The web GraphQL feed returns null endCursor
+    // and can reject follow-up cursors with an integrity challenge.
+    const page = await this.helix("videos", {
+      user_id: String(id), first: "20", type: "archive", sort: "time",
+      ...(cursor ? { after: cursor } : {}),
     });
-    if (!result.user?.videos) throw new Error("Missing Twitch video listing");
-    const game = await this.gameId(),
-      edges = result.user.videos.edges;
+    if (!Array.isArray(page.data)) throw new Error("Missing Twitch video listing");
+    const nextCursor = page.pagination?.cursor;
+    if (nextCursor)
+      requireValue(nextCursor !== cursor && page.data.length > 0, "Twitch pagination did not advance");
+    const game = await this.gameId();
+    const videos = await Promise.all(page.data.map(async (archive: { id: string }, index: number) => {
+      if (!cursor && live && index === 0) return null;
+      const result = await this.gql(VOD_QUERY, { id: archive.id });
+      if (!result.video) throw new Error(`Missing chapter evidence for ${archive.id}`);
+      return result.video;
+    }));
     let count = 0;
-    const stats = { ...prior };
-    for (const [index, edge] of edges.entries()) {
-      if (!cursor && live && index === 0) continue;
-      const v = edge.node;
+    const stats = cursor ? { ...prior } : { total: 0, bazaar: 0, oldest: null as string | null };
+    const planned: string[] = [];
+    for (const v of videos) {
+      if (!v) continue;
       stats.total++;
       const published = new Date(v.publishedAt).toISOString();
       stats.oldest =
@@ -230,6 +239,7 @@ export class Twitch {
       if (!ranges.length || v.lengthSeconds <= 0) continue;
       count++;
       stats.bazaar++;
+      planned.push(v.id);
       if (!dryRun)
         await statement(
           this.env,
@@ -245,27 +255,23 @@ export class Twitch {
         ).run();
     }
     if (!dryRun) {
-      for (const edge of edges) {
+      for (const sourceId of planned) {
         const v = await one(
           this.env,
           "SELECT id FROM vods WHERE source='twitch' AND source_id=?",
-          edge.node.id,
+          sourceId,
         );
         if (v) await this.env.JOBS.send({ type: "plan", id: v.id });
       }
-      if (result.user.videos.pageInfo.hasNextPage) {
-        requireValue(
-          result.user.videos.pageInfo.endCursor !== cursor,
-          "Twitch pagination did not advance",
-        );
+      if (nextCursor) {
         await this.env.JOBS.send({
           type: "catalog",
           id,
-          cursor: result.user.videos.pageInfo.endCursor,
+          cursor: nextCursor,
           catalogStats: stats,
         });
       }
-      if (!result.user.videos.pageInfo.hasNextPage) {
+      if (!nextCursor) {
         await statement(
           this.env,
           "UPDATE streamers SET num_vods=?,num_bazaar_vods=?,has_vods=?,oldest_vod=?,updated_at=? WHERE id=?",
@@ -283,7 +289,7 @@ export class Twitch {
       streamerId: id,
       streamerLogin: user.login,
       dryRun,
-      vodsDiscovered: edges.length,
+      vodsDiscovered: page.data.length,
       vodsInserted: dryRun ? 0 : count,
       vodsWouldBeInserted: dryRun ? count : undefined,
     };

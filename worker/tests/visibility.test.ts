@@ -133,3 +133,24 @@ it("gates image GET/HEAD/conditional requests before serving an R2 object", asyn
   for(const method of ["GET","HEAD"])expect((await call(method,etag)).status).toBe(404);
   expect(await env.DETECTIONS.head("1/image_12.jpg")).not.toBeNull();
 });
+
+it("retries transient R2 reads, caps failures, and still checks visibility before storage", async () => {
+  await env.DETECTIONS.put("1/image_12.jpg", new Uint8Array([255,216,255,217]));
+  const transient = new Error("get: We encountered an internal error. Please try again. (10001)");
+  const get = vi.fn().mockRejectedValueOnce(transient)
+    .mockImplementation(() => env.DETECTIONS.get("1/image_12.jpg"));
+  const testEnv = { ...env, DETECTIONS: { get } as unknown as R2Bucket };
+  const call = () => worker.fetch(new Request("http://local/detections/1/image_12.jpg"), testEnv);
+  expect((await call()).status).toBe(200);
+  expect(get).toHaveBeenCalledTimes(2);
+  get.mockReset().mockRejectedValue(transient);
+  expect((await call()).status).toBe(503);
+  expect(get).toHaveBeenCalledTimes(3);
+  get.mockReset().mockResolvedValue(null);
+  expect((await call()).status).toBe(404);
+  expect(get).toHaveBeenCalledTimes(1);
+  get.mockClear();
+  await hide(twitch);
+  expect((await call()).status).toBe(404);
+  expect(get).not.toHaveBeenCalled();
+});

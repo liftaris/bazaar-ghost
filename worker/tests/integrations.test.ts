@@ -138,6 +138,7 @@ it("catalogs exact Bazaar ranges and keeps user-controlled processing configurat
       return {
         data: [{ id: "1", login: "new_login", display_name: "New Login" }],
       };
+    if (endpoint === "videos") return { data: [{ id: "123" }], pagination: {} };
     if (endpoint === "streams") return { data: [] };
     if (endpoint === "search/categories")
       return {
@@ -172,7 +173,7 @@ it("catalogs exact Bazaar ranges and keeps user-controlled processing configurat
     },
   };
   vi.spyOn(twitch, "gql").mockResolvedValue({
-    user: { videos: { edges: [{ node }], pageInfo: { hasNextPage: false } } },
+    video: node,
   });
   await twitch.catalog(1);
   const streamer = await one(env, "SELECT * FROM streamers");
@@ -338,4 +339,46 @@ it('uses one EventSub filter and matches both event type and this environment ca
   await twitch.ensureSubscription(1);
   expect(helix).toHaveBeenCalledTimes(2);
   expect((await one(env, 'SELECT eventsub_subscription_id FROM streamers WHERE id=1'))!.eventsub_subscription_id).toBe('new-validation-subscription');
+});
+
+it("paginates archives through Helix, reads chapters by ID and publishes totals only at the end", async () => {
+  const send = vi.fn().mockResolvedValue(undefined);
+  const twitch = new Twitch({ ...env, JOBS: { send } as unknown as Queue });
+  await env.DB.prepare("INSERT INTO streamers(id,login,processing_enabled) VALUES(1,'archives',0)").run();
+  let after: string | undefined;
+  const helix = vi.spyOn(twitch, "helix").mockImplementation(async (endpoint, params) => {
+    if (endpoint === "users") return { data: [{ id: "1", login: "archives" }] };
+    if (endpoint === "streams") return { data: [{ id: "live" }] };
+    if (endpoint === "search/categories") return { data: [{ id: "bazaar", name: "The Bazaar" }] };
+    if (endpoint === "videos") {
+      after = (params as Record<string, string>).after;
+      return after ? { data: [{ id: "3" }], pagination: {} } : {
+        data: [{ id: "live-recording" }, { id: "2" }], pagination: { cursor: "helix-next" },
+      };
+    }
+    throw new Error("Unexpected endpoint");
+  });
+  const gql = vi.spyOn(twitch, "gql").mockImplementation(async (_query, variables) => ({
+    video: { id: variables.id, title: "Archive", lengthSeconds: 60,
+      publishedAt: "2026-09-01T00:00:00Z", game: { id: "bazaar" }, moments: { edges: [] } },
+  }));
+  await twitch.catalog(1);
+  expect(gql).toHaveBeenCalledTimes(1);
+  expect(gql.mock.calls[0][1]).toEqual({ id: "2" }); // Do not inspect the growing live archive.
+  const continuation = send.mock.calls.map(([job]) => job).find(job => job.type === "catalog");
+  expect(continuation).toMatchObject({ id: 1, cursor: "helix-next", catalogStats: { total: 1, bazaar: 1 } });
+  expect((await one(env, "SELECT num_vods FROM streamers WHERE id=1"))!.num_vods).toBe(0);
+  await twitch.catalog(1, continuation.cursor, false, continuation.catalogStats);
+  expect(after).toBe("helix-next");
+  expect(await one(env, "SELECT num_vods,num_bazaar_vods,processing_enabled FROM streamers WHERE id=1"))
+    .toEqual({ num_vods: 2, num_bazaar_vods: 2, processing_enabled: 0 });
+  expect((await rows(env, "SELECT source_id FROM vods ORDER BY source_id")).map(v => v.source_id)).toEqual(["2", "3"]);
+  expect(send.mock.calls.filter(([job]) => job.type === "plan")).toHaveLength(2);
+  helix.mockImplementation(async endpoint => {
+    if (endpoint === "users") return { data: [{ id: "1", login: "archives" }] };
+    if (endpoint === "streams") return { data: [] };
+    return { data: [{ id: "3" }], pagination: { cursor: "helix-next" } };
+  });
+  await expect(twitch.catalog(1, "helix-next")).rejects.toThrow("pagination did not advance");
+  expect(gql).toHaveBeenCalledTimes(2);
 });

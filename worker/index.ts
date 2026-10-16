@@ -101,6 +101,20 @@ async function eventsub(req: Request, env: Env) {
   }
   return new Response(null, { status: 204 });
 }
+async function readScreenshot(bucket: R2Bucket, key: string): Promise<R2ObjectBody | null> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await bucket.get(key);
+    } catch (error) {
+      // R2 internal errors are transient; retry this read, never a missing object
+      // or a permission/configuration error. Keep the HTTP request bounded.
+      if (!(error instanceof Error) || !error.message.includes("(10001)")) throw error;
+      console.warn(JSON.stringify({ event: "r2_read_retry", key, attempt }));
+      if (attempt === 3) throw new HttpError(503, "Screenshot temporarily unavailable");
+      await new Promise(resolve => setTimeout(resolve, 100 * 2 ** (attempt - 1)));
+    }
+  }
+}
 async function route(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url),
     path = url.pathname;
@@ -123,7 +137,7 @@ async function route(req: Request, env: Env): Promise<Response> {
         .replace(/^\/detections\//, ""),
     );
     if (!(await publicImageVisible(env, key))) throw new HttpError(404, "Screenshot not found");
-    const object = await env.DETECTIONS.get(key);
+    const object = await readScreenshot(env.DETECTIONS, key);
     if (!object) throw new HttpError(404, "Screenshot not found");
     const headers = new Headers({
       "Cache-Control": "public,max-age=0,must-revalidate",
@@ -428,6 +442,7 @@ export default {
           JSON.stringify({
             event: "job_failed",
             type: (message.body as Job).type,
+            id: (message.body as Job).id,
             error: String(error),
           }),
         );
