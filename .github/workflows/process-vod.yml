@@ -1,5 +1,5 @@
 name: Process VOD
-run-name: Process VOD ${{ inputs.vod_id }}
+run-name: Process VOD ${{ inputs.vod_id }} (${{ inputs.environment }})
 
 on:
   workflow_dispatch:

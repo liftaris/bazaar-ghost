@@ -44,7 +44,7 @@ class DeploymentTests(unittest.TestCase):
         for target in ['local', 'dev', 'production', 'validation']:
             config = deployment.read_environments()[target]
             with self.subTest(target=target):
-                expected = ['* * * * *'] + (['*/3 * * * *', '0 * * * *', '0 2 * * *'] if target == 'validation' else provider_schedules)
+                expected = ['* * * * *'] + (['*/3 * * * *', '0 * * * *', '*/15 * * * *', '0 0,12 * * *'] if target == 'validation' else provider_schedules)
                 self.assertEqual(config['crons'], expected)
                 self.assertEqual(config['vars']['ENVIRONMENT'], target)
                 self.assertEqual(config['vars']['OUTBOUND_ENABLED'], 'true' if target == 'validation' else 'false')

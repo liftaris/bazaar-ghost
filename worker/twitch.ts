@@ -1,6 +1,7 @@
 import { external, now, one, requireValue, rows, statement } from "./http";
 import { extractBazaarChapters } from "./chapters";
 import { VOD_QUERY } from "./twitch-query";
+import { automaticSince } from "./automatic-processing";
 
 export interface CatalogStats {
   total: number;
@@ -196,7 +197,11 @@ export class Twitch {
     if (pageNumber >= 5) return { streamerId: id, limitReached: true };
     const users = await this.helix("users", { id: String(id) }),
       user = users.data?.[0];
-    if (!user) throw new Error("Twitch user not found");
+    if (!Array.isArray(users.data)) throw new Error("Invalid Twitch users response");
+    if (!user) {
+      console.log(JSON.stringify({ event: "twitch_user_unavailable", id }));
+      return { streamerId: id, unavailable: true };
+    }
     if (!dryRun) await this.syncUser(user);
     const live =
       (await this.helix("streams", { user_id: String(id) })).data?.length > 0;
@@ -210,9 +215,15 @@ export class Twitch {
     const nextCursor = page.pagination?.cursor;
     if (nextCursor)
       requireValue(nextCursor !== cursor && page.data.length > 0, "Twitch pagination did not advance");
+    const since = await automaticSince(this.env);
+    const reachedStart = since !== null && page.data.some((archive: { created_at: string }) => {
+      requireValue(Number.isFinite(Date.parse(archive.created_at)), "Missing Twitch archive publication time");
+      return Date.parse(archive.created_at) < Date.parse(since);
+    });
     const game = await this.gameId();
-    const videos = await Promise.all(page.data.map(async (archive: { id: string }, index: number) => {
+    const videos = await Promise.all(page.data.map(async (archive: { id: string; created_at: string }, index: number) => {
       if (!cursor && live && index === 0) return null;
+      if (since && Date.parse(archive.created_at) < Date.parse(since)) return null;
       const result = await this.gql(VOD_QUERY, { id: archive.id });
       if (!result.video) throw new Error(`Missing chapter evidence for ${archive.id}`);
       return result.video;
@@ -267,7 +278,7 @@ export class Twitch {
         );
         if (v) await this.env.JOBS.send({ type: "plan", id: v.id });
       }
-      const hasNextPage = Boolean(nextCursor) && pageNumber < 4;
+      const hasNextPage = Boolean(nextCursor) && pageNumber < 4 && !reachedStart;
       if (hasNextPage) {
         await this.env.JOBS.send({
           type: "catalog",
@@ -289,7 +300,7 @@ export class Twitch {
           id,
         ).run();
       }
-      if (!hasNextPage) console.log(JSON.stringify({ event: "catalog_complete", id, scope: "latest_100_archives", pages: pageNumber + 1, ...stats }));
+      if (!hasNextPage) console.log(JSON.stringify({ event: "catalog_complete", id, scope: "latest_100_archives", since, pages: pageNumber + 1, ...stats }));
       await this.ensureSubscription(id);
     }
     return {

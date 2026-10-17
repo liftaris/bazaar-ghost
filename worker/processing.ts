@@ -12,6 +12,7 @@ import {
 } from "./http";
 import { dispatchBranch, source, videoIdentity } from "./sources";
 import { atomic } from "./atomic";
+import { automaticVideoPredicate } from "./automatic-processing";
 import { expectedProfile, profileCheck } from "./profiles";
 
 export function normalizeRanges(
@@ -177,8 +178,7 @@ export async function pendingVideos(env: Env, limit = 3, platformsOnly = false) 
   return rows(env, `SELECT v.id FROM vod_processing_context v
     WHERE v.processing_enabled=1 AND v.ready_for_processing=1 AND v.availability='available'
     AND v.status IN('pending','partial','failed') AND json_array_length(v.bazaar_chapters)>0
-    AND (NOT EXISTS(SELECT 1 FROM processing_config WHERE key='automatic_vods') OR
-      v.source||':'||v.source_id IN(SELECT value FROM json_each((SELECT value FROM processing_config WHERE key='automatic_vods'))))
+    AND ${automaticVideoPredicate}
     ${platformsOnly ? "AND v.source IN('youtube','bilibili')" : ''}
     AND (NOT EXISTS(SELECT 1 FROM chunks WHERE vod_id=v.id) OR EXISTS(
       SELECT 1 FROM chunks WHERE vod_id=v.id AND status='pending' AND (scheduled_for IS NULL OR scheduled_for<=?)))
@@ -187,12 +187,10 @@ export async function pendingVideos(env: Env, limit = 3, platformsOnly = false) 
       v.published_at DESC,v.id LIMIT ?`, time,time,integer(limit,'pending video limit',1,100));
 }
 export async function dispatchAutomatic(env: Env, vodId: number) {
-  const allowed = await one(env, `SELECT 1 FROM vods v WHERE id=? AND
-    (NOT EXISTS(SELECT 1 FROM processing_config WHERE key='automatic_vods') OR
-    v.source||':'||v.source_id IN(SELECT value FROM json_each((SELECT value FROM processing_config WHERE key='automatic_vods'))))`, vodId);
-  return allowed ? dispatch(env, vodId) : [];
+  const allowed = await one(env, `SELECT 1 FROM vods v WHERE id=? AND ${automaticVideoPredicate}`, vodId);
+  return allowed ? dispatch(env, vodId, true) : [];
 }
-export async function dispatch(env: Env, vodId: number) {
+export async function dispatch(env: Env, vodId: number, automatic = false) {
   const pending = await plan(env, vodId);
   if (!pending.length) return [];
   const branch = dispatchBranch(env.ENVIRONMENT);
@@ -220,7 +218,7 @@ export async function dispatch(env: Env, vodId: number) {
         .map((c) =>
           statement(
             env,
-            `UPDATE chunks SET status='queued',queued_at=?,updated_at=? WHERE id=? AND status='pending' AND (scheduled_for IS NULL OR scheduled_for<=?) AND EXISTS(SELECT 1 FROM vod_processing_context v JOIN sfde_profiles p ON p.id=v.effective_profile_id WHERE v.id=chunks.vod_id AND v.processing_enabled=1 AND v.ready_for_processing=1 AND v.availability='available' AND p.id=? AND ${profile.sql} AND v.old_templates=?) AND (SELECT count(*) FROM chunks WHERE status IN('queued','processing'))<? RETURNING id`,
+            `UPDATE chunks SET status='queued',queued_at=?,updated_at=? WHERE id=? AND status='pending' AND (scheduled_for IS NULL OR scheduled_for<=?) AND EXISTS(SELECT 1 FROM vod_processing_context v JOIN sfde_profiles p ON p.id=v.effective_profile_id WHERE v.id=chunks.vod_id AND v.processing_enabled=1 AND v.ready_for_processing=1 AND v.availability='available' AND p.id=? AND ${profile.sql} AND v.old_templates=? ${automatic ? `AND ${automaticVideoPredicate}` : ''}) AND (SELECT count(*) FROM chunks WHERE status IN('queued','processing'))<? RETURNING id`,
             queuedAt,
             queuedAt,
             c.id,

@@ -20,7 +20,7 @@ export async function enqueueCatalog(env: Env, after = 0) {
     "SELECT id FROM streamers WHERE id>? ORDER BY id LIMIT 100",
     after,
   );
-  for (const s of streamers) await env.JOBS.send({ type: "catalog", id: s.id });
+  for (const s of streamers) await env.JOBS.send({ type: "catalog", id: s.id }, { delaySeconds: s.id % 3600 });
   if (streamers.length === 100)
     await env.JOBS.send({ type: "catalog-all", after: streamers.at(-1)!.id });
 }
@@ -169,7 +169,7 @@ export async function scheduled(event: ScheduledController, env: Env) {
   else if (event.cron === "0 * * * *") await enqueueCatalog(env);
   else if (event.cron === "0 0,12 * * *")
     await env.JOBS.send({ type: "availability" });
-  else if (event.cron === "0 2 * * *")
+  else if (event.cron === "0 2 * * *" || event.cron === "*/15 * * * *")
     await env.JOBS.send({ type: "discover" });
   else if (event.cron === "0 3 * * *")
     await env.JOBS.send({ type: "chat-all" });
