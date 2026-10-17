@@ -6,14 +6,65 @@ This is the acceptance record for the dedicated Cloudflare migration environment
 
 - Branch: `migration/cloudflare`; existing `dev`, `main`, and the separate frontend remain untouched.
 - Hosted Worker: `bazaarghost-validation`, at `https://bazaarghost-validation.kaio-8df.workers.dev`.
-- Verified deployed application: `10e7a63398ef35464aec79700eeaaf9b24c7fa56`; migrations `0001`–`0007` applied. The cf deployment and exact-commit public health were verified on October 17, 2026.
+- Verified deployed application: `04d18fbf209a49b8dcb59d7a13b55dd1d2de045d`; migrations `0001`–`0007` applied. The cf deployment and exact-commit public health were verified on October 17, 2026.
 - D1, both R2 buckets, the queue, and dead-letter queue belong to validation. Auth and ongoing parallel Twitch ingestion are enabled. Configured Crons are auth maintenance every minute, processing every three minutes, hourly catalog reconciliation, discovery every 15 minutes and twice-daily availability checks. YouTube/Bilibili ingestion dispatch remains paused; real OAuth, Discord delivery and frontend acceptance remain outstanding.
 - OCR and workflow execution stay in GitHub Actions. The three Twitch VODs below used GitHub-hosted Ubuntu runners. Historical successful YouTube jobs used disposable, one-job local-container Actions runners, removed afterward.
-- [Validation CI 38992941143](https://github.com/liftaris/bazaar-ghost/actions/runs/38992941143) covers Worker runtime tests, Python workflow tests, offline OCR, local D1 import, cf deployment and exact-commit health. Historical hosted proofs below retain their original dates and builds.
+- [Validation CI 39076338149](https://github.com/liftaris/bazaar-ghost/actions/runs/39076338149) covers Worker runtime tests, Python workflow tests, offline OCR, local D1 import, cf deployment and exact-commit health. Historical hosted proofs below retain their original dates and builds.
 
 ## Current parallel operation
 
 The three-VOD rollout scope has been replaced by [ongoing parallel operation](parallel-backend.md). Production processing configuration is copied, Twitch discovery and reconciliation are open, and automatic OCR accepts recordings published from October 16, 2026 onward with an eight-chunk capacity limit. Three further recordings completed on both backends; Cloudflare artifacts, database rows and public images agree across all 14 chunks and 11,300 samples. Production remains on Supabase; the Cloudflare frontend and historical backfill are deferred. Earlier acceptance scopes below describe their dated checkpoints.
+
+## Decoder investigation: October 17, 2026
+
+The first approximately 20 hours of parallel operation cataloged 80 recordings,
+including all 68 in the corresponding production snapshot. Cloudflare completed
+65 VODs and 516 chunks, with 430,597 samples and 2,637 detections. Another 68
+chunks failed; six production-complete recordings were incomplete on Cloudflare.
+These are a dated snapshot, not current queue totals.
+
+The investigation reproduced two processor faults:
+
+- Bookworm's FFmpeg 5 returns no frames after seeking in fragmented-MP4 HLS.
+  All six recordings with endpoint-verification failures used that transport.
+  On Malfisar `2901850593`, the same `[1800,3600)` interval produced no frames
+  under FFmpeg 5 and continuous coverage under 8.0.3. The pinned runtime from
+  the dev fix is now carried by migration commit `04d18fb`, with the transport
+  regression fixture and an explicit JPEG format for verified audio-only tails.
+- A repeated source timestamp was incorrectly treated as lost coverage. PadX
+  `2903031303` `[7200,9000)` contained one repeated instant and all requested
+  samples. Repeated instants now count once toward coverage and are reported
+  separately. Backward timestamps, missing sample intervals and truncation
+  remain failures. Diagnostics retain numeric offsets and the original failure
+  if endpoint verification also fails.
+
+The final processor passed 248 offline tests and 13 rendition-selection tests.
+Separate source access checks found audio-only renditions for `2902370118` and
+no playable streams for `2902138731`; neither can currently supply video to OCR.
+Opening-frame offsets and genuine source timestamp gaps remain unresolved.
+For example, MikeValentine's `[1800,1820)` starts at 0.049667 seconds against a
+roughly 0.033333-second opening tolerance, even with preroll. No tolerance
+relaxation was applied. Private evidence is under `.ignore/decoder-investigation/`.
+
+Hosted recovery on `04d18fb` subsequently established:
+
+- Malfisar `2901850593` completed all four chunks: 3,072 samples, 27 detections
+  and 27 readable public JPEGs. The three formerly failed chunks recovered
+  2,172 samples and 21 detections. [Recovery run 39076938932](https://github.com/liftaris/bazaar-ghost/actions/runs/39076938932).
+- PadX's four formerly failed chunks covering `[7200,14400)` recovered all
+  3,600 samples and 26 detections/JPEGs. Each reported one duplicate source
+  instant without inflating coverage. The VOD reached 9/13 completed chunks;
+  `[14400,21600)` remained pending at this checkpoint. This is verified chunk
+  recovery, not full-recording acceptance. [Recovery run 39076746244](https://github.com/liftaris/bazaar-ghost/actions/runs/39076746244).
+
+The audits compare decoder evidence and Actions artifacts with D1 and public
+search, and fully decode every checked JPEG. The six previously completed
+chunks and 33 detections in these two recordings were preserved exactly.
+After the fMP4 proof passed, another 31 failed chunks were requeued across
+Leodriango, Rahresh, Lady_Radio and AskaAndTheWolf. Every selected failure had
+the matching endpoint category, with a verified playable fMP4 manifest. The
+normal eight-chunk capacity limit remains in force; this is ongoing recovery,
+not a claim that every previously failed recording now completes.
 
 ## Capability acceptance
 
