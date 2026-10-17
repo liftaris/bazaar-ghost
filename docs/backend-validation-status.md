@@ -6,10 +6,14 @@ This is the acceptance record for the dedicated Cloudflare migration environment
 
 - Branch: `migration/cloudflare`; existing `dev`, `main`, and the separate frontend remain untouched.
 - Hosted Worker: `bazaarghost-validation`, at `https://bazaarghost-validation.kaio-8df.workers.dev`.
-- Verified deployed application: `bc4645f76dc12a3cd1503b7c26cd95b9759326a2`; migrations `0001`–`0007` applied. The cf deployment and exact-commit public health were verified on October 16, 2026.
-- D1, both R2 buckets, the queue, and dead-letter queue belong to validation. Auth and bounded Twitch outbound work are enabled. Configured Crons are auth maintenance every minute, processing every three minutes, hourly catalog reconciliation and daily discovery. YouTube/Bilibili ingestion dispatch remains paused; real OAuth, Discord delivery and frontend acceptance remain outstanding.
+- Verified deployed application: `10e7a63398ef35464aec79700eeaaf9b24c7fa56`; migrations `0001`–`0007` applied. The cf deployment and exact-commit public health were verified on October 17, 2026.
+- D1, both R2 buckets, the queue, and dead-letter queue belong to validation. Auth and ongoing parallel Twitch ingestion are enabled. Configured Crons are auth maintenance every minute, processing every three minutes, hourly catalog reconciliation, discovery every 15 minutes and twice-daily availability checks. YouTube/Bilibili ingestion dispatch remains paused; real OAuth, Discord delivery and frontend acceptance remain outstanding.
 - OCR and workflow execution stay in GitHub Actions. The three Twitch VODs below used GitHub-hosted Ubuntu runners. Historical successful YouTube jobs used disposable, one-job local-container Actions runners, removed afterward.
-- [Validation CI 38905941546](https://github.com/liftaris/bazaar-ghost/actions/runs/38905941546) covers Worker runtime tests, Python workflow tests, offline OCR, local D1 import, cf deployment and exact-commit health. Historical hosted proofs below retain their original dates and builds.
+- [Validation CI 38992941143](https://github.com/liftaris/bazaar-ghost/actions/runs/38992941143) covers Worker runtime tests, Python workflow tests, offline OCR, local D1 import, cf deployment and exact-commit health. Historical hosted proofs below retain their original dates and builds.
+
+## Current parallel operation
+
+The three-VOD rollout scope has been replaced by [ongoing parallel operation](parallel-backend.md). Production processing configuration is copied, Twitch discovery and reconciliation are open, and automatic OCR accepts recordings published from October 16, 2026 onward with an eight-chunk capacity limit. Three further recordings completed on both backends; Cloudflare artifacts, database rows and public images agree across all 14 chunks and 11,300 samples. Production remains on Supabase; the Cloudflare frontend and historical backfill are deferred. Earlier acceptance scopes below describe their dated checkpoints.
 
 ## Capability acceptance
 
@@ -53,7 +57,7 @@ Recent-archive discovery also found Trynet while offline, created the streamer w
 
 Hosted validation exposed and fixed three integration faults: EventSub listing permits only one server-side filter; the web GraphQL archive feed returns a null end cursor and rejects follow-up edge cursors; R2 occasionally throws internal error 10001 on a valid screenshot read. Catalog pagination now uses Helix with per-video chapter reads, capped at five pages of 20 recent archives. Hosted completion logs and D1 agree on Kripp’s 100-archive window (74 Bazaar VODs) and Trynet’s 63 archives (all Bazaar); no queue errors were observed in the final completion window. Screenshot reads retry that transient error at most twice, then return 503; missing objects and moderation denials remain 404.
 
-Validation remains deliberately bounded: discovery is scoped to Kripp and Trynet; automatic OCR is scoped to the three VODs above; YouTube/Bilibili ingestion dispatch is paused. Trynet processing is disabled. The reviewed IGD profile is assigned to Kripp. These controls do not change the unrestricted defaults in environments without the scope entries. Discord mention suppression is unchanged, and live Discord and frontend acceptance are deferred.
+At this acceptance checkpoint, validation was deliberately bounded: discovery was scoped to Kripp and Trynet; automatic OCR was scoped to the three VODs above; YouTube/Bilibili ingestion dispatch was paused. Trynet processing was disabled. The reviewed IGD profile was assigned to Kripp. These controls do not change the unrestricted defaults in environments without the scope entries. Discord mention suppression is unchanged, and live Discord and frontend acceptance are deferred.
 
 Detailed private evidence is under `.ignore/twitch-parity/`, especially `final-proof.json`, `interruption-proof.json`, the before/after preservation hashes, visual review and catalog traversal records.
 

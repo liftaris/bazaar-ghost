@@ -183,8 +183,10 @@ Optional `processing_config` entries bound an automatic rollout:
 
 - `twitch_discovery_streamer_ids`: JSON array of Twitch user ID strings; absent means all discovered creators.
 - `automatic_vods`: JSON array of `source:source_id` strings; absent means all eligible recordings. This constrains the scheduler and queued processing dispatch, not an explicit administrator request.
+- `automatic_vods_since`: earliest automatic publication timestamp, compared as a UTC instant; absent means no date boundary. Twitch reconciliation also stops before this boundary.
 - `automatic_platform_ingestion`: set to `false` to pause automatic YouTube/Bilibili catalog dispatch without pausing Twitch.
 
 Empty arrays allow no entries. Set rollout controls before enabling outbound calls
-and provider schedules. The isolated Twitch acceptance run uses these controls;
+and provider schedules. The initial isolated Twitch acceptance used per-VOD and creator scopes.
+[Parallel operation](parallel-backend.md) now uses a fixed start boundary instead;
 production behavior remains unrestricted when the entries are absent.
