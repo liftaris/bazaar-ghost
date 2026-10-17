@@ -13,7 +13,8 @@ from video import timestamped_frames
 
 
 @pytest.mark.skipif(shutil.which('ffmpeg') is None, reason='FFmpeg is required')
-def test_hls_seek_between_segment_boundaries(tmp_path):
+@pytest.mark.parametrize('segment_type', ['mpegts', 'fmp4'])
+def test_hls_seek_between_segment_boundaries(tmp_path, segment_type):
     # Red for six seconds, then blue for six seconds, segmented at four seconds.
     playlist = tmp_path / 'video.m3u8'
     subprocess.run([
@@ -22,7 +23,8 @@ def test_hls_seek_between_segment_boundaries(tmp_path):
         '-f', 'lavfi', '-i', 'color=blue:s=160x90:r=10:d=6',
         '-filter_complex', '[0:v][1:v]concat=n=2:v=1:a=0',
         '-c:v', 'libx264', '-g', '40', '-sc_threshold', '0',
-        '-hls_time', '4', '-hls_playlist_type', 'vod', str(playlist),
+        '-hls_time', '4', '-hls_playlist_type', 'vod',
+        '-hls_segment_type', segment_type, str(playlist),
     ], check=True, timeout=30)
     proc = subprocess.Popen([
         'ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'info',

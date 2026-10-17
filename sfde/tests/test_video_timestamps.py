@@ -74,7 +74,7 @@ def test_integer_rounded_catalog_end_keeps_supported_final_partial_sample():
 @pytest.mark.parametrize('source_pts,match', [
     (list(range(40)), 'tail reaches'),  # A whole missing tail interval for a 6s request.
     ([*range(20), *range(40, 60)], 'gap reaches'),
-    ([*range(20), 19, *range(20, 60)], 'do not advance'),
+    ([*range(20), 18, *range(20, 60)], 'do not advance'),
     (list(range(2, 60)), 'opening frame'),
 ])
 def test_synthetic_sample_grid_cannot_hide_source_loss(source_pts, match):
@@ -85,6 +85,21 @@ def test_synthetic_sample_grid_cannot_hide_source_loss(source_pts, match):
 def test_short_end_without_source_support_for_last_tick_fails():
     with pytest.raises(RuntimeError, match='final sampling tick'):
         decode(diagnostics(range(78), (0, 1, 2, 3, 4)), 5, duration=9)
+
+
+def test_duplicate_source_instant_does_not_discard_valid_coverage_or_inflate_it():
+    frames, timeline = decode(diagnostics([*range(20), 19, *range(20, 40)]), 2)
+    assert [pts for _, pts in frames] == [0, 2]
+    summary = timeline.summary(0)
+    assert summary['source_frames'] == 40
+    assert summary['duplicate_source_frames'] == 1
+    assert summary['max_source_gap_seconds'] == 0.1
+    assert summary['last_source_frame_seconds'] == 3.9
+
+
+def test_repeated_source_instant_cannot_cover_a_missing_tail():
+    with pytest.raises(RuntimeError, match='final sampling tick'):
+        decode(diagnostics([*range(10), *([9] * 100)], (0, 1)), 2)
 
 
 @pytest.mark.parametrize('records,match', [

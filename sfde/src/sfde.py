@@ -583,7 +583,11 @@ class SFDEProcessor:
         )
         cmd += [
             '-map', '0:v:0', '-an', '-vf', filters,
-            '-fps_mode', 'passthrough', '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1',
+            # An empty, independently verified audio-only tail still initializes
+            # the encoder. FFmpeg 8 cannot infer JPEG's full range from frames
+            # that do not exist, so make its normal JPEG pixel format explicit.
+            '-fps_mode', 'passthrough', '-f', 'image2pipe', '-vcodec', 'mjpeg',
+            '-pix_fmt', 'yuvj420p', 'pipe:1',
         ]
         self.ffmpeg_proc = subprocess.Popen(
             cmd,
@@ -624,7 +628,7 @@ class SFDEProcessor:
             source_timeline.validate()
             if sample_count != requested_samples:
                 raise RuntimeError('Requested sampling timeline is incomplete')
-        except RuntimeError:
+        except RuntimeError as coverage_error:
             try:
                 endpoint = verify_video_endpoint(
                     locator, input_args, requested_start=self.start_time, requested_end=self.end_time,
@@ -635,7 +639,8 @@ class SFDEProcessor:
                     local_file=self.test_mode,
                 )
             except VideoEndpointError as error:
-                raise RuntimeError(f'Incomplete decoder coverage: {error}') from None
+                raise RuntimeError(f'Incomplete decoder coverage: {coverage_error}; '
+                                   f'endpoint verification: {error}') from None
             duration = max(0, min(self.end_time, endpoint['video_end_seconds']) - self.start_time)
             source_timeline.validate(duration=duration)
         minimum_samples = math.ceil(duration / interval - 1e-8)

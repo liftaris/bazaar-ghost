@@ -38,6 +38,7 @@ class SourceTimeline:
         self.time_base = None
         self.frame_interval = None
         self.count = 0
+        self.duplicate_frames = 0
         self.first_pts = None
         self.last_pts = None
         self.max_gap = Fraction(0)
@@ -57,15 +58,24 @@ class SourceTimeline:
         tolerance = math.ceil(self.frame_interval / self.time_base) * self.time_base
         if self.last_pts is None:
             if timestamp < -self.time_base or timestamp > tolerance:
-                raise RuntimeError('Incomplete source coverage: opening frame is outside seek tolerance')
+                raise RuntimeError(f'Incomplete source coverage: opening frame at {float(timestamp):.6f}s '
+                                   f'is outside seek tolerance {float(tolerance):.6f}s')
             self.first_pts = pts
         else:
             gap = (pts - self.last_pts) * self.time_base
-            if gap <= 0:
-                raise RuntimeError('Incomplete source coverage: timestamps do not advance')
+            if gap < 0:
+                raise RuntimeError(f'Incomplete source coverage: timestamps do not advance '
+                                   f'({float(self.last_pts * self.time_base):.6f}s to {float(timestamp):.6f}s)')
+            if gap == 0:
+                # Twitch transport boundaries can repeat a presentation instant.
+                # This contributes no new coverage; the FPS filter selects the
+                # displayed frame. Never count duplicates toward source support.
+                self.duplicate_frames += 1
+                return
             self.max_gap = max(self.max_gap, gap)
             if gap >= self.sample_interval:
-                raise RuntimeError('Incomplete source coverage: gap reaches a sampling interval')
+                raise RuntimeError(f'Incomplete source coverage: gap reaches a sampling interval '
+                                   f'({float(gap):.6f}s ending at {float(timestamp):.6f}s)')
         self.last_pts = pts
         self.count += 1
 
@@ -93,6 +103,7 @@ class SourceTimeline:
         last = self.last_pts * self.time_base if self.count else None
         return {
             'source_frames': self.count,
+            'duplicate_source_frames': self.duplicate_frames,
             'first_source_frame_seconds': start_seconds + float(first) if first is not None else None,
             'last_source_frame_seconds': start_seconds + float(last) if last is not None else None,
             'max_source_gap_seconds': float(self.max_gap),
