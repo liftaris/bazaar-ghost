@@ -129,7 +129,10 @@ def resolve_media(source: str, source_id: str, quality: str = '480p', *, stream_
             if candidates:
                 height, fps, stream = min(candidates, key=lambda item: _rendition_score(item[0], item[1], target, quality.endswith('60')))
                 logger.info('Resolved %s video via Streamlink at %sp', source, height)
-                return _http_media(stream['url'], stream.get('headers') or {}, 'streamlink', height, fps)
+                # A progressive file can be resumed by byte range after a CDN drops the
+                # connection mid-response; FFmpeg otherwise stops at that point with exit 0.
+                return {**_http_media(stream['url'], stream.get('headers') or {}, 'streamlink', height, fps),
+                        'resumable': stream['type'] == 'http'}
         failure = f'Streamlink exit code {response.returncode}'
     except (OSError, subprocess.TimeoutExpired, ValueError) as error:
         failure = type(error).__name__
@@ -181,3 +184,11 @@ def ffmpeg_input_args(media: Dict[str, Any]) -> List[str]:
     """Build HTTP options that must precede FFmpeg's input argument."""
     headers = ''.join(f'{key}: {value}\r\n' for key, value in media['headers'].items())
     return ['-headers', headers] if headers else []
+
+
+def ffmpeg_transport_args(media: Dict[str, Any]) -> List[str]:
+    """Resume a truncated progressive download at its byte offset, within bounded retries."""
+    if not media.get('resumable'):
+        return []
+    return ['-reconnect', '1', '-reconnect_on_network_error', '1',
+            '-reconnect_max_retries', '20', '-reconnect_delay_max', '10']

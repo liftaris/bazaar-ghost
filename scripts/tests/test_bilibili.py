@@ -1,6 +1,8 @@
 """Bilibili part identity, anonymous playback, and revision boundaries."""
 
+import json
 from pathlib import Path
+from types import SimpleNamespace
 import sys
 import unittest
 from unittest.mock import patch
@@ -8,7 +10,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from catalog_bilibili import normalize_part
 from bilibili_source import bilibili_input, find_part, split_identity, video_renditions
-from media_source import validate_source_id
+from media_source import ffmpeg_input_args, ffmpeg_transport_args, resolve_media, validate_source_id
 
 
 class BilibiliTests(unittest.TestCase):
@@ -61,6 +63,34 @@ class BilibiliTests(unittest.TestCase):
                 with patch('bilibili_source.public_api', return_value=bad):
                     with self.assertRaises((ValueError, RuntimeError)):
                         video_renditions('BV1FfL5zPEbH:20')
+
+    def test_renditions_prefer_complete_mirrors_over_akamai(self):
+        akamai = 'https://upos-hz-mirrorakam.akamaized.net/video.m4s'
+        cos = 'https://upos-sz-mirrorcosov.bilivideo.com/video.m4s'
+        for base, backups in ((akamai, [cos]), (cos, [akamai])):
+            play = {'timelength': 7211000, 'dash': {'video': [
+                {'codecs': 'avc1', 'height': 480, 'baseUrl': base, 'backupUrl': backups}]}}
+            with patch('bilibili_source.video_metadata', return_value=self.metadata()):
+                with patch('bilibili_source.public_api', return_value=play):
+                    self.assertEqual(video_renditions('BV1FfL5zPEbH:20')['videos'][0]['url'], cos)
+        only_akamai = {'timelength': 7211000, 'dash': {'video': [
+            {'codecs': 'avc1', 'height': 480, 'baseUrl': akamai, 'backupUrl': ['ftp://bad.example/x']}]}}
+        with patch('bilibili_source.video_metadata', return_value=self.metadata()):
+            with patch('bilibili_source.public_api', return_value=only_akamai):
+                self.assertEqual(video_renditions('BV1FfL5zPEbH:20')['videos'][0]['url'], akamai)
+
+    def test_progressive_parts_resume_after_a_dropped_connection(self):
+        streams = {'480p': {'type': 'http', 'url': 'https://cdn.example/part.m4s',
+                            'headers': {'Referer': 'https://www.bilibili.com/'}}}
+        with patch('media_source.subprocess.run', return_value=SimpleNamespace(
+                returncode=0, stdout=json.dumps({'streams': streams}))) as run:
+            media = resolve_media('bilibili', 'BV1FfL5zPEbH:20', '480p')
+        self.assertIn('--plugin-dirs', run.call_args.args[0])
+        self.assertEqual((media['resolver'], media['height']), ('streamlink', 480))
+        # Header options stay separate: the endpoint verifier accepts only headers.
+        self.assertEqual(ffmpeg_input_args(media), ['-headers', 'Referer: https://www.bilibili.com/\r\n'])
+        self.assertEqual(ffmpeg_transport_args(media)[:2], ['-reconnect', '1'])
+        self.assertEqual(ffmpeg_transport_args({**media, 'resumable': False}), [])
 
 
 if __name__ == '__main__':

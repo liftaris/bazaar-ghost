@@ -92,6 +92,19 @@ def find_part(metadata: Dict[str, Any], cid: str) -> Dict[str, Any]:
     return part
 
 
+def _http_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.scheme in ('http', 'https') and bool(parsed.hostname)
+
+
+def _mirror_rank(url: str) -> bool:
+    """Akamai mirrors truncate long anonymous reads after ~1.6 MB; use them only as a last resort.
+
+    The play API returns them as either the base or a backup URL, at random.
+    """
+    return (urlparse(url).hostname or '').endswith('.akamaized.net')
+
+
 def video_renditions(source_id: str) -> Dict[str, Any]:
     """Return anonymous video-only DASH files, rejecting previews and partial fragments."""
     bvid, cid = split_identity(source_id)
@@ -108,11 +121,12 @@ def video_renditions(source_id: str) -> Dict[str, Any]:
         # H.264 SDR is sufficient for SFDE and avoids decoder/color-space surprises.
         if not str(video.get('codecs', '')).startswith('avc') or not video.get('height'):
             continue
-        url = video.get('baseUrl') or video.get('base_url')
-        parsed = urlparse(url or '')
-        if parsed.scheme not in ('http', 'https') or not parsed.hostname:
+        urls = [video.get('baseUrl') or video.get('base_url'),
+                *(video.get('backupUrl') or video.get('backup_url') or [])]
+        mirrors = [url for url in urls if isinstance(url, str) and _http_url(url)]
+        if not mirrors:
             continue
-        candidates.append({**video, 'url': url})
+        candidates.append({**video, 'url': min(mirrors, key=_mirror_rank)})
     if not candidates:
         raise RuntimeError('No supported public Bilibili video rendition; legacy fragments are excluded')
     return {'videos': candidates, 'headers': HEADERS, 'part': part}
