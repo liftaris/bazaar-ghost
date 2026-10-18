@@ -1,0 +1,37 @@
+name: Check Bilibili access (experiment)
+
+# Experiment branch only: a push runs one read-only probe on a GitHub-hosted
+# runner. No secrets, backend, catalog writes or OCR.
+on:
+  push:
+    branches: [experiment/bilibili-access]
+    paths: [.github/workflows/check-bilibili-access.yml, scripts/check_bilibili_access.py]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: docker/setup-buildx-action@v4.4.1
+      - uses: docker/build-push-action@v7.4.0
+        timeout-minutes: 15
+        with:
+          context: ./sfde
+          target: runtime
+          tags: sfde:dev
+          load: true
+          cache-from: type=gha
+      - name: Probe Bilibili from this runner
+        run: |
+          curl -s https://api.ipify.org?format=json | python3 -c "import json,sys; ip=json.load(sys.stdin)['ip']; print('runner egress prefix', '.'.join(ip.split('.')[:2]) + '.x.x')"
+          docker run --rm --network host -v "$PWD:/repo:ro" -w /repo --entrypoint python sfde:dev \
+            scripts/check_bilibili_access.py 6 3 | tee report.json
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: bilibili-access-report
+          path: report.json
