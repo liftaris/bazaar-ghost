@@ -16,7 +16,7 @@ The Cloudflare environment retains its `validation` name and isolated resources 
 ## Ingestion and dispatch
 
 - Discovery scans recent Bazaar archives every 15 minutes, including offline creators. Each discovered creator is reconciled immediately.
-- Each known creator is also reconciled hourly, with messages spread across the hour. This catches mixed-game archives absent from Twitch's game-specific discovery feed. Dedicated `stream.offline` subscriptions trigger immediate reconciliation once enrolled.
+- Each known creator is also reconciled hourly, with due times spread across the hour. This catches mixed-game archives absent from Twitch's game-specific discovery feed. Dedicated `stream.offline` subscriptions trigger immediate reconciliation once enrolled.
 - Cataloging uses Helix archive pagination and per-video chapter queries. It stops at the configured start boundary or 100 recent archives. Deleted Twitch accounts do not repeatedly fail the queue.
 - Processing runs every three minutes. D1 limits Cloudflare to eight queued/processing chunks across all workflows, independently of production's capacity. Failed chunks retry after five minutes, up to three attempts; completed chunks are retained.
 - Availability reconciliation runs twice daily. YouTube/Bilibili automatic ingestion remains paused because its separate provider-access limitations are unresolved; current Supabase production's automatic VOD pipeline is Twitch.
@@ -66,3 +66,44 @@ The initial 29-recording production snapshot was fully covered by Cloudflare's i
 At 02:28 UTC, catch-up contained 35 eligible recordings and 261 chunks, with 27 chunks complete and eight active. This is ongoing queue progress, not a claim that all catch-up finished. No pre-boundary recording started, foreign keys were clean, and the 102 original detections and 102 clips retained their exact rows. Detailed private evidence is under `.ignore/parallel-backend/`, including `final-proof.json`, `final-health.json`, `preservation.json`, `parallel-eventsub.json` and the image comparisons.
 
 One catch-up recording, AnasthasiusFocht `2902563426`, exposed incomplete coverage. Its first chunk failed on source gaps; an independent native-rendition probe reproduced three consecutive two-second timestamp gaps. Three later chunks also failed endpoint coverage checks. The first failure automatically returned to pending after cooldown; retries remain bounded and unrelated recordings continue. Existing production is also partial on this recording. It is not accepted as fully processed, and the coverage checks were not weakened to make it pass. Evidence: `source-first-chunk.json`, `gap-production.json` and `parallel-retries-final.json` (the latter under `.ignore/twitch-parity/`).
+
+## Catalog queue efficiency
+
+Catalog requests are durable in `twitch_catalog_work` before publication to Queues.
+Hourly reconciliation retains the same creator coverage and spreads due times over
+an hour. The existing three-minute scheduler dispatches up to 200 due creators in
+messages containing at most ten IDs. Routine reconciliation can therefore start
+up to three minutes after its staggered due time. Discovery and Twitch callbacks
+also dispatch immediately; discovery carries a bounded list of seen creator IDs
+across its five pages to avoid repeated checks in one scan.
+
+Pending/running routine requests coalesce. A new offline event or explicit update
+received during a running check increments its requested version; successful
+completion immediately dispatches a follow-up rather than erasing that event.
+Two creators run concurrently within each message. Each creator has its own token,
+completion version, attempts, and error; one failure does not replay the successful
+creators. A lost queue handoff is recoverable after five minutes, and interrupted
+running leases after fifteen minutes (renewed for long checks). Failed checks use
+exponential backoff, stop after six attempts, and can be restarted by the next
+routine discovery/reconciliation or an explicit update request. Infrastructure
+failures still use the queue's existing delivery retries.
+
+Each grouped task handles one archive page per creator. Pagination state is
+persisted in D1 and dispatched in subsequent groups, retaining the 100-archive
+limit while bounding D1 queries per invocation. Only eligible VODs with missing
+chunk coverage produce planning messages; unchanged covered VODs produce none. Completed chunks are preserved. A crash after
+updating VOD metadata but before publishing a planning message is recovered through the durable catalog
+request. Older single-creator/cursor queue messages remain supported while the old
+deployment's backlog drains.
+
+Inspect recovery independently of the queue DLQ: `catalog_failed` logs and
+`twitch_catalog_work` rows with `state='failed'` identify exhausted creator checks.
+`catalog_batch_complete` reports requested/completed/failed counts per group. Rows
+with a pending state and future `due_at` are scheduled work, not stuck processing.
+The `requested_version`/`completed_version` fields distinguish outstanding work
+from an idle row. Leases and due times are Unix milliseconds.
+
+The change trades small indexed D1 updates for fewer Queue operations; validate
+both metrics after deployment. Queue billing is per message, so a consumer batch
+size change alone would not achieve this reduction. No discovery cadence, OCR
+capacity, processing retry policy, or production Supabase behavior changes.

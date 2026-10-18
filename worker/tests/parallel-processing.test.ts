@@ -77,8 +77,10 @@ it('stops historical archive traversal before expensive chapter reads', async ()
 
 it('spreads hourly fallback reconciliation across the hour', async () => {
   const send=vi.fn().mockResolvedValue(undefined);
+  const before=Date.now();
   await enqueueCatalog({...env,JOBS:{send} as unknown as Queue});
-  expect(send).toHaveBeenCalledWith({type:'catalog',id:1},{delaySeconds:1});
+  expect(send).not.toHaveBeenCalled();
+  expect((await one(env, 'SELECT due_at FROM twitch_catalog_work WHERE streamer_id=1'))!.due_at).toBeGreaterThanOrEqual(before+1000);
 });
 
 it('acknowledges a deleted Twitch account without retrying its catalog indefinitely', async () => {

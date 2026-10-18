@@ -279,7 +279,7 @@ it('discovers offline creators from recent archives, preserves disables, and cat
   expect(await rows(env, 'SELECT id,processing_enabled FROM streamers ORDER BY id')).toEqual([
     { id: 1, processing_enabled: 1 }, { id: 2, processing_enabled: 0 }]);
   expect(send.mock.calls.map(([job]) => job)).toEqual([
-    { type: 'catalog', id: 1 }, { type: 'catalog', id: 2 }, { type: 'discover', cursor: 'next', page: 1 }]);
+    { type: 'catalog-batch', ids: [1, 2], token: expect.any(String) }, { type: 'discover', cursor: 'next', page: 1, seenIds: [1, 2] }]);
 });
 
 it('bounds recent-archive discovery to five pages and rejects stuck pagination', async () => {
@@ -304,7 +304,7 @@ it('limits validation discovery without changing the production default', async 
   });
   await twitch.discover();
   expect(await rows(env, 'SELECT id FROM streamers')).toEqual([{ id: 2 }]);
-  expect(send).toHaveBeenCalledExactlyOnceWith({ type: 'catalog', id: 2 });
+  expect(send).toHaveBeenCalledExactlyOnceWith({ type: 'catalog-batch', ids: [2], token: expect.any(String) });
 });
 
 it('limits automatic dispatch to reviewed VODs and keeps platform ingestion paused', async () => {
@@ -373,7 +373,8 @@ it("paginates archives through Helix, reads chapters by ID and publishes totals 
   expect(await one(env, "SELECT num_vods,num_bazaar_vods,processing_enabled FROM streamers WHERE id=1"))
     .toEqual({ num_vods: 2, num_bazaar_vods: 2, processing_enabled: 0 });
   expect((await rows(env, "SELECT source_id FROM vods ORDER BY source_id")).map(v => v.source_id)).toEqual(["2", "3"]);
-  expect(send.mock.calls.filter(([job]) => job.type === "plan")).toHaveLength(2);
+  expect(send.mock.calls.filter(([job]) => job.type === "plan")).toHaveLength(0);
+  expect(await rows(env, "SELECT id FROM chunks")).toHaveLength(0);
   helix.mockImplementation(async endpoint => {
     if (endpoint === "users") return { data: [{ id: "1", login: "archives" }] };
     if (endpoint === "streams") return { data: [] };

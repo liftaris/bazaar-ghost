@@ -2,11 +2,25 @@ import { external, now, one, requireValue, rows, statement } from "./http";
 import { extractBazaarChapters } from "./chapters";
 import { VOD_QUERY } from "./twitch-query";
 import { automaticSince } from "./automatic-processing";
+import { requestCatalog, dispatchCatalog, type CatalogCursor } from "./catalog-work";
+import { missingChunks, normalizeRanges } from "./processing";
 
 export interface CatalogStats {
   total: number;
   bazaar: number;
   oldest: string | null;
+}
+
+interface CatalogResult {
+  streamerId: number;
+  limitReached?: boolean;
+  unavailable?: boolean;
+  streamerLogin?: string;
+  dryRun?: boolean;
+  vodsDiscovered?: number;
+  vodsInserted?: number;
+  vodsWouldBeInserted?: number;
+  continuation?: CatalogCursor;
 }
 
 export interface VideoChapter {
@@ -148,8 +162,10 @@ export class Twitch {
       now(),
     ).run();
   }
-  async discover(cursor?: string, pageNumber = 0) {
+  async discover(cursor?: string, pageNumber = 0, seenIds: number[] = []) {
     requireValue(Number.isInteger(pageNumber) && pageNumber >= 0 && pageNumber < 5, "Invalid discovery page");
+    requireValue(seenIds.length <= 500 && seenIds.every(id => Number.isSafeInteger(id) && id > 0), "Invalid discovery history");
+    const seen = new Set(seenIds);
     const page = await this.helix("videos", {
       game_id: await this.gameId(),
       first: "100",
@@ -162,7 +178,7 @@ export class Twitch {
     requireValue(allowed === null || (Array.isArray(allowed) && allowed.every(id => typeof id === 'string' && /^\d+$/.test(id))), "Invalid Twitch discovery scope");
     const ids = [
       ...new Set<string>((page.data || []).map((s: any) => s.user_id)),
-    ].filter(id => allowed === null || (allowed as string[]).includes(id));
+    ].filter(id => !seen.has(Number(id)) && (allowed === null || (allowed as string[]).includes(id)));
     if (ids.length) {
       const users = await this.helix(
         "users",
@@ -170,10 +186,10 @@ export class Twitch {
       );
       for (const user of users.data) {
         await this.syncUser(user);
-        // Catalog immediately: an offline streamer may not emit another event
-        // soon. Cataloging also ensures the stream.offline subscription.
-        await this.env.JOBS.send({ type: "catalog", id: Number(user.id) });
       }
+      // Coalesce with pending reconciliation/EventSub work before sending groups.
+      await requestCatalog(this.env, users.data.map((user: { id: string }) => ({ id: Number(user.id) })));
+      await dispatchCatalog(this.env);
     }
     if (page.pagination?.cursor && pageNumber < 4) {
       requireValue(page.pagination.cursor !== cursor, "Discovery pagination did not advance");
@@ -181,9 +197,15 @@ export class Twitch {
         type: "discover",
         cursor: page.pagination.cursor,
         page: pageNumber + 1,
+        seenIds: [...seen, ...ids.map(Number)],
       });
     }
     return { streamersChecked: ids.length };
+  }
+  async catalogWork(id: number, checkpoint: () => Promise<void>, continuation?: CatalogCursor) {
+    const result = await this.catalog(id, continuation?.cursor, false, continuation?.stats,
+      continuation?.page, { returnContinuation: true, checkpoint });
+    return result.continuation;
   }
   async catalog(
     id: number,
@@ -191,7 +213,9 @@ export class Twitch {
     dryRun = false,
     prior: CatalogStats = { total: 0, bazaar: 0, oldest: null },
     pageNumber = Math.floor(prior.total / 20),
-  ) {
+    options: { returnContinuation?: boolean; checkpoint?: () => Promise<void> } = {},
+  ): Promise<CatalogResult> {
+    await options.checkpoint?.();
     // Routine reconciliation covers the latest 100 archives, not years of history.
     // This also retires continuations from the previously unbounded deployment.
     if (pageNumber >= 5) return { streamerId: id, limitReached: true };
@@ -228,6 +252,7 @@ export class Twitch {
       if (!result.video) throw new Error(`Missing chapter evidence for ${archive.id}`);
       return result.video;
     }));
+    await options.checkpoint?.();
     let count = 0;
     const stats = cursor ? { ...prior } : { total: 0, bazaar: 0, oldest: null as string | null };
     const planned: string[] = [];
@@ -255,7 +280,7 @@ export class Twitch {
       count++;
       stats.bazaar++;
       planned.push(v.id);
-      if (!dryRun)
+      if (!dryRun) {
         await statement(
           this.env,
           `INSERT INTO vods(streamer_id,source_id,title,duration_seconds,published_at,bazaar_chapters,ready_for_processing,last_availability_check) VALUES(?,?,?,?,?,?,1,?) ON CONFLICT(source,source_id) DO UPDATE SET title=excluded.title,duration_seconds=excluded.duration_seconds,published_at=excluded.published_at,bazaar_chapters=excluded.bazaar_chapters,ready_for_processing=1,availability='available',unavailable_since=NULL,last_availability_check=excluded.last_availability_check,updated_at=?`,
@@ -268,19 +293,28 @@ export class Twitch {
           now(),
           now(),
         ).run();
+      }
     }
+    let continuation: CatalogCursor | undefined;
     if (!dryRun) {
       for (const sourceId of planned) {
         const v = await one(
           this.env,
-          "SELECT id FROM vods WHERE source='twitch' AND source_id=?",
+          "SELECT id,processing_enabled,duration_seconds,bazaar_chapters FROM vod_processing_context WHERE source='twitch' AND source_id=?",
           sourceId,
         );
-        if (v) await this.env.JOBS.send({ type: "plan", id: v.id });
+        if (v?.processing_enabled) {
+          const chunks = await rows(this.env, "SELECT start_seconds,end_seconds FROM chunks WHERE vod_id=? ORDER BY start_seconds", v.id);
+          if (missingChunks(normalizeRanges(JSON.parse(v.bazaar_chapters), v.duration_seconds),
+            chunks.map(c => [c.start_seconds, c.end_seconds])).length) {
+            await this.env.JOBS.send({ type: "plan", id: v.id });
+          }
+        }
       }
       const hasNextPage = Boolean(nextCursor) && pageNumber < 4 && !reachedStart;
       if (hasNextPage) {
-        await this.env.JOBS.send({
+        if (options.returnContinuation) continuation = { cursor: nextCursor, stats, page: pageNumber + 1 };
+        else await this.env.JOBS.send({
           type: "catalog",
           id,
           cursor: nextCursor,
@@ -304,6 +338,7 @@ export class Twitch {
       await this.ensureSubscription(id);
     }
     return {
+      ...(continuation ? { continuation } : {}),
       streamerId: id,
       streamerLogin: user.login,
       dryRun,

@@ -1,3 +1,4 @@
+import { requestCatalog, dispatchCatalog } from "./catalog-work";
 import {
   authorized,
   body,
@@ -86,11 +87,12 @@ async function eventsub(req: Request, env: Env) {
     type === "notification" &&
     payload.subscription?.type === "stream.offline"
   ) {
-    // Queue before acknowledging; duplicate delivery is safe because catalog/claims are idempotent.
+    // Persist work before acknowledging; a failed queue handoff is recovered by the scheduler.
     if (!(await one(env, "SELECT id FROM webhook_events WHERE id=?", id))) {
       const user = Number(payload.event?.broadcaster_user_id);
       integer(user, "broadcaster_user_id", 1);
-      await env.JOBS.send({ type: "catalog", id: user });
+      await requestCatalog(env, [{ id: user }], true);
+      await dispatchCatalog(env);
       await statement(
         env,
         "INSERT OR IGNORE INTO webhook_events(id,created_at) VALUES(?,?)",
@@ -358,13 +360,10 @@ async function route(req: Request, env: Env): Promise<Response> {
     );
   }
   if (path === "/functions/v1/update-vods") {
-    await env.JOBS.send({
-      type: input.streamer_id != null ? "catalog" : "catalog-all",
-      id:
-        input.streamer_id == null
-          ? undefined
-          : integer(input.streamer_id, "streamer_id", 1),
-    });
+    if (input.streamer_id != null) {
+      await requestCatalog(env, [{ id: integer(input.streamer_id, "streamer_id", 1) }], true);
+      await dispatchCatalog(env);
+    } else await env.JOBS.send({ type: "catalog-all" });
     return Response.json({ queued: true }, { status: 202 });
   }
   const tasks: Record<string, string> = {

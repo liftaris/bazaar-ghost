@@ -3,6 +3,7 @@ import { Twitch, type CatalogStats } from "./twitch";
 import { dispatchAutomatic, pendingVideos, plan, recover } from "./processing";
 import { notify } from "./discord";
 import { cleanupAuth } from "./auth";
+import { dispatchCatalog, requestCatalog, runCatalogBatch, type CatalogBatch } from "./catalog-work";
 import { dispatchIngestion, hasDueIngestionDispatch } from "./platform-ingestion-dispatch";
 
 export type Job = {
@@ -13,6 +14,9 @@ export type Job = {
   offset?: number;
   page?: number;
   catalogStats?: CatalogStats;
+  ids?: number[];
+  seenIds?: number[];
+  token?: string;
 };
 export async function enqueueCatalog(env: Env, after = 0) {
   const streamers = await rows(
@@ -20,11 +24,12 @@ export async function enqueueCatalog(env: Env, after = 0) {
     "SELECT id FROM streamers WHERE id>? ORDER BY id LIMIT 100",
     after,
   );
-  for (const s of streamers) await env.JOBS.send({ type: "catalog", id: s.id }, { delaySeconds: s.id % 3600 });
+  await requestCatalog(env, streamers.map(s => ({ id: s.id, dueAt: Date.now() + (s.id % 3600) * 1000 })));
   if (streamers.length === 100)
     await env.JOBS.send({ type: "catalog-all", after: streamers.at(-1)!.id });
 }
 export async function processPending(env: Env) {
+  await dispatchCatalog(env);
   await recover(env);
   if (await hasDueIngestionDispatch(env))
     await env.JOBS.send({ type: "platform-ingestion" });
@@ -105,10 +110,17 @@ export async function handleJob(env: Env, job: Job) {
   const twitch = new Twitch(env);
   switch (job.type) {
     case "discover":
-      return twitch.discover(job.cursor, job.page);
+      return twitch.discover(job.cursor, job.page, job.seenIds);
     case "subscribe":
       return twitch.ensureSubscription(Number(job.id));
+    case "catalog-batch":
+      return runCatalogBatch(env, job as CatalogBatch, (id, checkpoint, cursor) => twitch.catalogWork(id, checkpoint, cursor));
     case "catalog":
+      // Drain messages produced by the previous deployment without losing cursors.
+      if (!job.cursor) {
+        await requestCatalog(env, [{ id: Number(job.id) }]);
+        return dispatchCatalog(env);
+      }
       return twitch.catalog(
         Number(job.id),
         job.cursor,
