@@ -13,6 +13,7 @@ beforeEach(async () => {
     "clip_comments",
     "clip_favorites",
     "clip_likes",
+    "clip_appearances",
     "clips",
     "auth_flows",
     "auth_rate_limits",

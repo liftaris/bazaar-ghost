@@ -33,6 +33,7 @@ import { linkAppearances, unlinkAppearance } from "./appearances";
 import { authRoute, authenticated } from "./auth";
 import { socialRoute } from "./social";
 import { publicImageVisible } from "./visibility";
+import { nativePath, nativeRoute } from "./native-api";
 
 async function eventsub(req: Request, env: Env) {
   const raw = await readText(req),
@@ -124,6 +125,7 @@ async function route(req: Request, env: Env): Promise<Response> {
     await one(env, "SELECT 1");
     return Response.json({ ok: true, environment: env.ENVIRONMENT, build_commit: env.BUILD_COMMIT });
   }
+  if (nativePath(path)) return nativeRoute(req, env);
   if (path === "/api/auth" || path.startsWith("/api/auth/")) return authRoute(req, env);
   if (path === "/api/v1/me" && req.method === "GET") return Response.json(await authenticated(req, env));
   if (path.startsWith("/api/v1/") || path.startsWith("/api/admin/social/")) return socialRoute(req, env);

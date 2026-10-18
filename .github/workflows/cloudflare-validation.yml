@@ -2,10 +2,10 @@ name: Cloudflare Validation
 on:
   push:
     branches: [migration/cloudflare]
-    paths: ["sfde/**", "worker/**", "package*.json", "cloudflare.config.ts", "wrangler.config.ts", "config/**", "vitest.config.ts", "tsconfig.json", "scripts/**", ".github/workflows/**"]
+    paths: ["sfde/**", "worker/**", "contracts/**", "package*.json", "cloudflare.config.ts", "wrangler.config.ts", "config/**", "vitest.config.ts", "tsconfig.json", "scripts/**", ".github/workflows/**"]
   pull_request:
     branches: [migration/cloudflare]
-    paths: ["sfde/**", "worker/**", "package*.json", "cloudflare.config.ts", "wrangler.config.ts", "config/**", "vitest.config.ts", "tsconfig.json", "scripts/**", ".github/workflows/**"]
+    paths: ["sfde/**", "worker/**", "contracts/**", "package*.json", "cloudflare.config.ts", "wrangler.config.ts", "config/**", "vitest.config.ts", "tsconfig.json", "scripts/**", ".github/workflows/**"]
   workflow_dispatch:
 permissions:
   contents: read
