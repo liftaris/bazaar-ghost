@@ -18,6 +18,14 @@ Bilibili supports public published submissions and replay uploads. A submission'
 
 The Bilibili adapter uses public web endpoints, not an approved developer API integration. YouTube metadata uses yt-dlp. Access failures are retryable errors, not evidence of deletion. No login cookies, proxy rotation, or premium access are required or supplied by this implementation. Provider/network reliability must be checked from the intended GitHub runners.
 
+Bilibili playback details observed on October 18, 2026:
+
+- Anonymous playback offers H.264 up to 480p (852×480), which matches the processing geometry.
+- The play API returns a mirror list in random order. The Akamai mirror (`upos-hz-mirrorakam.akamaized.net`) truncated every anonymous read at about 1.6 MB, so the resolver chooses it only when no other mirror is offered.
+- The first reads of a part that the CDN has not cached yet can drop the connection or deliver data that does not decode, while a later read of the same part is clean. FFmpeg exits 0 in both cases by default. For progressive HTTP inputs (Bilibili parts and YouTube's muxed stream), SFDE resumes dropped responses by byte range and treats decoder errors as fatal. The chunk then fails with the first FFmpeg diagnostic and the normal retry/cooldown processes it again. Twitch HLS options are unchanged.
+- Part durations in the view API are rounded up from the play length, and the video track can end about a second earlier: `BV1K114BiE7t:33726794861` lists 2,468 s while its video ends at 2,466.97 s. Its final chunk completed with the expected last tick at 2,466 s.
+- Some creators use the game's streamer mode, which replaces opponent names with `******`. Those recordings process normally but produce no detections.
+
 ## Catalog commands
 
 Supply `BAZAARGHOST_API_URL`, `BAZAARGHOST_CATALOG_KEY`, and `ENVIRONMENT` explicitly. The CLI does not source `.env` files. `ENVIRONMENT=local` requires a localhost origin; hosted environments require HTTPS. Every command verifies the unauthenticated `/health` environment before sending credentials. Redirects are refused.
