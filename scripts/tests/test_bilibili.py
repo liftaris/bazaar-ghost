@@ -10,7 +10,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from catalog_bilibili import normalize_part
 from bilibili_source import bilibili_input, find_part, split_identity, video_renditions
-from media_source import ffmpeg_input_args, ffmpeg_transport_args, resolve_media, validate_source_id
+from media_source import ffmpeg_input_args, ffmpeg_progressive_args, resolve_media, validate_source_id
 
 
 class BilibiliTests(unittest.TestCase):
@@ -79,7 +79,7 @@ class BilibiliTests(unittest.TestCase):
             with patch('bilibili_source.public_api', return_value=only_akamai):
                 self.assertEqual(video_renditions('BV1FfL5zPEbH:20')['videos'][0]['url'], akamai)
 
-    def test_progressive_parts_resume_after_a_dropped_connection(self):
+    def test_progressive_parts_resume_drops_and_fail_on_corrupt_data(self):
         streams = {'480p': {'type': 'http', 'url': 'https://cdn.example/part.m4s',
                             'headers': {'Referer': 'https://www.bilibili.com/'}}}
         with patch('media_source.subprocess.run', return_value=SimpleNamespace(
@@ -89,8 +89,10 @@ class BilibiliTests(unittest.TestCase):
         self.assertEqual((media['resolver'], media['height']), ('streamlink', 480))
         # Header options stay separate: the endpoint verifier accepts only headers.
         self.assertEqual(ffmpeg_input_args(media), ['-headers', 'Referer: https://www.bilibili.com/\r\n'])
-        self.assertEqual(ffmpeg_transport_args(media)[:2], ['-reconnect', '1'])
-        self.assertEqual(ffmpeg_transport_args({**media, 'resumable': False}), [])
+        options = ffmpeg_progressive_args(media)
+        self.assertIn('-xerror', options)
+        self.assertEqual(options[options.index('-reconnect') + 1], '1')
+        self.assertEqual(ffmpeg_progressive_args({**media, 'progressive': False}), [])
 
 
 if __name__ == '__main__':

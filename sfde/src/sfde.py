@@ -26,7 +26,7 @@ os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 # Import worker modules
 from video import SourceTimeline, timestamped_frames
 from video_endpoint import VideoEndpointError, verify_video_endpoint
-from media_source import ffmpeg_input_args, ffmpeg_transport_args, resolve_media, validate_source_id
+from media_source import ffmpeg_input_args, ffmpeg_progressive_args, resolve_media, validate_source_id
 from renditions import parse_rendition, processing_quality
 from frame_processor import FrameProcessor
 from backend_client import BackendClient
@@ -544,7 +544,7 @@ class SFDEProcessor:
         media = resolve_media(self.source, self.vod_id, self.quality,
                               **({'stream_quality': self.stream_quality} if self.source == 'twitch' and self.stream_quality else {}))
         self._media_input_args = ffmpeg_input_args(media)
-        self._media_transport_args = ffmpeg_transport_args(media)
+        self._media_progressive_args = ffmpeg_progressive_args(media)
         self.logger.info('Media resolved with %s (%sp input)', media['resolver'], media['height'])
         return media['url']
 
@@ -573,7 +573,7 @@ class SFDEProcessor:
             locator, input_args = input_file, []
         else:
             url = self._resolve_stream()
-            cmd += self._media_input_args + self._media_transport_args
+            cmd += self._media_input_args + self._media_progressive_args
             cmd += ['-rw_timeout', '30000000'] + seek + ['-i', url]
             locator, input_args = url, self._media_input_args
         width, height = QUALITY_RESOLUTIONS[self.quality]
