@@ -23,6 +23,19 @@ def test_decoder_logs_redact_signed_playback_urls():
     assert '[media URL]' in str(logger.debug.call_args_list)
 
 
+def test_failure_diagnostics_are_bounded_and_redacted():
+    pixels = io.BytesIO(b'\xff\xd8a\xff\xd9')
+    stderr = io.BytesIO(b"[https @ 0x55d0c0ffee00] Stream ends prematurely at 10, should be 20 https://cdn.example/v?token=private\n"
+                        b"[h264 @ 0x55d0c0ffee01] Invalid NAL unit size (26914 > 19323).\n"
+                        b"[mov @ 0x1] corrupt input packet\n[h264 @ 0x2] error while decoding MB 0 19\n"
+                        b"[showinfo] pts_time:0 pos:0 \n")
+    diagnostics = []
+    assert len(list(timestamped_frames(pixels, stderr, logging.getLogger(), diagnostics=diagnostics))) == 1
+    assert diagnostics[:2] == ['[https] Stream ends prematurely at 10, should be 20 [media URL]',
+                               '[h264] Invalid NAL unit size (26914 > 19323).']
+    assert len(diagnostics) == 3 and 'private' not in str(diagnostics)
+
+
 class FragmentedStream(io.BytesIO):
     def read(self, size=-1):
         return super().read(min(size, 1))

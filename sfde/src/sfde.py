@@ -598,9 +598,10 @@ class SFDEProcessor:
         source_timeline = SourceTimeline(self.end_time - self.start_time, interval)
         tolerance = max(0.001, interval * 1e-6)
         sample_count, first_pts, last_pts = 0, None, None
+        diagnostics = []
         for frame_data, pts in timestamped_frames(
             self.ffmpeg_proc.stdout, self.ffmpeg_proc.stderr, self.logger,
-            source_timeline=source_timeline, validate_end=False,
+            source_timeline=source_timeline, validate_end=False, diagnostics=diagnostics,
         ):
             timestamp = self.start_time + int(pts)
             if 0 <= pts < self.end_time - self.start_time:
@@ -618,7 +619,7 @@ class SFDEProcessor:
                 record_gauge("queue_depth", 1, {"streamer": self.streamer or "unknown", "quality": self.formatted_quality})
         code = self.ffmpeg_proc.wait(timeout=10)
         if code:
-            raise RuntimeError(f'FFmpeg exited with code {code}')
+            raise RuntimeError(f'FFmpeg exited with code {code}' + (f': {diagnostics[0]}' if diagnostics else ''))
         # Normally every requested tick must exist. A recording can end with
         # audio after its final video frame; only a separate probe of this same
         # finalized source may establish a shorter terminal video interval.
@@ -641,7 +642,8 @@ class SFDEProcessor:
                 )
             except VideoEndpointError as error:
                 raise RuntimeError(f'Incomplete decoder coverage: {coverage_error}; '
-                                   f'endpoint verification: {error}') from None
+                                   f'endpoint verification: {error}'
+                                   + (f'; FFmpeg: {diagnostics[0]}' if diagnostics else '')) from None
             duration = max(0, min(self.end_time, endpoint['video_end_seconds']) - self.start_time)
             source_timeline.validate(duration=duration)
         minimum_samples = math.ceil(duration / interval - 1e-8)

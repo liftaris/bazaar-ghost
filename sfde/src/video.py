@@ -13,6 +13,8 @@ from typing import BinaryIO, Iterator, Tuple
 
 PTS_PATTERN = re.compile(r'\bpts_time:([-+\d.eE]+)\s')
 MEDIA_URL_PATTERN = re.compile(r'https?://[^\s\'"<>]+', re.I)
+FAILURE_DIAGNOSTIC = re.compile(r'error|invalid|corrupt|prematurely', re.I)
+CONTEXT_ADDRESS = re.compile(r' @ 0x[0-9a-f]+\]')
 NAMED_FILTER = re.compile(r'^\[showinfo@(bg_source|bg_sample)\s+@[^\]]+\]\s*(.*)$')
 CONFIG_PATTERN = re.compile(r'^config in time_base:\s*(\d+)/(\d+),\s*frame_rate:\s*(\d+)/(\d+)\s*$')
 FRAME_PATTERN = re.compile(r'^n:\s*(\d+)\s+pts:\s*(-?\d+)\s+pts_time:')
@@ -139,11 +141,13 @@ def read_jpegs(stream: BinaryIO) -> Iterator[bytes]:
 
 def timestamped_frames(stdout: BinaryIO, stderr: BinaryIO, logger: logging.Logger,
                        *, source_timeline: SourceTimeline = None,
-                       validate_end: bool = True) -> Iterator[Tuple[bytes, float]]:
+                       validate_end: bool = True, diagnostics: list = None) -> Iterator[Tuple[bytes, float]]:
     """Pair each JPEG with its showinfo PTS before any downstream queuing.
 
     stderr must be drained concurrently to prevent the decoder blocking on a
     full pipe. Missing timestamps fail the chunk instead of inventing VOD links.
+    The first few FFmpeg failure lines, without media URLs, are appended to
+    ``diagnostics`` so a failed chunk can report its cause.
     """
     timestamps = queue.Queue(maxsize=MAX_PENDING_TIMESTAMPS)
     finished, cancelled = threading.Event(), threading.Event()
@@ -220,7 +224,10 @@ def timestamped_frames(stdout: BinaryIO, stderr: BinaryIO, logger: logging.Logge
                             raise ValueError('Non-finite FFmpeg timestamp')
                         put(timestamp)
                     elif line and 'showinfo' not in line:
-                        logger.debug('FFmpeg: %s', MEDIA_URL_PATTERN.sub('[media URL]', line))
+                        redacted = MEDIA_URL_PATTERN.sub('[media URL]', line)
+                        logger.debug('FFmpeg: %s', redacted)
+                        if diagnostics is not None and len(diagnostics) < 3 and FAILURE_DIAGNOSTIC.search(redacted):
+                            diagnostics.append(CONTEXT_ADDRESS.sub(']', redacted)[:200])
                 except Exception as error:
                     fail(error)
         except Exception as error:
