@@ -1,0 +1,14 @@
+{
+  "name": "bazaarghost-bilibili-worker-probe",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "cf dev",
+    "build": "cf build",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "cf": "1.0.0-beta.17",
+    "wrangler": "4.151.0"
+  }
+}
