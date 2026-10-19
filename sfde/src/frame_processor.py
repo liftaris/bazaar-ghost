@@ -152,12 +152,15 @@ class FrameProcessor:
             self.logger.error(f"Failed to initialize PaddleOCR: {e}")
             raise
 
-        # Cache for performance
+        self.reset_state()
+        self.min_matchup_interval = config.get('ocr', {}).get('min_matchup_interval', 10)
+
+    def reset_state(self) -> None:
+        """Forget matchup deduplication and scene evidence before a fresh decode."""
         self.last_matchup_time = None
         self.matchup_active = False
         # Current-frame scene evidence is separate from saved-matchup deduplication.
         self.emblem_visible = False
-        self.min_matchup_interval = config.get('ocr', {}).get('min_matchup_interval', 10)
 
     def process_frame(
         self, frame_data: bytes, timestamp: int, vod_id: str, chunk_id: str

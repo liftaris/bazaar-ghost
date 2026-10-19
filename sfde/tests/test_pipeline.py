@@ -2,6 +2,7 @@
 
 import io
 import logging
+import queue
 import subprocess
 import threading
 import time
@@ -125,7 +126,9 @@ def test_empty_decode_fails_chunk(processor):
         processor.process_vod_chunk()
 
 
-@pytest.mark.parametrize('start,end', [(0,30), (3,30), (0,7)])
+# A 6 s MP4 may complete a catalog end of 7 (one rounded-up second, e.g. an
+# audio tail the video-only file lacks); 8 is a mismatched catalog.
+@pytest.mark.parametrize('start,end', [(0,30), (3,30), (0,8)])
 def test_clean_early_eof_cannot_complete_requested_range(processor, monkeypatch, tmp_path, start, end):
     video = tmp_path / 'short.mp4'
     subprocess.run([
@@ -464,3 +467,85 @@ def test_unreadable_username_is_not_counted_or_published(processor):
     assert processor.matchups_found == 0
     assert processor.all_detections == []
     processor.backend.upload_batch.assert_not_called()
+
+
+def _flaky_decoder(processor, failures, error_type):
+    attempts = []
+
+    def decode():
+        attempts.append(len(attempts) + 1)
+        processor._put(processor.frame_queue, (b'frame', 10 * len(attempts)))
+        if len(attempts) <= failures:
+            raise error_type('FFmpeg exited with code 183: [h264] Invalid NAL unit size')
+    processor.ffmpeg_worker = decode
+    return attempts
+
+
+def test_progressive_media_read_failure_retries_once_under_the_same_claim(processor, monkeypatch):
+    import sfde
+    monkeypatch.setattr(sfde, 'MEDIA_RETRY_DELAY_SECONDS', 0)
+    processor.frame_processor.reset_state = Mock()
+    attempts = _flaky_decoder(processor, 1, sfde.MediaReadError)
+    result = processor.process_vod_chunk()
+    assert result['status'] == 'completed' and attempts == [1, 2]
+    assert processor.backend.claim_chunk.call_count == 1
+    assert processor.backend.delete_chunk_detections.call_count == 2  # Claim, then the failed attempt's uploads.
+    processor.frame_processor.reset_state.assert_called_once()
+    assert result['frames_processed'] == 1
+    assert [item['timestamp'] for item in processor.all_detections] == [20]
+
+
+def test_second_media_read_failure_fails_the_chunk(processor, monkeypatch):
+    import sfde
+    monkeypatch.setattr(sfde, 'MEDIA_RETRY_DELAY_SECONDS', 0)
+    processor.frame_processor.reset_state = Mock()
+    attempts = _flaky_decoder(processor, 2, sfde.MediaReadError)
+    with pytest.raises(sfde.MediaReadError):
+        processor.process_vod_chunk()
+    assert attempts == [1, 2]
+    assert processor.backend.update_chunk.call_args.args[1] == 'failed'
+
+
+def test_no_retry_without_enough_of_the_chunk_deadline_left(processor, monkeypatch):
+    import sfde
+    processor.config['processing']['timeout'] = sfde.MEDIA_RETRY_MIN_REMAINING_SECONDS
+    attempts = _flaky_decoder(processor, 1, sfde.MediaReadError)
+    with pytest.raises(sfde.MediaReadError):
+        processor.process_vod_chunk()
+    assert attempts == [1]
+
+
+@pytest.fixture
+def progressive_file(processor, monkeypatch, tmp_path):
+    """Run the real decoder on a local file as if it were a progressive HTTP input."""
+    video = tmp_path / 'source.mp4'
+    subprocess.run(['ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi',
+                    '-i', 'testsrc2=s=320x180:r=10:d=6', '-c:v', 'libx264', '-g', '10', str(video)], check=True, timeout=60)
+
+    def resolve():
+        processor._media_input_args, processor._media_progressive_args = [], ['-xerror']
+        return str(video)
+    processor.test_mode = False
+    processor.frame_queue = queue.Queue()  # Called directly, without the OpenCV consumer.
+    monkeypatch.setattr(processor, '_resolve_stream', resolve)
+    processor._combined_crop = [64, 36, 0, 0]
+    return video
+
+
+@pytest.mark.parametrize('end,expected', [(30, 'MediaReadError'), (12, 'RuntimeError')])
+def test_only_reads_that_stop_well_before_the_end_are_media_read_failures(processor, progressive_file, end, expected):
+    processor.start_time, processor.end_time = 0, end
+    with pytest.raises(RuntimeError, match='coverage') as caught:
+        processor.ffmpeg_worker()
+    assert type(caught.value).__name__ == expected
+
+
+def test_corrupt_progressive_data_is_a_media_read_failure(processor, progressive_file):
+    import sfde
+    data = bytearray(progressive_file.read_bytes())
+    middle = len(data) // 2
+    data[middle:middle + 4000] = bytes(range(256)) * 15 + bytes(160)
+    progressive_file.write_bytes(bytes(data))
+    processor.start_time, processor.end_time = 0, 6
+    with pytest.raises(sfde.MediaReadError, match='FFmpeg exited with code'):
+        processor.ffmpeg_worker()

@@ -49,6 +49,24 @@ QUALITY_RESOLUTIONS = {
 }
 
 
+
+class MediaReadError(RuntimeError):
+    """A progressive HTTP read that failed mid-stream; a fresh read usually succeeds.
+
+    Uncached Bilibili CDN reads can return corrupt data, time out, or end early.
+    The first read normally leaves the part cached, so the chunk retries once in
+    process instead of waiting for the scheduler's cooldown and a new runner.
+    """
+
+
+MEDIA_READ_ATTEMPTS = 2
+MEDIA_RETRY_DELAY_SECONDS = 20
+# Never start a retry that the chunk's single deadline could not plausibly finish.
+MEDIA_RETRY_MIN_REMAINING_SECONDS = 300
+# A decode that stops this far before the requested end was truncated, not a
+# rounding question at the recording's natural end.
+TRUNCATED_READ_SECONDS = 10
+
 class SFDEProcessor:
     """Main SFDE processor orchestrator"""
 
@@ -406,28 +424,23 @@ class SFDEProcessor:
                     )
 
                 self.worker_context = otel_context.get_current()
-
-                # Start worker threads
-                self.threads = [
-                    threading.Thread(target=self._run_worker, args=(self.ffmpeg_worker, self.frames_done), name="ffmpeg", daemon=True),
-                    threading.Thread(target=self._run_worker, args=(self.opencv_worker, self.results_done), name="opencv", daemon=True),
-                    threading.Thread(target=self._run_worker, args=(self.result_worker,), name="results", daemon=True),
-                ]
-
-                for thread in self.threads:
-                    thread.start()
                 deadline = time.monotonic() + self.config['processing']['timeout']
-                while any(thread.is_alive() for thread in self.threads):
-                    if self.shutdown.is_set():
-                        if not self.worker_errors.empty():
-                            raise self.worker_errors.get()
-                        raise RuntimeError('Chunk processing was interrupted')
-                    if time.monotonic() >= deadline:
-                        raise TimeoutError('Chunk processing deadline exceeded')
-                    for thread in self.threads:
-                        thread.join(timeout=0.1)
-                if not self.worker_errors.empty():
-                    raise self.worker_errors.get()
+                for attempt in range(1, MEDIA_READ_ATTEMPTS + 1):
+                    try:
+                        self._run_workers(deadline)
+                        break
+                    except MediaReadError as error:
+                        self._stop_workers()
+                        remaining = deadline - time.monotonic()
+                        # A worker that outlived its stop would share the retry's fresh state.
+                        if (attempt == MEDIA_READ_ATTEMPTS or any(thread.is_alive() for thread in self.threads)
+                                or remaining < MEDIA_RETRY_MIN_REMAINING_SECONDS + MEDIA_RETRY_DELAY_SECONDS):
+                            raise
+                        self.logger.warning('media_read_retry', extra={
+                            'event': 'media_read_retry', 'attempt': attempt, 'error': str(error),
+                            'remaining_seconds': round(remaining)})
+                        self._reset_for_retry()
+                        time.sleep(MEDIA_RETRY_DELAY_SECONDS)
                 if self.shutdown.is_set():
                     raise RuntimeError('Chunk processing was interrupted')
                 if self.frames_processed == 0 and not (
@@ -510,6 +523,46 @@ class SFDEProcessor:
                 raise
             finally:
                 self.cleanup()
+
+    def _run_workers(self, deadline: float) -> None:
+        """Decode, detect and upload one attempt; raise the first worker error."""
+        self.threads = [
+            threading.Thread(target=self._run_worker, args=(self.ffmpeg_worker, self.frames_done), name="ffmpeg", daemon=True),
+            threading.Thread(target=self._run_worker, args=(self.opencv_worker, self.results_done), name="opencv", daemon=True),
+            threading.Thread(target=self._run_worker, args=(self.result_worker,), name="results", daemon=True),
+        ]
+        for thread in self.threads:
+            thread.start()
+        while any(thread.is_alive() for thread in self.threads):
+            if self.shutdown.is_set():
+                if not self.worker_errors.empty():
+                    raise self.worker_errors.get()
+                raise RuntimeError('Chunk processing was interrupted')
+            if time.monotonic() >= deadline:
+                raise TimeoutError('Chunk processing deadline exceeded')
+            for thread in self.threads:
+                thread.join(timeout=0.1)
+        if not self.worker_errors.empty():
+            raise self.worker_errors.get()
+
+    def _reset_for_retry(self) -> None:
+        """Start the chunk over under the same claim; the caller stopped every worker."""
+        # Uploaded detections belong to the failed attempt; the retry republishes.
+        self.backend.delete_chunk_detections(self.chunk_id)
+        self.frame_queue = queue.Queue(maxsize=self.config["processing"]["queue_size"])
+        self.result_queue = queue.Queue(maxsize=self.config["processing"]["queue_size"])
+        self.shutdown = threading.Event()
+        self.frames_done = threading.Event()
+        self.results_done = threading.Event()
+        self.worker_errors = queue.Queue()
+        self.threads = []
+        self.ffmpeg_proc = None
+        self.frames_processed = 0
+        self.decode_coverage = None
+        self.matchups_found = 0
+        self.result_batch = []
+        self.all_detections = []
+        self.frame_processor.reset_state()
 
     def _run_worker(self, worker: Callable[[], None], done: Optional[threading.Event] = None) -> None:
         """Report worker exceptions to the orchestrator and always signal EOF."""
@@ -618,8 +671,10 @@ class SFDEProcessor:
                 self._put(self.frame_queue, (frame_data, timestamp))
                 record_gauge("queue_depth", 1, {"streamer": self.streamer or "unknown", "quality": self.formatted_quality})
         code = self.ffmpeg_proc.wait(timeout=10)
+        progressive = bool(getattr(self, '_media_progressive_args', None)) and not self.test_mode
         if code:
-            raise RuntimeError(f'FFmpeg exited with code {code}' + (f': {diagnostics[0]}' if diagnostics else ''))
+            raise (MediaReadError if progressive else RuntimeError)(
+                f'FFmpeg exited with code {code}' + (f': {diagnostics[0]}' if diagnostics else ''))
         # Normally every requested tick must exist. A recording can end with
         # audio after its final video frame; only a separate probe of this same
         # finalized source may establish a shorter terminal video interval.
@@ -641,9 +696,12 @@ class SFDEProcessor:
                     local_file=self.test_mode,
                 )
             except VideoEndpointError as error:
-                raise RuntimeError(f'Incomplete decoder coverage: {coverage_error}; '
-                                   f'endpoint verification: {error}'
-                                   + (f'; FFmpeg: {diagnostics[0]}' if diagnostics else '')) from None
+                decoded = (float(source_timeline.last_pts * source_timeline.time_base)
+                           if source_timeline.count else 0.0)
+                truncated = progressive and duration - decoded > TRUNCATED_READ_SECONDS
+                raise (MediaReadError if truncated else RuntimeError)(
+                    f'Incomplete decoder coverage: {coverage_error}; endpoint verification: {error}'
+                    + (f'; FFmpeg: {diagnostics[0]}' if diagnostics else '')) from None
             duration = max(0, min(self.end_time, endpoint['video_end_seconds']) - self.start_time)
             source_timeline.validate(duration=duration)
         minimum_samples = math.ceil(duration / interval - 1e-8)
