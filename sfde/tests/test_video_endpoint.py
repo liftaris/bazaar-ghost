@@ -72,7 +72,9 @@ def test_same_source_packet_probe_rejects_truncated_decoder_before_natural_end(m
         verify(last_decoded_seconds=96)
 
 
-@pytest.mark.parametrize('end', [98, 101, 17085])
+# An MP4 may end one rounded-up catalog second early (an audio tail the video
+# lacks); two seconds is a mismatched catalog, not rounding.
+@pytest.mark.parametrize('end', [98, 102, 17085])
 def test_nonterminal_or_mismatched_catalog_end_fails_before_packet_probe(monkeypatch, end):
     commands = probes(monkeypatch)
     with pytest.raises(endpoint.VideoEndpointError, match='final catalog range'):
@@ -207,6 +209,31 @@ def test_mp4_duration_from_decode_zero_accounts_for_small_composition_delay(monk
     assert proof['container_origin_alignment_seconds'] == pytest.approx(0.061)
     assert proof['video_end_seconds'] == pytest.approx(4374.0)
     assert proof['container_packet_end_seconds'] == pytest.approx(4374.0)
+
+
+def test_mp4_declared_end_may_round_the_final_sample_by_a_few_frames(monkeypatch):
+    # Real ffprobe values for BV1nznG6oE9C:42854056865 (catalog 7213 s): neither
+    # duration convention matches exactly; the declared end is 0.07 s past the last packet.
+    metadata = copy.deepcopy(BENTO4_META)
+    metadata['format'].update(start_time='0.033000', duration='7212.083500')
+    metadata['streams'][0]['start_time'] = '0.033000'
+    probes(monkeypatch, metadata=metadata, packets=[{'stream_index': 0, 'pts': 115391659, 'duration': 533}])
+    proof = verify(requested_start=7200, requested_end=7213, last_decoded_seconds=115391659 / 16000 - 0.033,
+                   frame_interval_seconds=1 / 30, timestamp_quantum_seconds=1 / 16000)
+    assert proof['video_end_seconds'] == pytest.approx(7211.979)
+    assert proof['container_origin_alignment_seconds'] == pytest.approx(0.1045)
+
+
+def test_mp4_catalog_may_round_an_audio_tail_one_second_past_the_video(monkeypatch):
+    # Real values for BV1H2JY6UEem:42805497523: play length 210.024 s (audio), catalog 211 s,
+    # video-only MP4 exactly 210.000 s.
+    metadata = copy.deepcopy(BENTO4_META)
+    metadata['format'].update(start_time='0.000000', duration='210.000000')
+    metadata['streams'][0]['start_time'] = '0.000000'
+    probes(monkeypatch, metadata=metadata, packets=[{'stream_index': 0, 'pts': 3359467, 'duration': 533}])
+    proof = verify(requested_start=0, requested_end=211, last_decoded_seconds=3359467 / 16000,
+                   frame_interval_seconds=1 / 30, timestamp_quantum_seconds=1 / 16000)
+    assert proof['video_end_seconds'] == pytest.approx(210.0)
 
 
 @pytest.mark.parametrize('changes', [

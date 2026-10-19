@@ -21,7 +21,7 @@ MAX_PROBE_BYTES = 8 * 1024 * 1024
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 MAX_PACKETS = 10_000
 TAIL_SECONDS = 60
-# An unedited MP4's B-frame composition delay; larger start offsets stay ambiguous.
+# Bound for an MP4's composition delay and final-sample rounding, in video frames.
 MP4_MAX_COMPOSITION_FRAMES = 4
 PROBE_TIMEOUT_SECONDS = 45
 METADATA_ENTRIES = 'format=format_name,start_time,duration:stream=index,codec_type,time_base,start_time:stream_disposition=attached_pic'
@@ -237,7 +237,9 @@ def _verify(locator, input_args, *, requested_start, requested_end, last_decoded
     command = ['ffprobe', '-hide_banner', '-v', 'error', '-rw_timeout', '20000000', *input_args]
     metadata = _probe_json([*command, '-show_entries', METADATA_ENTRIES, '-of', 'json', '-i', locator])
     container, origin, duration, streams, video_index = _metadata(metadata)
-    if not math.floor(duration) <= end <= math.ceil(duration):
+    # Catalog durations are whole seconds rounded up; some providers (Bilibili)
+    # round a length that includes an audio tail the video-only MP4 lacks.
+    if not math.floor(duration) <= end <= math.ceil(duration) + (1 if container == 'mp4' else 0):
         raise VideoEndpointError('Video endpoint evidence is restricted to the final catalog range')
     manifest, manifest_duration = None, None
     if container == 'hls':
@@ -289,13 +291,15 @@ def _verify(locator, input_args, *, requested_start, requested_end, last_decoded
         alignment = video_start - origin
         if not 0 <= alignment <= last_step + video_quantum:
             raise VideoEndpointError('Video endpoint HLS origin alignment is outside one video frame')
-    elif container == 'mp4' and 0 < origin <= MP4_MAX_COMPOSITION_FRAMES * last_step:
-        # Some packagers (Bilibili's Bento4/XCoder) write an unedited MP4's
-        # duration from decode time zero, so FFmpeg's duration includes the
-        # composition delay that start_time also reports. Account for it only
-        # when the observed packets end exactly there, never to fill a gap.
-        if abs(container_end + origin - duration) <= container_step + container_quantum + Fraction(1, 1_000_000):
-            alignment = origin
+    elif container == 'mp4' and origin <= MP4_MAX_COMPOSITION_FRAMES * last_step:
+        # Packagers differ in whether an unedited MP4's duration counts the
+        # composition delay that start_time reports, and in how they round the
+        # final sample (Bilibili's Bento4/XCoder: by up to a few frames). Accept
+        # a declared end past the observed packets only by that delay plus a
+        # few frames; a truncated read falls far outside this bound.
+        shortfall = duration - container_end
+        if 0 < shortfall <= origin + MP4_MAX_COMPOSITION_FRAMES * last_step:
+            alignment = shortfall
     container_tolerance = alignment + container_step + container_quantum + Fraction(1, 1_000_000)
     if abs(container_end - duration) > container_tolerance:
         raise VideoEndpointError('Video endpoint packet probe did not reach the container end')
