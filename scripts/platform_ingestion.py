@@ -107,6 +107,9 @@ def verified_account(source: str, metadata: Dict[str, Any], job: Dict[str, Any])
     return bilibili_account(metadata['owner'], True, None, None, preserve_disabled=True, job=job)
 
 
+# Automatic ingestion skips shorter Bilibili parts (compilation clips).
+BILIBILI_MIN_PART_SECONDS = 300
+
 def ingest_video(job: Dict[str, Any]) -> Dict[str, Any]:
     """Wait for final recordings; ingest every published Bilibili part idempotently."""
     source = job['source']
@@ -134,9 +137,15 @@ def ingest_video(job: Dict[str, Any]) -> Dict[str, Any]:
         seen = set(job['state'].get('seen_cids', []))
         remaining = [p for p in metadata['pages'] if str(p['cid']) not in seen]
         selected = remaining[:20]
-        videos = [normalize_part(metadata, str(p['cid'])) for p in selected if
-                  bazaar_title(metadata.get('title') or '') or bazaar_title(p.get('part') or '')]
+        bazaar = [p for p in selected if bazaar_title(metadata.get('title') or '') or bazaar_title(p.get('part') or '')]
+        # Short compilation clips rarely show a matchup but each costs an OCR run.
+        # They still count as seen; the manual catalog CLI can add one explicitly.
+        videos = [normalize_part(metadata, str(p['cid'])) for p in bazaar if p['duration'] >= BILIBILI_MIN_PART_SECONDS]
+        short = len(bazaar) - len(videos)
         continuation = sorted(seen | {str(p['cid']) for p in selected}) if len(remaining) > len(selected) else None
+        if not videos and continuation is None and short:
+            return {'status': 'skipped', 'state': {'reason': f'All Bazaar parts are shorter than {BILIBILI_MIN_PART_SECONDS} s',
+                                                   'short_parts': short}}
     ids = [save_video(video, account, job=job)['id'] for video in videos]
     return {'status': 'waiting' if continuation is not None else 'completed', 'delay': 60,
             'state': {'seen_cids': continuation} if continuation is not None else {}, 'vod_ids': ids}

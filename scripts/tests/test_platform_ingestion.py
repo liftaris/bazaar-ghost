@@ -100,7 +100,7 @@ class IngestionTests(unittest.TestCase):
             self.assertIsNotNone(result['error'])
 
     def test_bilibili_multipart_continuation_is_bounded_and_idempotent(self):
-        pages = [{'cid': i + 1, 'page': i + 1, 'part': 'The Bazaar', 'duration': 60} for i in range(25)]
+        pages = [{'cid': i + 1, 'page': i + 1, 'part': 'The Bazaar', 'duration': 1800} for i in range(25)]
         metadata = {'bvid': 'BV1FfL5zPEbH', 'title': '大巴扎', 'pubdate': 1750000000, 'pages': pages}
         job = {**self.job, 'source': 'bilibili', 'source_id': metadata['bvid']}
         with patch.object(ingestion, 'video_metadata', return_value=metadata), \
@@ -113,6 +113,23 @@ class IngestionTests(unittest.TestCase):
             result = ingestion.ingest_video({**job, 'state': result['state']})
             self.assertEqual(result['status'], 'completed')
             self.assertEqual(save.call_count, 25)
+
+    def test_bilibili_short_parts_are_seen_but_not_cataloged(self):
+        pages = [{'cid': 1, 'page': 1, 'part': 'P1', 'duration': 180}, {'cid': 2, 'page': 2, 'part': 'P2', 'duration': 300},
+                 {'cid': 3, 'page': 3, 'part': 'P3', 'duration': 299}]
+        metadata = {'bvid': 'BV1FfL5zPEbH', 'title': '【大巴扎】路线记录合集', 'pubdate': 1750000000, 'pages': pages}
+        job = {**self.job, 'source': 'bilibili', 'source_id': metadata['bvid']}
+        with patch.object(ingestion, 'video_metadata', return_value=metadata), \
+                patch.object(ingestion, 'verified_account', return_value=self.account), \
+                patch.object(ingestion, 'api', return_value=True), patch.object(ingestion, 'save_video', return_value={'id': 7}) as save:
+            result = ingestion.ingest_video(job)
+            self.assertEqual(result['status'], 'completed')
+            self.assertEqual([call.args[0]['source_part_id'] for call in save.call_args_list], ['2'])
+            metadata['pages'] = [pages[0], pages[2]]
+            result = ingestion.ingest_video(job)
+            self.assertEqual(result['status'], 'skipped')
+            self.assertEqual(result['state']['short_parts'], 2)
+            self.assertEqual(save.call_count, 1)
 
     def test_bilibili_search_markup_does_not_hide_game_evidence(self):
         self.assertTrue(bazaar_title('【<em class="keyword">大巴扎</em>】直播回放'))
