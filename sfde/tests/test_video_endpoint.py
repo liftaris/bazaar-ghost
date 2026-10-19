@@ -183,6 +183,41 @@ def test_hls_endpoint_accounts_only_for_measured_small_video_origin_offset(monke
     assert proof['last_video_frame_seconds'] == pytest.approx(values['last_decoded_seconds'])
 
 
+BENTO4_META = {'format': {'format_name': 'mov,mp4,m4a,3gp,3g2,mj2', 'start_time': '0.061000', 'duration': '4374.061000'},
+               'streams': [{'index': 0, 'codec_type': 'video', 'time_base': '1/16000', 'start_time': '0.061000'}]}
+# Real ffprobe values for Bilibili BV1fUn56tEwY:42856547006: the last presentation
+# frame ends at 4374.061 s absolute, the declared duration measured from zero.
+BENTO4_PACKETS = [{'stream_index': 0, 'pts': 69984443, 'duration': 533},
+                  {'stream_index': 0, 'pts': 69983909, 'duration': 534}]
+
+
+def bento4(monkeypatch, *, start='0.061000', duration='4374.061000', shift=0):
+    metadata = copy.deepcopy(BENTO4_META)
+    metadata['format'].update(start_time=start, duration=duration)
+    metadata['streams'][0]['start_time'] = start
+    packets = [{**packet, 'pts': packet['pts'] + shift} for packet in BENTO4_PACKETS]
+    probes(monkeypatch, metadata=metadata, packets=packets)
+    return verify(requested_start=3600, requested_end=4375, last_decoded_seconds=packets[0]['pts'] / 16000 - float(start),
+                  frame_interval_seconds=1 / 30, timestamp_quantum_seconds=1 / 16000)
+
+
+def test_mp4_duration_from_decode_zero_accounts_for_small_composition_delay(monkeypatch):
+    proof = bento4(monkeypatch)
+    assert proof['container'] == 'mp4'
+    assert proof['container_origin_alignment_seconds'] == pytest.approx(0.061)
+    assert proof['video_end_seconds'] == pytest.approx(4374.0)
+    assert proof['container_packet_end_seconds'] == pytest.approx(4374.0)
+
+
+@pytest.mark.parametrize('changes', [
+    {'shift': -16000},                                                       # Packets stop a second early.
+    {'start': '0.200000', 'duration': '4374.200000', 'shift': 2224},         # Delay beyond four frames.
+])
+def test_mp4_decode_zero_duration_never_covers_truncation_or_large_offsets(monkeypatch, changes):
+    with pytest.raises(endpoint.VideoEndpointError, match='container end'):
+        bento4(monkeypatch, **changes)
+
+
 def test_ambiguous_mp4_duration_origin_is_rejected_without_rebasing(monkeypatch):
     metadata = {'format': {'format_name': 'mov,mp4', 'start_time': '1.978667', 'duration': '12'},
                 'streams': [{'index': 0, 'codec_type': 'video', 'time_base': '1/30', 'start_time': '2'},
