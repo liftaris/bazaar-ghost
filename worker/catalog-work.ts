@@ -1,5 +1,6 @@
 import type { CatalogStats } from "./twitch";
 import { integer, one, rows, statement } from "./http";
+import { isPlatformEnabled } from "./platform-settings";
 
 const GROUP_SIZE = 10;
 const SEND_LEASE_MS = 5 * 60_000;
@@ -29,6 +30,8 @@ export async function requestCatalog(env: Env, requests: CatalogRequest[], urgen
 
 /** Reserve before sending; an interrupted/ambiguous send is recoverable by the cron. */
 export async function dispatchCatalog(env: Env) {
+  // Requests stay durable while Twitch ingestion is off and resume when it is on.
+  if (!(await isPlatformEnabled(env, "twitch", "ingestion_enabled"))) return 0;
   const time = Date.now();
   await statement(env,
     `UPDATE twitch_catalog_work SET state=CASE WHEN attempt_count>=? AND requested_version<=coalesce(cycle_version,requested_version) THEN 'failed' ELSE 'pending' END,

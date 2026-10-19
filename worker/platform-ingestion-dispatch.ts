@@ -1,5 +1,6 @@
 import { external, HttpError, one, requireValue, statement, uuid } from './http';
 import { dispatchBranch } from './sources';
+import { platformEnabled } from './platform-settings';
 
 const CLOCK = "strftime('%Y-%m-%dT%H:%M:%fZ','now')";
 export const INGESTION_RUNNING_MINUTES = 40; // Workflow timeout is 35 minutes.
@@ -7,11 +8,15 @@ const after = (seconds: number) => `strftime('%Y-%m-%dT%H:%M:%fZ','now','+${seco
 
 // Shared by the recurring caller and job claims. Discovery is included only if
 // it already exists; the dispatcher never initializes a discovery job/account.
+// Discovery jobs and unowned candidates belong to a platform's discovery switch;
+// account polls and enrolled creators' videos belong to its ingestion switch.
 export const CLAIMABLE_INGESTION = `(
  (j.status IN('pending','waiting') AND j.next_attempt_at<=${CLOCK}) OR
  (j.status='processing' AND j.lease_expires_at<=${CLOCK}))
- AND (j.account_id IS NULL OR a.processing_enabled=1)`;
-const DUE = `NOT EXISTS(SELECT 1 FROM processing_config WHERE key='automatic_platform_ingestion' AND value='false') AND EXISTS(SELECT 1 FROM platform_ingestion_jobs j
+ AND (j.account_id IS NULL OR a.processing_enabled=1)
+ AND CASE WHEN j.kind='discovery' OR j.account_id IS NULL THEN ${platformEnabled('j.source', 'discovery_enabled')}
+   ELSE ${platformEnabled('j.source', 'ingestion_enabled')} END`;
+const DUE = `EXISTS(SELECT 1 FROM platform_ingestion_jobs j
  LEFT JOIN platform_accounts a ON a.id=j.account_id WHERE ${CLAIMABLE_INGESTION})`;
 const DISPATCH_AVAILABLE = `(state='idle' OR lease_expires_at<=${CLOCK}) AND next_attempt_at<=${CLOCK}`;
 

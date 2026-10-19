@@ -1,4 +1,5 @@
 import { requestCatalog, dispatchCatalog } from "./catalog-work";
+import { updatePlatformSettings } from "./platform-settings";
 import {
   authorized,
   body,
@@ -298,6 +299,8 @@ async function route(req: Request, env: Env): Promise<Response> {
     return Response.json(await setStreamer(env, input));
   if (path === "/api/admin/profile")
     return Response.json(await setProfile(env, input));
+  if (path === "/api/admin/platforms")
+    return Response.json(await updatePlatformSettings(env, input));
   if (path === "/functions/v1/process-vod") {
     if (input.expected_environment != null && input.expected_environment !== env.ENVIRONMENT) throw new HttpError(409,"Environment mismatch");
     const platform = source(input.source ?? "twitch");

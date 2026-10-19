@@ -35,9 +35,10 @@ The controls live in Cloudflare D1 `processing_config`:
 |---|---|---|
 | `automatic_vods_since` | `2026-10-16T00:00:00.000Z` | Earliest automatic publication time; also bounds Twitch catalog reads |
 | `max_concurrent_chunks` | `8` | Global Cloudflare chunk capacity |
-| `automatic_platform_ingestion` | `false` | Pause YouTube/Bilibili ingestion dispatch |
 | `automatic_vods` | absent | No per-VOD allowlist |
 | `twitch_discovery_streamer_ids` | absent | No per-streamer discovery allowlist |
+
+Per-platform switches live in `platform_settings` (see [processing and platform controls](cloudflare-migration.md#processing-and-platform-controls)). Migration `0010` carried the earlier pause over: Twitch fully on; YouTube and Bilibili ingestion/discovery off, processing on.
 
 To pause new automatic OCR dispatch while leaving active jobs to finish, set `automatic_vods` to the JSON text `[]`. Queued processing messages recheck this gate; it also fences atomic reservations. Delete that entry to resume. Preserve the start boundary when resuming, otherwise the older catalog becomes eligible. Streamer-level processing settings and profile changes use the existing administrator API, including active-job conflict protection.
 

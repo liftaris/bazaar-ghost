@@ -5,6 +5,7 @@ import { notify } from "./discord";
 import { cleanupAuth } from "./auth";
 import { dispatchCatalog, requestCatalog, runCatalogBatch, type CatalogBatch } from "./catalog-work";
 import { dispatchIngestion, hasDueIngestionDispatch } from "./platform-ingestion-dispatch";
+import { isPlatformEnabled } from "./platform-settings";
 
 export type Job = {
   type: string;
@@ -110,6 +111,7 @@ export async function handleJob(env: Env, job: Job) {
   const twitch = new Twitch(env);
   switch (job.type) {
     case "discover":
+      if (!(await isPlatformEnabled(env, "twitch", "discovery_enabled"))) return;
       return twitch.discover(job.cursor, job.page, job.seenIds);
     case "subscribe":
       return twitch.ensureSubscription(Number(job.id));

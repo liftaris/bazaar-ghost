@@ -162,7 +162,7 @@ The original local smoke evidence is in `.ignore/cloudflare-local-evidence.json`
 
 The earlier measured production storage was about 13.44 GB of detections plus 0.25 GB of archived logs. With OCR and Actions staying on GitHub, the assessment estimated roughly **$5–7/month** for Workers Paid, D1 and R2 at current scale, excluding optional image transformations. This is an estimate, not a billing measurement of this implementation. D1 row scans and the trigram index need production-volume measurement before treating that range as a guarantee. See the local assessment in `.ignore/cloudflare-assessment/report.md` for dated sources and assumptions.
 
-## Twitch processing controls
+## Processing and platform controls
 
 Discovery reads the 500 most recent Bazaar archives (five queued pages), including
 creators who are offline. Each discovered creator is cataloged immediately;
@@ -184,7 +184,16 @@ Optional `processing_config` entries bound an automatic rollout:
 - `twitch_discovery_streamer_ids`: JSON array of Twitch user ID strings; absent means all discovered creators.
 - `automatic_vods`: JSON array of `source:source_id` strings; absent means all eligible recordings. This constrains the scheduler and queued processing dispatch, not an explicit administrator request.
 - `automatic_vods_since`: earliest automatic publication timestamp, compared as a UTC instant; absent means no date boundary. Twitch reconciliation also stops before this boundary.
-- `automatic_platform_ingestion`: set to `false` to pause automatic YouTube/Bilibili catalog dispatch without pausing Twitch.
+
+Each platform also has independent switches in `platform_settings` (migration `0010`), changed through `POST /api/admin/platforms` with the administrator key:
+
+| Switch | Gates |
+|---|---|
+| `ingestion_enabled` | Polling enrolled accounts and cataloging their recordings. Twitch: dispatching durable catalog work (requests still accumulate). YouTube/Bilibili: claiming account jobs and enrolled creators' video jobs. |
+| `discovery_enabled` | Finding creators who are not enrolled. Twitch: the discovery scan. YouTube/Bilibili: discovery jobs and candidate videos without an owning account. |
+| `processing_enabled` | Automatic OCR dispatch for that platform's recordings (explicit administrator dispatch is unaffected). |
+
+A platform without a row is fully off, so a newly added source stays inactive until it is configured. `{}` lists every known platform; `{"source":"bilibili","ingestion_enabled":true}` changes only the named switches. The migration seeds Twitch fully on and sets YouTube/Bilibili ingestion and discovery from the retired `automatic_platform_ingestion` key.
 
 Empty arrays allow no entries. Set rollout controls before enabling outbound calls
 and provider schedules. The initial isolated Twitch acceptance used per-VOD and creator scopes.

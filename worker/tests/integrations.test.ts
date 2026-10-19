@@ -310,7 +310,8 @@ it('limits validation discovery without changing the production default', async 
 it('limits automatic dispatch to reviewed VODs and keeps platform ingestion paused', async () => {
   await env.DB.prepare("INSERT INTO streamers(id,login) VALUES(1,'reviewed')").run();
   for (const id of ['111', '222']) await env.DB.prepare("INSERT INTO vods(streamer_id,source_id,duration_seconds,published_at,bazaar_chapters,ready_for_processing) VALUES(1,?,12,'2026-10-16T00:00:00Z','[0,12]',1)").bind(id).run();
-  await env.DB.prepare("INSERT INTO processing_config(key,value) VALUES('automatic_vods','[\"twitch:111\"]'),('automatic_platform_ingestion','false')").run();
+  await env.DB.prepare("INSERT INTO processing_config(key,value) VALUES('automatic_vods','[\"twitch:111\"]')").run();
+  await env.DB.prepare("UPDATE platform_settings SET ingestion_enabled=0,discovery_enabled=0 WHERE source IN('youtube','bilibili')").run();
   const { pendingVideos, dispatchAutomatic } = await import('../processing');
   const { hasDueIngestionDispatch, dispatchIngestion } = await import('../platform-ingestion-dispatch');
   const vods = await rows(env, 'SELECT id,source_id FROM vods ORDER BY id');

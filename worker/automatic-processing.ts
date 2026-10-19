@@ -1,4 +1,5 @@
 import { one, requireValue } from "./http";
+import { platformEnabled } from "./platform-settings";
 
 // Shared by the scheduler, queue consumer and atomic reservation. An old queued
 // message must not bypass a changed rollout scope or launch historical backfill.
@@ -7,6 +8,7 @@ export const automaticVideoPredicate = `
     v.source||':'||v.source_id IN(SELECT value FROM json_each((SELECT value FROM processing_config WHERE key='automatic_vods'))))
   AND (NOT EXISTS(SELECT 1 FROM processing_config WHERE key='automatic_vods_since') OR
     julianday(v.published_at)>=julianday((SELECT value FROM processing_config WHERE key='automatic_vods_since')))
+  AND ${platformEnabled("v.source", "processing_enabled")}
 `;
 
 export async function automaticSince(env: Env): Promise<string | null> {
