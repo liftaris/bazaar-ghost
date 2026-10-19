@@ -74,14 +74,14 @@ class BilibiliClientTests(unittest.TestCase):
         api.get(VIEW, {'bvid': 'BV1FfL5zPEbH'})
         api.get(VIEW, {'bvid': 'BV1FfL5zPEbH'})
         api.get(LIST, {'mid': 1})
-        self.assertEqual(clock.sleeps, [1.0, 5.0])
+        self.assertEqual(clock.sleeps, [1.0, 11.0])
 
     def test_412_refreshes_the_cookie_and_retries_with_backoff(self):
         rejected = HTTPError('https://api.bilibili.com' + LIST, 412, 'blocked', {}, None)
         api, opener, clock = client({SPI: [spi(1), spi(2)], LIST: [rejected, ok(archives=[{'bvid': 'BV1FfL5zPEbH'}])]})
         self.assertEqual(api.get(LIST, {'mid': 1})['archives'][0]['bvid'], 'BV1FfL5zPEbH')
         self.assertIn('buvid3=B3-2', dict(opener.requests[-1][1])['Cookie'])
-        self.assertIn(5.0, clock.sleeps)
+        self.assertIn(10.0, clock.sleeps)
 
     def test_persistent_rejection_raises_the_endpoint_category_after_bounded_attempts(self):
         rejected = lambda: HTTPError('https://api.bilibili.com' + LIST, 412, 'blocked', {}, None)

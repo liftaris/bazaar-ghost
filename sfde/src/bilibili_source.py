@@ -55,7 +55,8 @@ ENDPOINTS = {
     '/x/player/playurl': (1.0, False),
     '/x/web-interface/card': (2.0, True),
     '/x/web-interface/search/type': (3.0, True),
-    '/x/series/recArchivesByKeywords': (6.0, True),
+    # Hosted runners still saw HTTP 412 at 6 s; 15 s spacing never failed locally.
+    '/x/series/recArchivesByKeywords': (12.0, True),
 }
 SPI_PATH = '/x/frontend/finger/spi'
 # HTTP 412/429 and JSON risk-control/rate-limit codes are transient for an anonymous client.
@@ -72,7 +73,7 @@ class BilibiliClient:
     """
 
     def __init__(self, *, opener=None, clock=time.monotonic, sleep=time.sleep,
-                 jitter=random.random, attempts: int = 3, backoff: float = 5.0):
+                 jitter=random.random, attempts: int = 3, backoff: float = 10.0):
         self._opener = opener or build_opener(_NoRedirect)
         self._clock, self._sleep, self._jitter = clock, sleep, jitter
         self._attempts, self._backoff = attempts, backoff
