@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import sys
 import time
 from typing import Any, Dict, Optional
 
@@ -258,9 +259,10 @@ def main() -> None:
         summary = run(args.limit, args.seconds, not args.no_discovery, args.dispatch, not args.existing_work)
         print(json.dumps(summary))
         if summary['warnings'] and os.getenv('GITHUB_ACTIONS') == 'true':
-            # Visible on the run without failing it; the jobs retry with backoff.
+            # Visible on the run without failing it; the jobs retry with backoff. The
+            # runner also parses stderr, and stdout is the run's JSONL artifact.
             print(f"::warning title=Transient provider failures::{summary['warnings']} job(s) hit a retryable "
-                  'provider or network failure and will retry; see ingestion-result.jsonl')
+                  'provider or network failure and will retry; see ingestion-result.jsonl', file=sys.stderr)
         if summary['errors']:
             raise SystemExit(1)
 

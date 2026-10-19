@@ -212,8 +212,12 @@ class TransientFailureTests(unittest.TestCase):
                     with self.assertRaises(SystemExit) as caught:
                         platform_ingestion.main()
                     self.assertEqual(caught.exception.code, code)
-                printed = [str(call.args[0]) for call in output.call_args_list]
-                self.assertTrue(any(line.startswith('::warning title=Transient provider failures::2 job(s)') for line in printed))
+                annotations = [str(call.args[0]) for call in output.call_args_list if call.kwargs.get('file') is sys.stderr]
+                self.assertTrue(any(line.startswith('::warning title=Transient provider failures::2 job(s)') for line in annotations))
+                # stdout is tee'd into ingestion-result.jsonl and must stay JSON lines.
+                for call in output.call_args_list:
+                    if call.kwargs.get('file') is not sys.stderr:
+                        json.loads(str(call.args[0]))
 
 
 if __name__ == '__main__':
