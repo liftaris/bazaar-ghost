@@ -1,15 +1,15 @@
 """Bounded public discovery feeds; extractor failures never mean an empty feed."""
 
+import html
 import json
 import re
 import subprocess
-from typing import Any, Dict, List
-from urllib.error import URLError
+from typing import Any, Dict, List, Tuple
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
-from catalog_youtube import channel_page
-from extraction_errors import ExtractionError, extraction_error, provider_api_error, safe_error_category
+from catalog_youtube import channel_page  # also adds sfde/src to the import path
+from bilibili_source import public_api
+from extraction_errors import ExtractionError, extraction_error, safe_error_category
 
 
 from game_evidence import bazaar_title
@@ -37,30 +37,47 @@ def extract_page(url: str, start: int = 1, limit: int = 20) -> Dict[str, Any]:
 
 
 def bilibili_api(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
-    """Only public identity and discovery endpoints; no account cookies or bypasses."""
+    """Public identity and discovery endpoints through the paced anonymous client."""
     if path not in ('/x/web-interface/search/type', '/x/web-interface/card'):
         raise ValueError('Unsupported discovery endpoint')
-    request = Request('https://api.bilibili.com' + path + '?' + urlencode(params), headers={
-        'User-Agent': 'BazaarGhost/1.0', 'Referer': 'https://www.bilibili.com/',
-    })
-    try:
-        with urlopen(request, timeout=30) as response:
-            data = response.read(2_000_001)
-    except (URLError, TimeoutError) as error:
-        raise ExtractionError(safe_error_category(error)) from None
-    if len(data) > 2_000_000:
-        raise ValueError('Discovery response too large')
-    try:
-        result = json.loads(data)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        raise ExtractionError('invalid_response') from None
-    if not isinstance(result, dict):
-        raise ExtractionError('invalid_response')
-    if result.get('code') != 0:
-        raise provider_api_error(result.get('code'))
-    if not isinstance(result.get('data'), dict):
-        raise ExtractionError('invalid_response')
-    return result['data']
+    referer = 'https://search.bilibili.com/' if path.endswith('/search/type') else 'https://www.bilibili.com/'
+    return public_api(path, params, referer)
+
+
+def _search_minutes(value: Any) -> float:
+    """Search durations are 'M:SS' or 'H:MM:SS' text; unknown formats sort as zero."""
+    parts = str(value).split(':')
+    if not 1 < len(parts) <= 3 or not all(part.isdecimal() for part in parts):
+        return 0.0
+    seconds = 0
+    for part in parts:
+        seconds = seconds * 60 + int(part)
+    return seconds / 60
+
+
+def bilibili_candidates(state: Dict[str, Any], pages: int = 5, minimum_minutes: float = 10.0) -> Tuple[List[str], Dict[str, Any]]:
+    """Newest-first 大巴扎 search back to the previous run's newest publication time.
+
+    Returns candidate BV IDs and the next state. The high-water mark advances
+    only from inspected results, after the caller persists the candidates.
+    """
+    since = state.get('since') if isinstance(state.get('since'), int) else 0
+    newest, ids = since, []
+    for page in range(1, pages + 1):
+        data = bilibili_api('/x/web-interface/search/type', {
+            'search_type': 'video', 'keyword': '大巴扎', 'order': 'pubdate', 'page': page,
+        })
+        results = [entry for entry in data.get('result') or [] if isinstance(entry, dict)]
+        for entry in results:
+            published = entry.get('pubdate') if isinstance(entry.get('pubdate'), int) else 0
+            newest = max(newest, published)
+            title = re.sub(r'<[^>]*>', '', html.unescape(str(entry.get('title') or '')))
+            if (published > since and re.fullmatch(r'BV[A-Za-z0-9]{10}', entry.get('bvid') or '')
+                    and _search_minutes(entry.get('duration')) >= minimum_minutes and bazaar_title(title)):
+                ids.append(entry['bvid'])
+        if not results or any((entry.get('pubdate') or 0) <= since for entry in results):
+            break
+    return list(dict.fromkeys(ids)), {'since': newest, 'candidates': len(ids)}
 
 
 def discover(source: str) -> List[str]:
@@ -71,12 +88,7 @@ def discover(source: str) -> List[str]:
         return list(dict.fromkeys(e['id'] for e in entries if e and
                                  re.fullmatch(r'[A-Za-z0-9_-]{11}', e.get('id', '')) and
                                  bazaar_title(e.get('title') or '')))
-    data = bilibili_api('/x/web-interface/search/type', {
-        'search_type': 'video', 'keyword': '大巴扎', 'order': 'pubdate', 'page': 1, 'page_size': 20,
-    })
-    return list(dict.fromkeys(e['bvid'] for e in data.get('result', []) if
-                             re.fullmatch(r'BV[A-Za-z0-9]{10}', e.get('bvid', '')) and
-                             bazaar_title(e.get('title') or '')))
+    return bilibili_candidates({})[0]
 
 
 def account_page(source: str, identity: str, tab: str, start: int, limit: int = 20) -> Dict[str, Any]:
@@ -87,7 +99,14 @@ def account_page(source: str, identity: str, tab: str, start: int, limit: int = 
     else:
         if not re.fullmatch(r'[1-9][0-9]*', identity):
             raise ValueError('Expected an immutable Bilibili uploader UID')
-        page = extract_page(f'https://space.bilibili.com/{identity}/video', start, limit)
+        # Newest-first published submissions; positional pages align with the
+        # caller's 1-based cursor. The WBI space search rejects anonymous clients.
+        if (start - 1) % limit:
+            raise ValueError('Bilibili uploader pages must start on a page boundary')
+        data = public_api('/x/series/recArchivesByKeywords',
+                          {'mid': identity, 'keywords': '', 'ps': limit, 'pn': (start - 1) // limit + 1},
+                          f'https://space.bilibili.com/{identity}/video')
+        page = {'entries': [{'id': entry.get('bvid')} for entry in data.get('archives') or [] if isinstance(entry, dict)]}
         pattern = r'BV[A-Za-z0-9]{10}'
     entries = page.get('entries', [])
     return {'ids': [e['id'] for e in entries if e and re.fullmatch(pattern, e.get('id', ''))],

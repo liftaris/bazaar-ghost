@@ -16,7 +16,11 @@ YouTube supports finite uploads and finalized livestream archives. Automatic ing
 
 Bilibili supports public published submissions and replay uploads. A submission's `p` position is mutable metadata; the `cid` identifies the actual part. Each part has its own duration and source-relative clock. Reordering parts cannot substitute another part for existing work. Active live rooms, unpublished replay dashboards, private/paid/supporter-only media, interactive videos, preview playback, and legacy fragmented FLV are outside this adapter's support.
 
-The Bilibili adapter uses public web endpoints, not an approved developer API integration. YouTube metadata uses yt-dlp. Access failures are retryable errors, not evidence of deletion. No login cookies, proxy rotation, or premium access are required or supplied by this implementation. Provider/network reliability must be checked from the intended GitHub runners.
+The Bilibili adapter uses public web endpoints, not an approved developer API integration. YouTube metadata uses yt-dlp. Access failures are retryable errors, not evidence of deletion. No login, proxy rotation, request signing (WBI), or premium access is used.
+
+All Bilibili API calls go through one paced client (`BilibiliClient` in `sfde/src/bilibili_source.py`). It identifies as `BazaarGhost/1.0`, allows only fixed endpoints, refuses redirects and bounds response sizes. Listing endpoints (search, uploader listing, owner card) carry the anonymous device cookie (`buvid3`/`buvid4`) that `/x/frontend/finger/spi` issues to any logged-out browser; playback metadata (`view`, `playurl`) does not. Each endpoint has a minimum interval (uploader listing 6 s, search 3 s, card 2 s, playback metadata 1 s). HTTP 412/429 and JSON −352/−412/−509/−799 are retried up to three attempts with jittered backoff and a fresh device cookie; the endpoint's own rejection category is reported if all attempts fail.
+
+Bilibili rejects requests from Cloudflare Worker egress (105/105 HTTP 412 in a 25-minute probe), so these calls run on GitHub-hosted runners, which were accepted. A browser User-Agent without browser behavior was rejected on `view`; the honest client UA with the device cookie was not. Evidence: branch `experiment/bilibili-access`, `experiments/bilibili-worker/README.md`.
 
 Bilibili playback details observed on October 18, 2026:
 

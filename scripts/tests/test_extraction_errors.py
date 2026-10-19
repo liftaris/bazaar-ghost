@@ -9,13 +9,14 @@ import sys
 import traceback
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import platform_ingestion as ingestion
 from catalog_youtube import channel_page
 from platform_discovery import bilibili_api, extract_page
+import bilibili_source
 from bilibili_source import public_api
 from extraction_errors import ExtractionError, extraction_error, safe_error_category
 from media_source import extraction_failure, youtube_metadata
@@ -90,20 +91,24 @@ class ExtractionDiagnosticTests(unittest.TestCase):
 
     def test_public_api_boundaries_sanitize_http_and_arbitrary_json_error_values(self):
         calls = (
-            ('platform_discovery.urlopen', lambda: bilibili_api('/x/web-interface/card', {'mid': '2561817'})),
-            ('bilibili_source.urlopen', lambda: public_api('/x/web-interface/view', {'bvid': 'BV1FfL5zPEbH'})),
+            ('card', lambda: bilibili_api('/x/web-interface/card', {'mid': '2561817'})),
+            ('view', lambda: public_api('/x/web-interface/view', {'bvid': 'BV1FfL5zPEbH'})),
         )
+        client = bilibili_source.CLIENT
         for target, call in calls:
-            with self.subTest(boundary=target):
-                with patch(target, side_effect=HTTPError(PRIVATE_CONTEXT, 403, PRIVATE_CONTEXT, {}, None)):
+            with self.subTest(boundary=target), patch.object(client, '_sleep'), \
+                    patch.object(client, '_cookie', 'buvid3=fixture'), patch.object(client, '_last', {}):
+                opener = SimpleNamespace(open=Mock(side_effect=HTTPError(PRIVATE_CONTEXT, 403, PRIVATE_CONTEXT, {}, None)))
+                with patch.object(client, '_opener', opener):
                     with self.assertRaises(ExtractionError) as caught:
                         call()
                     self.assertEqual(caught.exception.category, 'http_403')
                     self.assert_private(caught.exception)
                 for code, category in ((-352, 'provider_feed_rejected'), (-401, 'provider_feed_rejected'),
                                        (PRIVATE_CONTEXT, 'provider_api_rejected')):
-                    response = io.BytesIO(json.dumps({'code': code, 'message': PRIVATE_CONTEXT}).encode())
-                    with patch(target, return_value=response):
+                    body = json.dumps({'code': code, 'message': PRIVATE_CONTEXT}).encode()
+                    opener = SimpleNamespace(open=Mock(side_effect=lambda *args, **kwargs: io.BytesIO(body)))
+                    with patch.object(client, '_opener', opener):
                         with self.assertRaises(ExtractionError) as caught:
                             call()
                         self.assertEqual(caught.exception.category, category)
@@ -124,18 +129,17 @@ class ExtractionDiagnosticTests(unittest.TestCase):
                'account_id': 'account', 'lease_token': 'lease', 'state': state, 'attempts': 3}
         account = {'id': 'account', 'source': 'bilibili', 'source_id': '2561817'}
         responses = (
-            (SimpleNamespace(returncode=1, stderr='Request is blocked by server (412) ' + PRIVATE_CONTEXT),
-             'http_412', 3600, state),
-            (SimpleNamespace(returncode=0, stdout=json.dumps({'entries': [{'id': 'BV1FfL5zPEbH'}]})),
-             None, 900, {'videos': {'head': 'BV1cqW2zYEZx', 'start': 1}}),
+            (ExtractionError('http_412'), 'http_412', 3600, state),
+            ({'archives': [{'bvid': 'BV1FfL5zPEbH'}]}, None, 900, {'videos': {'head': 'BV1cqW2zYEZx', 'start': 1}}),
         )
         for response, category, delay, expected_state in responses:
             with self.subTest(category=category):
                 output = io.StringIO()
                 def api(path, *args, **kwargs):
                     return [job] if path == 'jobs/claim' else [account] if path == 'accounts' else True
+                listing = {'side_effect': response} if isinstance(response, Exception) else {'return_value': response}
                 with patch.object(ingestion, 'api', side_effect=api) as backend, \
-                        patch('subprocess.run', return_value=response), redirect_stdout(output):
+                        patch('platform_discovery.public_api', **listing), redirect_stdout(output):
                     summary = ingestion.run(1, 30, discovery=False, dispatch=False)
                 finished = next(c.kwargs['body'] for c in backend.call_args_list if c.args[0] == 'jobs/finish')
                 self.assertEqual(finished['state'], expected_state)

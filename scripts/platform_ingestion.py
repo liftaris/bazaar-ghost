@@ -14,7 +14,7 @@ from catalog_bilibili import ensure_account as bilibili_account, normalize_part
 from media_source import youtube_metadata
 from extraction_errors import safe_error_category
 from bilibili_source import video_metadata
-from platform_discovery import account_page, bazaar_title, bilibili_api, discover
+from platform_discovery import account_page, bazaar_title, bilibili_api, bilibili_candidates, discover
 from video_catalog import save_video
 
 
@@ -146,10 +146,15 @@ def handle_job(job: Dict[str, Any]) -> Dict[str, Any]:
     if job['kind'] == 'account':
         return poll_account(job)
     if job['kind'] == 'discovery':
-        ids = discover(job['source'])
+        if job['source'] == 'bilibili':
+            ids, state = bilibili_candidates(job.get('state') or {})
+        else:
+            ids = discover(job['source'])
+            state = {'candidates': len(ids)}
+        # Candidates persist before the returned high-water mark is committed.
         for identity in ids:
             enqueue(job['source'], 'video', identity, job=job)
-        return {'status': 'waiting', 'delay': 21600, 'state': {'candidates': len(ids)}}
+        return {'status': 'waiting', 'delay': 21600, 'state': state}
     return ingest_video(job)
 
 
