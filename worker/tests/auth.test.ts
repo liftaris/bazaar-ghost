@@ -264,7 +264,8 @@ it("rejects direct storage of grants and reassignment of an existing account ide
 });
 it("denies forged cookies and machine credentials as user identities",async()=>{
   const user=await login();
-  const forged=request("/session",undefined,user.cookie.replace(/bazaarghost_session=./,"bazaarghost_session=x"));
+  // Always change the first character; a token that already starts with "x" would be unforged.
+  const forged=request("/session",undefined,user.cookie.replace(/bazaarghost_session=(.)/,(_,first)=>`bazaarghost_session=${first==="x"?"y":"x"}`));
   expect((await authRoute(forged,authEnv())).status).toBe(401);
   const machine=request("/session");machine.headers.set("Authorization",`Bearer ${env.ADMIN_KEY}`);
   expect((await authRoute(machine,authEnv())).status).toBe(401);
