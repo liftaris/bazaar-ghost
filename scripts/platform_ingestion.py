@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import os
 import time
 from typing import Any, Dict, Optional
 
@@ -166,6 +167,19 @@ def dispatch_pending(limit: int, dry_run: bool = False) -> int:
     return result['dispatched']
 
 
+# Provider rejections and network failures that a later attempt usually clears.
+# They stay errors once a job has failed this many consecutive attempts.
+TRANSIENT_CATEGORIES = frozenset({'http_412', 'http_429', 'provider_feed_rejected', 'transport_timeout', 'transport_failure'})
+PERSISTENT_ATTEMPTS = 3
+
+
+def transient_failure(job: Dict[str, Any], result: Dict[str, Any], finished: bool) -> bool:
+    """A retryable provider blip on a job that kept its lease and has not failed repeatedly."""
+    categories = set(result.get('error_categories') or [])
+    return (bool(result.get('error')) and finished and bool(categories) and categories <= TRANSIENT_CATEGORIES
+            and job.get('attempts', 1) < PERSISTENT_ATTEMPTS)
+
+
 def run(limit: int, seconds: int, discovery: bool = True, dispatch: bool = False,
         initialize_discovery: bool = True) -> Dict[str, Any]:
     """Drain bounded work and report partial failures while preserving durable retries."""
@@ -176,7 +190,7 @@ def run(limit: int, seconds: int, discovery: bool = True, dispatch: bool = False
         for source in ('youtube', 'bilibili'):
             enqueue(source, 'discovery', 'bazaar')
     deadline = time.monotonic() + seconds
-    summary = {'jobs': 0, 'errors': 0, 'cataloged': 0, 'dispatched': 0}
+    summary = {'jobs': 0, 'errors': 0, 'warnings': 0, 'cataloged': 0, 'dispatched': 0}
     while summary['jobs'] < limit and time.monotonic() < deadline:
         jobs = api('jobs/claim', body={'include_discovery': discovery, **context}, method='POST')
         if not jobs:
@@ -193,12 +207,15 @@ def run(limit: int, seconds: int, discovery: bool = True, dispatch: bool = False
         finished = api('jobs/finish', body={'id': job['id'], 'token': job['lease_token'],
                        'status': result['status'], 'delay_seconds': result.get('delay', 900),
                        'error': result.get('error'), 'state': result.get('state', {})}, method='POST')
+        transient = transient_failure(job, result, bool(finished))
         summary['jobs'] += 1
-        summary['errors'] += int(bool(result.get('error')) or not finished)
+        summary['warnings'] += int(transient)
+        summary['errors'] += int(not transient and (bool(result.get('error')) or not finished))
         summary['cataloged'] += len(result.get('vod_ids', []))
         print(json.dumps({'job_id': job['id'], 'source': job['source'], 'kind': job['kind'],
                           'status': result['status'], 'error': result.get('error'),
-                          'error_categories': result.get('error_categories', []), 'lease_finished': finished}), flush=True)
+                          'error_categories': result.get('error_categories', []), 'transient': transient,
+                          'lease_finished': finished}), flush=True)
     if dispatch:
         summary['dispatched'] = dispatch_pending(3)
     # The Worker retains WebSub digest tombstones for each account's lifetime: deliveries have no signed timestamp.
@@ -231,6 +248,10 @@ def main() -> None:
             parser.error('Use 1-100 jobs and a 30-1200 second budget')
         summary = run(args.limit, args.seconds, not args.no_discovery, args.dispatch, not args.existing_work)
         print(json.dumps(summary))
+        if summary['warnings'] and os.getenv('GITHUB_ACTIONS') == 'true':
+            # Visible on the run without failing it; the jobs retry with backoff.
+            print(f"::warning title=Transient provider failures::{summary['warnings']} job(s) hit a retryable "
+                  'provider or network failure and will retry; see ingestion-result.jsonl')
         if summary['errors']:
             raise SystemExit(1)
 

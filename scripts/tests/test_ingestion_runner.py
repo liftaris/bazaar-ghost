@@ -123,7 +123,8 @@ class RunnerTests(unittest.TestCase):
                 patch.object(platform_ingestion, 'handle_job', side_effect=[TimeoutError('PRIVATE'), {'status': 'completed', 'vod_ids': [1]}]):
             result = platform_ingestion.run(2, 30, initialize_discovery=False)
         self.assertEqual(result['jobs'], 2)
-        self.assertEqual(result['errors'], 1)
+        # A first transport timeout is a warning: the job keeps its state and retries.
+        self.assertEqual((result['errors'], result['warnings']), (0, 1))
         self.assertEqual(result['cataloged'], 1)
         finishes = [call.kwargs['body'] for call in api.call_args_list if call.args[0] == 'jobs/finish']
         self.assertEqual(finishes[0]['state'], {'cursor': 1})
@@ -179,6 +180,40 @@ class WorkflowContractTests(unittest.TestCase):
             block = self.workflow.split('      - ', 1)[1]
             selected = next(step for step in block.split('      - ') if name in step)
             self.assertIn("if: steps.runner.outputs.proceed == 'true'", selected)
+
+
+class TransientFailureTests(unittest.TestCase):
+    job = {'attempts': 1}
+    result = {'error': 'videos: http_412; public catalog unavailable', 'error_categories': ['http_412']}
+
+    def test_only_retryable_provider_blips_on_a_finished_lease_are_warnings(self):
+        self.assertTrue(platform_ingestion.transient_failure(self.job, self.result, True))
+        for job, result, finished in (
+                (self.job, self.result, False),                                       # Lease not finished.
+                ({'attempts': 3}, self.result, True),                                  # Persistent outage.
+                (self.job, {**self.result, 'error_categories': ['http_412', 'invalid_data']}, True),
+                (self.job, {**self.result, 'error_categories': []}, True),
+                (self.job, {**self.result, 'error_categories': ['runtime_failure']}, True),
+                (self.job, {'error': None, 'error_categories': []}, True)):
+            self.assertFalse(platform_ingestion.transient_failure(job, result, finished))
+
+    def test_warnings_annotate_the_run_but_only_errors_fail_it(self):
+        for summary, code in (({'jobs': 3, 'errors': 0, 'warnings': 2, 'cataloged': 0, 'dispatched': 0}, None),
+                              ({'jobs': 3, 'errors': 1, 'warnings': 2, 'cataloged': 0, 'dispatched': 0}, 1)):
+            with self.subTest(errors=summary['errors']), \
+                    patch.object(sys, 'argv', ['platform_ingestion.py', 'run', '--existing-work']), \
+                    patch.object(platform_ingestion, 'verify_backend'), \
+                    patch.object(platform_ingestion, 'run', return_value=summary), \
+                    patch.dict(os.environ, {'GITHUB_ACTIONS': 'true'}), \
+                    patch('builtins.print') as output:
+                if code is None:
+                    platform_ingestion.main()
+                else:
+                    with self.assertRaises(SystemExit) as caught:
+                        platform_ingestion.main()
+                    self.assertEqual(caught.exception.code, code)
+                printed = [str(call.args[0]) for call in output.call_args_list]
+                self.assertTrue(any(line.startswith('::warning title=Transient provider failures::2 job(s)') for line in printed))
 
 
 if __name__ == '__main__':

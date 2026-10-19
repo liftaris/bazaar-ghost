@@ -178,7 +178,7 @@ class ExtractionDiagnosticTests(unittest.TestCase):
         self.assertEqual(finished[0]['delay_seconds'], 1200)
         self.assertEqual(finished[0]['error'], 'provider_feed_rejected: ingestion failed; retry scheduled')
         self.assertEqual(finished[1]['status'], 'completed')
-        self.assertEqual(summary, {'jobs': 2, 'errors': 1, 'cataloged': 1, 'dispatched': 0})
+        self.assertEqual(summary, {'jobs': 2, 'errors': 0, 'warnings': 1, 'cataloged': 1, 'dispatched': 0})
         events = [json.loads(line) for line in output.getvalue().splitlines()]
         self.assertEqual(events[0]['error_categories'], ['provider_feed_rejected'])
         self.assertEqual(events[1]['error_categories'], [])
