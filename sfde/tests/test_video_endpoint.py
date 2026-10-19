@@ -236,6 +236,27 @@ def test_mp4_catalog_may_round_an_audio_tail_one_second_past_the_video(monkeypat
     assert proof['video_end_seconds'] == pytest.approx(210.0)
 
 
+# The failing case requests [7199,7200) so the catalog range check passes and the
+# 1.05 s understatement itself is what is rejected.
+@pytest.mark.parametrize('declared,start,passes', [('7199.424375', 7200, True), ('7198.950000', 7199, False)])
+def test_mp4_declared_duration_may_understate_the_media_by_under_a_second(monkeypatch, declared, start, passes):
+    # Real values for BV1cNJ96MEjA:42788327033 (catalog 7201 s): declared 7199.424 s while
+    # video packets run to 7200.02 s absolute. The final [7200,7201) chunk contains no video.
+    metadata = copy.deepcopy(BENTO4_META)
+    metadata['format'].update(start_time='0.021000', duration=declared)
+    metadata['streams'][0]['start_time'] = '0.021000'
+    probes(monkeypatch, metadata=metadata, packets=[{'stream_index': 0, 'pts': 115199787, 'duration': 533}])
+    values = dict(requested_start=start, requested_end=start + 1, last_decoded_seconds=None,
+                  frame_interval_seconds=None, timestamp_quantum_seconds=None)
+    if not passes:
+        with pytest.raises(endpoint.VideoEndpointError, match='container end'):
+            verify(**values)
+        return
+    proof = verify(**values)
+    assert proof['audio_only'] is True
+    assert proof['video_end_seconds'] == pytest.approx(7199.999)
+
+
 @pytest.mark.parametrize('changes', [
     {'shift': -16000},                                                       # Packets stop a second early.
     {'start': '0.200000', 'duration': '4374.200000', 'shift': 2224},         # Delay beyond four frames.

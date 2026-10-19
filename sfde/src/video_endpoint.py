@@ -23,6 +23,7 @@ MAX_PACKETS = 10_000
 TAIL_SECONDS = 60
 # Bound for an MP4's composition delay and final-sample rounding, in video frames.
 MP4_MAX_COMPOSITION_FRAMES = 4
+MP4_MAX_DURATION_UNDERSTATEMENT_SECONDS = 1
 PROBE_TIMEOUT_SECONDS = 45
 METADATA_ENTRIES = 'format=format_name,start_time,duration:stream=index,codec_type,time_base,start_time:stream_disposition=attached_pic'
 PACKET_ENTRIES = METADATA_ENTRIES + ':packet=stream_index,pts,duration'
@@ -300,6 +301,11 @@ def _verify(locator, input_args, *, requested_start, requested_end, last_decoded
         shortfall = duration - container_end
         if 0 < shortfall <= origin + MP4_MAX_COMPOSITION_FRAMES * last_step:
             alignment = shortfall
+        # The declared duration can also understate the media (Bilibili: 0.58 s).
+        # Packets observed past the declared end cannot be a truncated read; bound
+        # how far the metadata may be wrong.
+        elif 0 < -shortfall <= MP4_MAX_DURATION_UNDERSTATEMENT_SECONDS:
+            alignment = -shortfall
     container_tolerance = alignment + container_step + container_quantum + Fraction(1, 1_000_000)
     if abs(container_end - duration) > container_tolerance:
         raise VideoEndpointError('Video endpoint packet probe did not reach the container end')
