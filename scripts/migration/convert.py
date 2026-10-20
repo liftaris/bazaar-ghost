@@ -226,7 +226,7 @@ def convert(source, destination):
                                          for table in ('public_cache_state', 'public_search_state'))
                 output.write(f"INSERT INTO mutation_checks(id,ok) VALUES('snapshot-import-empty',NOT({nonempty}) AND {singleton});\n")
                 output.write("DELETE FROM mutation_checks WHERE id='snapshot-import-empty';\n")
-                # Only the old application's triggers are suspended. New clip/auth/cache
+                # Only the old application's triggers are suspended. New anchor/Matchup/auth/cache
                 # triggers stay installed and materialize derived rows during this import.
                 for name, _ in triggers:
                     output.write(f'DROP TRIGGER IF EXISTS {name};\n')
@@ -267,7 +267,7 @@ def convert(source, destination):
                                  'websub_delivery_receipts': 'retained', 'ingestion_jobs': 'retained; active leases refused',
                                  'auth': 'source auth is excluded; target auth and social tables must be empty',
                                  'ingestion_dispatch': 'source dispatch state is excluded; target dispatcher table must be empty',
-                                 'target': f'full schema 0001–{TARGET_SCHEMA_VERSION:04d} required; clips derive from imported detections'}}
+                                 'target': f'full schema 0001–{TARGET_SCHEMA_VERSION:04d} required; anchors and Matchups derive from imported detections'}}
         private_json(destination / 'manifest.json', manifest)
         print(json.dumps({'counts': counts, 'absent_tables': sorted(absent), 'rotated_websub_subscriptions': counts['youtube_websub_subscriptions']}, indent=2))
         return counts

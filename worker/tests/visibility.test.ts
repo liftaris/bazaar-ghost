@@ -15,7 +15,7 @@ async function detect(vod: number, time: number, path = `/detections/${vod}/imag
   return id;
 }
 const hide = (id: string, status = "hidden") => statement(env,
-  "UPDATE clips SET status=? WHERE current_detection_id=?", status, id).run();
+  "UPDATE matchups SET status=? WHERE id IN(SELECT matchup_id FROM matchup_anchors WHERE current_detection_id=?)", status, id).run();
 beforeEach(async () => {
   await statement(env, "INSERT INTO sfde_profiles(id,profile_name,crop_region) VALUES(1,'visibility','[0,0,1,1]')").run();
   await statement(env, "INSERT INTO streamers(id,login,display_name) VALUES(1,'visibility','Creator')").run();
@@ -56,10 +56,10 @@ it("filters reviewed groups before matching, counting and paginating appearances
 });
 it("does not unhide an anchor when OCR replaces its detection UUID", async () => {
   await hide(twitch);
-  const clip = await one<{id:number}>(env, "SELECT id FROM clips WHERE current_detection_id=?", twitch);
+  const clip = await one<{id:number}>(env, "SELECT id FROM matchup_anchors WHERE current_detection_id=?", twitch);
   await statement(env, "DELETE FROM detections WHERE id=?", twitch).run();
   const replacement = await detect(1, 12, "/detections/1/new_claim_12.jpg");
-  expect(await one(env, "SELECT id,status,current_detection_id FROM clips WHERE id=?", clip!.id)).toEqual({ id: clip!.id, status: "hidden", current_detection_id: replacement });
+  expect(await one(env, "SELECT a.id,m.status,a.current_detection_id FROM matchup_anchors a JOIN matchups m ON m.id=a.matchup_id WHERE a.id=?", clip!.id)).toEqual({ id: clip!.id, status: "hidden", current_detection_id: replacement });
   expect(await rows(env, "SELECT * FROM detection_search")).toEqual([]);
   expect(await publicImageVisible(env, "1/new_claim_12.jpg")).toBe(false);
   await hide(replacement, "visible");
@@ -98,7 +98,7 @@ it("changes the cache key immediately after a moderation transaction and restore
 it("rolls back revision changes together with a failed moderation batch", async () => {
   const before = await publicRevision(env);
   await expect(env.DB.batch([
-    statement(env,"UPDATE clips SET status='hidden' WHERE current_detection_id=?",twitch),
+    statement(env,"UPDATE matchups SET status='hidden' WHERE id IN(SELECT matchup_id FROM matchup_anchors WHERE current_detection_id=?)",twitch),
     statement(env,"INSERT INTO mutation_checks(id,ok) VALUES('fail-visibility',0)"),
   ])).rejects.toThrow();
   expect(await publicRevision(env)).toBe(before);

@@ -141,7 +141,7 @@ it("checks moderation even after warming the public payload cache", async () => 
   expect((await nativeRoute(request, hosted)).status).toBe(200);
   await statement(
     env,
-    "UPDATE clips SET status='hidden' WHERE id=?",
+    "UPDATE matchups SET status='hidden' WHERE id=?",
     visible.id,
   ).run();
   await expect(nativeRoute(request, hosted)).rejects.toMatchObject({
@@ -226,7 +226,7 @@ it("hides moderated evidence and never returns personal state in public cards", 
   const first = (await get<Page<Matchup>>("/search")).items[0];
   await statement(
     env,
-    "UPDATE clips SET status='hidden' WHERE id=?",
+    "UPDATE matchups SET status='hidden' WHERE id=?",
     first.id,
   ).run();
   expect((await get<Page<Matchup>>("/search")).items).toEqual([]);

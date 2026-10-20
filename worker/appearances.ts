@@ -22,7 +22,7 @@ export async function videoSearch(env:Env,input:Input) {
 }
 export async function appearanceSearch(env:Env,input:Input) {
   const {where,args,limit,offset}=filters(input);
-  const visible=`WITH visible AS (SELECT coalesce(a.matchup_id,d.detection_id) AS group_id,d.* FROM video_detections d LEFT JOIN clips c ON c.current_detection_id=d.detection_id LEFT JOIN clip_appearances a ON a.clip_id=c.id)`;
+  const visible=`WITH visible AS (SELECT coalesce(a.matchup_id,d.detection_id) AS group_id,d.* FROM video_detections d LEFT JOIN matchup_anchors c ON c.current_detection_id=d.detection_id LEFT JOIN clip_appearances a ON a.clip_id=c.id)`;
   // Select matched groups before pagination, then include all available copies of each matched group.
   const fields = [
     'detection_id','username','confidence','rank','frame_time_seconds','storage_path',
@@ -55,26 +55,26 @@ export async function linkAppearances(env:Env,input:Input) {
   const ids=[...new Set<string>(input.detection_ids.map(uuid))].sort();
   requireValue(ids.length>=2,'Provide at least two distinct detections');
   const encoded=JSON.stringify(ids);
-  const existing=await rows(env,'SELECT DISTINCT a.matchup_id FROM clip_appearances a JOIN clips c ON c.id=a.clip_id WHERE c.current_detection_id IN(SELECT value FROM json_each(?))',encoded);
+  const existing=await rows(env,'SELECT DISTINCT a.matchup_id FROM clip_appearances a JOIN matchup_anchors c ON c.id=a.clip_id WHERE c.current_detection_id IN(SELECT value FROM json_each(?))',encoded);
   requireValue(existing.length<=1,'Conflicting groups require explicit unlinking');
   const id=existing[0]?.matchup_id??crypto.randomUUID();
   await atomic(env,[
-    {sql:'SELECT count(*)=? AND count(DISTINCT vod_id)>=2 FROM clips WHERE current_detection_id IN(SELECT value FROM json_each(?))',args:[ids.length,encoded]},
-    {sql:'SELECT NOT EXISTS(SELECT 1 FROM clip_appearances a JOIN clips c ON c.id=a.clip_id WHERE c.current_detection_id IN(SELECT value FROM json_each(?)) AND a.matchup_id<>?)',args:[encoded,id]},
-    {sql:'SELECT count(*)<=50 FROM (SELECT clip_id FROM clip_appearances WHERE matchup_id=? UNION SELECT id FROM clips WHERE current_detection_id IN(SELECT value FROM json_each(?)))',args:[id,encoded]},
+    {sql:'SELECT count(*)=? AND count(DISTINCT vod_id)>=2 FROM matchup_anchors WHERE current_detection_id IN(SELECT value FROM json_each(?))',args:[ids.length,encoded]},
+    {sql:'SELECT NOT EXISTS(SELECT 1 FROM clip_appearances a JOIN matchup_anchors c ON c.id=a.clip_id WHERE c.current_detection_id IN(SELECT value FROM json_each(?)) AND a.matchup_id<>?)',args:[encoded,id]},
+    {sql:'SELECT count(*)<=50 FROM (SELECT clip_id FROM clip_appearances WHERE matchup_id=? UNION SELECT id FROM matchup_anchors WHERE current_detection_id IN(SELECT value FROM json_each(?)))',args:[id,encoded]},
   ],[
     statement(env,'INSERT OR IGNORE INTO matchup_groups(id,evidence) VALUES(?,?)',id,note),
     statement(env,'INSERT OR IGNORE INTO matchup_appearances(detection_id,matchup_id) SELECT value,? FROM json_each(?)',id,encoded),
-    statement(env,'INSERT OR IGNORE INTO clip_appearances(clip_id,matchup_id) SELECT id,? FROM clips WHERE current_detection_id IN(SELECT value FROM json_each(?))',id,encoded),
+    statement(env,'INSERT OR IGNORE INTO clip_appearances(clip_id,matchup_id) SELECT id,? FROM matchup_anchors WHERE current_detection_id IN(SELECT value FROM json_each(?))',id,encoded),
     statement(env,"INSERT INTO matchup_review_events(id,matchup_id,action,detection_ids,evidence) VALUES(?,?,'link',?,?)",crypto.randomUUID(),id,encoded,note),
   ]);
   return {matchup_id:id};
 }
 export async function unlinkAppearance(env:Env,input:Input) {
   const id=uuid(input.detection_id),note=evidence(input);
-  const existing=await one(env,'SELECT a.matchup_id,c.id AS clip_id FROM clip_appearances a JOIN clips c ON c.id=a.clip_id WHERE c.current_detection_id=?',id);
+  const existing=await one(env,'SELECT a.matchup_id,c.id AS clip_id FROM clip_appearances a JOIN matchup_anchors c ON c.id=a.clip_id WHERE c.current_detection_id=?',id);
   if(!existing)return {unlinked:false};
-  await atomic(env,[{sql:'SELECT EXISTS(SELECT 1 FROM clip_appearances a JOIN clips c ON c.id=a.clip_id WHERE c.current_detection_id=? AND a.matchup_id=?)',args:[id,existing.matchup_id]}],[
+  await atomic(env,[{sql:'SELECT EXISTS(SELECT 1 FROM clip_appearances a JOIN matchup_anchors c ON c.id=a.clip_id WHERE c.current_detection_id=? AND a.matchup_id=?)',args:[id,existing.matchup_id]}],[
     statement(env,"INSERT INTO matchup_review_events(id,matchup_id,action,detection_ids,evidence,created_at) VALUES(?,?,'unlink',?,?,?)",crypto.randomUUID(),existing.matchup_id,JSON.stringify([id]),note,now()),
     statement(env,'DELETE FROM matchup_appearances WHERE detection_id=?',id),
     statement(env,'DELETE FROM clip_appearances WHERE clip_id=?',existing.clip_id),

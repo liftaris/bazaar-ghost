@@ -71,7 +71,7 @@ class FullTargetD1Tests(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             conversion.convert(source, destination)
         manifest = json.loads((destination / 'manifest.json').read_text())
-        self.assertEqual(manifest['target_schema_version'], 12)
+        self.assertEqual(manifest['target_schema_version'], 13)
         self.migrate()
         before_triggers = self.query("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name")
         for part in sorted(destination.glob('import-*.sql')):
@@ -98,13 +98,15 @@ class FullTargetD1Tests(unittest.TestCase):
         self.assertEqual(self.query('SELECT status,next_attempt_at FROM platform_ingestion_jobs'),[{'status':'waiting','next_attempt_at':'2026-09-08T15:00:00.000Z'}])
         self.assertEqual(self.query("SELECT count(*) n FROM vods WHERE status='completed'"),[{'n':4}])
         self.assertEqual(self.query('SELECT id,revision FROM public_cache_state'),[{'id':1,'revision':0}])
-        for table in ['app_users','user_accounts','user_sessions','auth_verifications','auth_flows','auth_rate_limits','clip_comments','clip_likes','clip_favorites','social_reports','social_moderation_audit','platform_ingestion_dispatch']:
+        for table in ['app_users','user_accounts','user_sessions','auth_verifications','auth_flows','auth_rate_limits','matchup_comments','matchup_likes','matchup_favorites','social_reports','social_moderation_audit','platform_ingestion_dispatch']:
             self.assertEqual(counts[table],0,table)
         self.execute_file(destination/'import.sql',succeeds=False)
         self.assertEqual(self.query(counts_sql)[0],counts)
         self.assertEqual(self.query("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name"),before_triggers)
-        # The full-target triggers still operate on the imported clips and public views.
-        self.query("UPDATE clips SET status='hidden' WHERE vod_id=1")
+        # The full-target triggers still operate on the imported anchors, Matchups and public views.
+        self.assertEqual(self.query('SELECT count(*) n,sum(matchup_id=id) m FROM matchup_anchors'),[{'n':4,'m':4}])
+        self.assertEqual(self.query('SELECT count(*) n FROM matchups'),[{'n':4}])
+        self.query("UPDATE matchups SET status='hidden' WHERE id IN(SELECT matchup_id FROM matchup_anchors WHERE vod_id=1)")
         self.assertEqual(self.query('SELECT revision FROM public_cache_state'),[{'revision':1}])
         self.assertEqual(self.query('SELECT count(*) n FROM detection_search'),[{'n':0}])
         self.assertEqual(self.query('SELECT count(*) n FROM video_detections'),[{'n':3}])

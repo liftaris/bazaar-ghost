@@ -3,7 +3,7 @@ import { HttpError, one, requireValue } from "./http";
 /** A short-lived result boundary; inserts cannot move existing pages. */
 export interface Boundary {
   revision: number;
-  clips: number;
+  matchups: number;
   videos: number;
   expires: number;
 }
@@ -59,7 +59,10 @@ export async function boundary(env: Env, url: URL): Promise<Cursor> {
         ),
         "Invalid cursor",
       );
-      const value: Cursor = JSON.parse(new TextDecoder().decode(bytes));
+      const value: Cursor & { clips?: number } = JSON.parse(new TextDecoder().decode(bytes));
+      // Cursors issued before the Matchup rename carry the boundary as `clips`.
+      value.matchups ??= value.clips as number;
+      delete value.clips;
       requireValue(
         value.query === query && Array.isArray(value.after),
         "Cursor belongs to another query",
@@ -73,9 +76,9 @@ export async function boundary(env: Env, url: URL): Promise<Cursor> {
       throw new HttpError(400, "Invalid cursor");
     }
   }
-  const row = await one<{ revision: number; clips: number; videos: number }>(
+  const row = await one<{ revision: number; matchups: number; videos: number }>(
     env,
-    `SELECT revision,(SELECT coalesce(max(id),0) FROM clips) AS clips,
+    `SELECT revision,(SELECT coalesce(max(id),0) FROM matchups) AS matchups,
     (SELECT coalesce(max(id),0) FROM vods) AS videos FROM public_search_state WHERE id=1`,
   );
   if (!row) throw new Error("Search boundary unavailable");

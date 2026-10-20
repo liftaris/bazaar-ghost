@@ -97,7 +97,7 @@ async function search(env: Env, url: URL) {
     state = await boundary(env, url);
   const { clauses, args } = filters(url, "m");
   clauses.push("m.matchup_id<=?");
-  args.push(state.clips);
+  args.push(state.matchups);
   if (url.searchParams.has("videoId")) {
     clauses.push("m.vod_id=?");
     args.push(idValue(url.searchParams.get("videoId")!));
@@ -159,7 +159,7 @@ async function videos(env: Env, url: URL) {
     clauses.push(
       "EXISTS(SELECT 1 FROM public_matchups m WHERE m.vod_id=v.id AND m.matchup_id<=?)",
     );
-    args.push(state.clips);
+    args.push(state.matchups);
   }
   if (q) {
     clauses.push(
@@ -192,7 +192,7 @@ async function creators(env: Env, url: URL) {
     q = queryText(url);
   const { clauses, args } = filters(url, "m");
   clauses.push("m.matchup_id<=?");
-  args.push(state.clips);
+  args.push(state.matchups);
   if (q) {
     clauses.push(
       "(instr(lower(m.creator_name),?)>0 OR instr(lower(coalesce(m.creator_login,'')),?)>0)",
@@ -243,7 +243,7 @@ async function timeline(
     WHERE vod_id=? AND matchup_id<=? ${state.after.length ? "AND (frame_time_seconds,matchup_id)>(?,?)" : ""}
     ORDER BY frame_time_seconds,matchup_id LIMIT ?`,
     id,
-    state.clips,
+    state.matchups,
     ...state.after,
     limit + 1,
   );
@@ -436,7 +436,7 @@ export async function nativeRoute(req: Request, env: Env): Promise<Response> {
   const cacheUrl = new URL(url);
   cacheUrl.searchParams.set(
     "native-revision",
-    `${state.revision}:${state.clips}:${state.videos}`,
+    `${state.revision}:${state.matchups}:${state.videos}`,
   );
   const response = await publicCache(
     new Request(cacheUrl, req),
