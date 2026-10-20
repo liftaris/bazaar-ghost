@@ -19,6 +19,7 @@ import { retryVod, setProfile, setStreamer } from "./admin";
 import { streamersAdminRoute } from "./streamers";
 import { sessionsAdminRoute } from "./sessions";
 import { matchupsAdminRoute } from "./coalesce";
+import { notificationsAdminRoute } from "./notifications";
 import { discord } from "./discord";
 import { Twitch } from "./twitch";
 import {
@@ -277,6 +278,7 @@ async function route(req: Request, env: Env): Promise<Response> {
   }
   if (path === "/api/admin/streamers" || path.startsWith("/api/admin/streamers/")) return streamersAdminRoute(req, env, path);
   if (path === "/api/admin/matchups" || path.startsWith("/api/admin/matchups/")) return matchupsAdminRoute(req, env, path);
+  if (path.startsWith("/api/admin/notifications/")) return notificationsAdminRoute(req, env, path);
   if (path === "/api/admin/sessions" || path.startsWith("/api/admin/sessions/")) return sessionsAdminRoute(req, env, path);
   if (path === "/api/admin/session-proposals" || path.startsWith("/api/admin/session-proposals/")) return proposalsAdminRoute(req, env, path);
   if (req.method !== "POST") throw new HttpError(405, "Method not allowed");

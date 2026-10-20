@@ -23,6 +23,7 @@ class DeploymentTests(unittest.TestCase):
             config['database']['id'] = f'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaa{number}'
             config['workersDev'] = True
             config['vars']['PUBLIC_URL'] = f'https://bazaarghost-{target}.example.workers.dev'
+            config['vars']['PUBLIC_SITE_URL'] = f'https://frontend-{target}.example.workers.dev'
             self.configs[target] = config
         self.write_configs()
 

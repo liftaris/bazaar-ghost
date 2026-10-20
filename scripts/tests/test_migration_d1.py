@@ -71,7 +71,7 @@ class FullTargetD1Tests(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             conversion.convert(source, destination)
         manifest = json.loads((destination / 'manifest.json').read_text())
-        self.assertEqual(manifest['target_schema_version'], 17)
+        self.assertEqual(manifest['target_schema_version'], 18)
         self.migrate()
         before_triggers = self.query("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name")
         for part in sorted(destination.glob('import-*.sql')):
@@ -91,7 +91,7 @@ class FullTargetD1Tests(unittest.TestCase):
         self.assertEqual(self.query('SELECT recorded_at,published_at FROM vods WHERE id=2'), [{'recorded_at':'2025-08-11T22:00:00.000Z','published_at':'2026-09-01T15:00:00.000Z'}])
         self.assertEqual(self.query('SELECT source_video_id FROM public_sources WHERE vod_id=2'), [{'source_video_id':'12345678901'}])
         self.assertEqual(self.query("SELECT count(*) n FROM sqlite_master WHERE name IN('matchup_groups','matchup_appearances','matchup_review_events','clip_appearances')"), [{'n':0}])
-        self.assertEqual(self.query('SELECT count(*) n FROM notification_outbox WHERE sent_at IS NULL'), [{'n':0}])
+        self.assertEqual(self.query('SELECT count(*) n FROM notification_outbox_v2 WHERE sent_at IS NULL'), [{'n':0}])
         subscription = self.query(f"SELECT length(callback_token) token_length,length(secret) secret_length,callback_token!='{'a'*64}' AS token_rotated,secret!='{'b'*64}' AS secret_rotated FROM youtube_websub_subscriptions")
         self.assertEqual(subscription,[{'token_length':64,'secret_length':64,'token_rotated':1,'secret_rotated':1}])
         self.assertEqual(self.query('SELECT count(*) n FROM youtube_websub_subscriptions WHERE requested_at IS NOT NULL OR confirmed_at IS NOT NULL OR lease_expires_at IS NOT NULL'),[{'n':0}])

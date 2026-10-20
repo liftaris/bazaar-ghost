@@ -173,7 +173,7 @@ it("publishes images before idempotent detections, includes IGD and aggregates a
   expect((await one(env, "SELECT status FROM vods"))!.status).toBe("completed");
   expect((await one(env, "SELECT count(*) AS n FROM detections"))!.n).toBe(3);
   expect(
-    (await one(env, "SELECT count(*) AS n FROM notification_outbox"))!.n,
+    (await one(env, "SELECT count(*) AS n FROM notification_outbox_v2"))!.n,
   ).toBe(3);
   const results = await search(env, {
     search_query: "oponent",
@@ -268,12 +268,14 @@ it("dev notifications make no outbound calls and production cannot clear storage
     { detections: [record] },
     token,
   );
+  await env.DB.prepare("UPDATE notification_outbox_v2 SET eligible_at='2000-01-01T00:00:00.000Z'").run();
+  const matchup = (await one(env, "SELECT matchup_id FROM notification_outbox_v2"))!.matchup_id;
   await handleJob(
     { ...env, ENVIRONMENT: "dev" },
-    { type: "notify", id: record.id },
+    { type: "notify", id: matchup },
   );
   expect(
-    (await one(env, "SELECT sent_at FROM notification_outbox"))!.sent_at,
+    (await one(env, "SELECT sent_at FROM notification_outbox_v2"))!.sent_at,
   ).toBeTruthy();
   await expect(
     clearDevStorage({ ...env, ENVIRONMENT: "production" }),

@@ -6,6 +6,8 @@ beforeEach(async () => {
   // Explicit cleanup avoids resetting the runtime's own Durable Objects between tests.
   const tables = [
     "mutation_checks",
+    "notification_deliveries_v2",
+    "notification_outbox_v2",
     "twitch_catalog_work",
     "social_reports",
     "social_moderation_audit",
@@ -28,8 +30,6 @@ beforeEach(async () => {
     "platform_ingestion_dispatch",
     "platform_ingestion_jobs",
     "chat_mentions",
-    "notification_deliveries",
-    "notification_outbox",
     "detections",
     "search_grams",
     "search_names",

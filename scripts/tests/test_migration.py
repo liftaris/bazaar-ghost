@@ -32,7 +32,7 @@ class MigrationTests(unittest.TestCase):
             restored.executescript((dest / 'import.sql').read_text())
             restored.executescript((dest / 'post_import.sql').read_text())
             self.assertEqual(restored.execute('SELECT username,igd FROM detections').fetchone(), ("O'Connor", 9))
-            self.assertTrue(restored.execute('SELECT sent_at FROM notification_outbox').fetchone()[0])
+            self.assertTrue(restored.execute('SELECT sent_at FROM notification_outbox_v2').fetchone()[0])
             self.assertEqual(restored.execute('PRAGMA foreign_key_check').fetchall(), [])
             self.assertEqual(restored.execute('SELECT status FROM vods').fetchone()[0], 'completed')
 
@@ -122,8 +122,9 @@ class MultiplatformMigrationTests(unittest.TestCase):
         self.assertNotIn('b' * 64, sub)
         self.assertEqual(sub[2:], (None, None, None))
         self.assertEqual(restored.execute('SELECT body_sha256 FROM youtube_websub_deliveries').fetchone()[0], 'c' * 64)
-        self.assertEqual(restored.execute('SELECT count(*) FROM notification_outbox WHERE sent_at IS NULL').fetchone()[0], 0)
-        self.assertEqual(restored.execute('SELECT count(*) FROM notification_deliveries').fetchone()[0], 1)
+        self.assertEqual(restored.execute('SELECT count(*) FROM notification_outbox_v2 WHERE sent_at IS NULL').fetchone()[0], 0)
+        self.assertGreater(restored.execute('SELECT count(*) FROM notification_outbox_v2').fetchone()[0], 0)
+        self.assertEqual(restored.execute('SELECT count(*) FROM notification_deliveries_v2').fetchone()[0], 0)
         self.assertEqual(restored.execute('SELECT count(*) FROM chat_mentions').fetchone()[0], 1)
         self.assertEqual(restored.execute('SELECT count(*) FROM detections WHERE igd=9').fetchone()[0], 4)
         for path in self.destination.iterdir():
@@ -133,9 +134,9 @@ class MultiplatformMigrationTests(unittest.TestCase):
         manifest = json.loads((self.destination / 'manifest.json').read_text())
         self.assertEqual(manifest['schema_version'], 3)
         self.assertEqual(manifest['source_schema_version'], 3)
-        self.assertEqual(manifest['target_schema_version'], 17)
+        self.assertEqual(manifest['target_schema_version'], 18)
         self.assertEqual(len(manifest['migrations']), 3)
-        self.assertEqual(len(manifest['target_migrations']), 17)
+        self.assertEqual(len(manifest['target_migrations']), 18)
         self.assertEqual(manifest['target_counts']['platform_ingestion_dispatch'], 0)
         self.assertNotIn('platform_ingestion_dispatch', manifest['input_counts'])
         self.assertNotIn('platform_ingestion_dispatch', manifest['output_counts'])
@@ -151,7 +152,7 @@ class MultiplatformMigrationTests(unittest.TestCase):
         self.assertEqual(restored.execute('SELECT count(*) FROM matchup_anchors WHERE matchup_id=id').fetchone()[0], 4)
         self.assertEqual(restored.execute('SELECT revision FROM public_cache_state WHERE id=1').fetchone()[0], 0)
         self.assertEqual(manifest['input_counts']['matchup_appearances'], 2)
-        self.assertEqual(manifest['output_counts']['notification_outbox'], 1)
+        self.assertNotIn('notification_outbox', manifest['output_counts'])
 
     def test_refuses_active_ingestion_status_and_any_retained_lease(self):
         for active in [{'status': 'processing'}, {'lease_token': 'held'}, {'lease_expires_at': '2000-01-01T00:00:00Z'}]:

@@ -158,7 +158,7 @@ def convert(source, destination):
     db = sqlite3.connect(destination / 'snapshot.sqlite')
     try:
         apply_schema(db)
-        outbox_trigger = db.execute("SELECT sql FROM sqlite_master WHERE name='detection_outbox'").fetchone()[0]
+        # Source notification state is never imported: the target keys notifications by Matchup, and its history is marked sent below.
         db.execute('DROP TRIGGER detection_outbox')
         counts, unknown, vod_statuses = {}, {}, []
         for table in TABLES:
@@ -202,9 +202,6 @@ def convert(source, destination):
                 raise ValueError(f'{table} count differs from the completed export manifest')
         db.executemany('UPDATE vods SET status=? WHERE id=?', vod_statuses)
         imported_at = datetime.now(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
-        db.execute("INSERT OR IGNORE INTO notification_outbox(detection_id,sent_at) SELECT d.id,? FROM detections d JOIN vods v ON v.id=d.vod_id WHERE d.confidence>0.7 AND v.source='twitch' AND v.notifications_enabled=1", (imported_at,))
-        db.execute('UPDATE notification_outbox SET sent_at=?', (imported_at,))
-        db.execute(outbox_trigger)
         problems = db.execute('PRAGMA foreign_key_check').fetchall()
         if problems:
             raise ValueError(f'Foreign-key errors: {problems[:10]}')
@@ -239,6 +236,8 @@ def convert(source, destination):
                     names = ','.join(f'"{column}"' for column in columns)
                     for values in db.execute(f'SELECT {quoted} FROM {table}'):
                         output.write(f'INSERT INTO {table}({names}) VALUES({",".join(values)});\n')
+                # The target's Matchup trigger queued every imported Matchup; a history import never notifies.
+                output.write(f"UPDATE notification_outbox_v2 SET sent_at='{imported_at}' WHERE sent_at IS NULL;\n")
                 # Source links were operator-set; Twitch Channels and ownership come from the streamers trigger.
                 output.write("INSERT INTO channel_ownership(channel_id,streamer_id,method,actor,started_at) "
                              "SELECT id,streamer_id,'legacy-link','migration:convert',created_at FROM platform_accounts "

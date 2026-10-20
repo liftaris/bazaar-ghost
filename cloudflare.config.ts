@@ -18,6 +18,7 @@ export function configuration(mode = "local") {
         ENVIRONMENT: bindings.text(settings.vars.ENVIRONMENT),
         BUILD_COMMIT: bindings.text(process.env.BUILD_COMMIT ?? ("BUILD_COMMIT" in settings.vars ? settings.vars.BUILD_COMMIT : "unreleased")),
         PUBLIC_URL: bindings.text(settings.vars.PUBLIC_URL),
+        PUBLIC_SITE_URL: bindings.text(settings.vars.PUBLIC_SITE_URL),
         OUTBOUND_ENABLED: bindings.text(settings.vars.OUTBOUND_ENABLED),
         AUTH_ENABLED: bindings.text(settings.vars.AUTH_ENABLED),
         CORS_ORIGINS: bindings.text(settings.vars.CORS_ORIGINS),

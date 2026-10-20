@@ -1,7 +1,7 @@
 import { one, rows, statement, requireValue } from "./http";
 import { Twitch, type CatalogStats } from "./twitch";
 import { dispatchAutomatic, pendingVideos, plan, recover } from "./processing";
-import { notify } from "./discord";
+import { dueNotifications, notify } from "./notifications";
 import { cleanupAuth } from "./auth";
 import { dispatchCatalog, requestCatalog, runCatalogBatch, type CatalogBatch } from "./catalog-work";
 import { dispatchIngestion, hasDueIngestionDispatch } from "./platform-ingestion-dispatch";
@@ -38,12 +38,8 @@ export async function processPending(env: Env) {
     await env.JOBS.send({ type: "platform-ingestion" });
   const vods = await pendingVideos(env);
   for (const v of vods) await env.JOBS.send({ type: "process", id: v.id });
-  const outbox = await rows(
-    env,
-    "SELECT detection_id FROM notification_outbox WHERE sent_at IS NULL LIMIT 100",
-  );
-  for (const d of outbox)
-    await env.JOBS.send({ type: "notify", id: d.detection_id });
+  for (const d of await dueNotifications(env))
+    await env.JOBS.send({ type: "notify", id: d.matchup_id });
   await reconcileDirtySessions(env);
   await sweepProposals(env);
 }
@@ -145,7 +141,7 @@ export async function handleJob(env: Env, job: Job) {
     case "platform-ingestion":
       return dispatchIngestion(env);
     case "notify":
-      return notify(env, String(job.id));
+      return notify(env, Number(job.id));
     case "clear-dev-storage":
       return clearDevStorage(env, job.cursor);
     case "chat":

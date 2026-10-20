@@ -40,7 +40,7 @@ it('keeps the Twitch player contract free of non-Twitch identities and exposes p
  expect(await rows(env,'SELECT * FROM detection_search')).toEqual([]);
  const publicRow=(await one(env,'SELECT * FROM public_sources'))!;
  expect(publicRow.source_part_id).toBe('123');const source=((await(await SELF.fetch('http://local/api/v1/search')).json()) as any).items[0].sources[0];expect(source.watchUrl).toContain('?p=2&t=12');expect(source.embedUrl).toContain('cid=123');expect(publicRow.recorded_timestamp).toBeNull();expect(publicRow.igd).toBe(9);
- expect(await rows(env,'SELECT * FROM notification_outbox')).toEqual([]);
+ expect(await rows(env,'SELECT * FROM notification_outbox_v2')).toEqual([]);
  const image=await SELF.fetch(`http://local${d.path}`);expect(image.status).toBe(200);
 });
 it('rejects metadata timeline rewrites once chunks exist while allowing part position refresh',async()=>{

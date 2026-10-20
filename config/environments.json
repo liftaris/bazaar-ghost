@@ -8,6 +8,7 @@
       "ENVIRONMENT": "local",
       "BUILD_COMMIT": "local",
       "PUBLIC_URL": "http://localhost:8787",
+      "PUBLIC_SITE_URL": "http://localhost:3000",
       "OUTBOUND_ENABLED": "false",
       "AUTH_ENABLED": "false",
       "CORS_ORIGINS": "http://localhost:3000,https://bazaarghost.stream"
@@ -41,6 +42,7 @@
     "vars": {
       "ENVIRONMENT": "dev",
       "PUBLIC_URL": "https://REPLACE_ME",
+      "PUBLIC_SITE_URL": "https://REPLACE_ME",
       "OUTBOUND_ENABLED": "false",
       "AUTH_ENABLED": "false",
       "CORS_ORIGINS": "https://bazaarghost.stream"
@@ -74,6 +76,7 @@
     "vars": {
       "ENVIRONMENT": "production",
       "PUBLIC_URL": "https://REPLACE_ME",
+      "PUBLIC_SITE_URL": "https://bazaarghost.stream",
       "OUTBOUND_ENABLED": "false",
       "AUTH_ENABLED": "false",
       "CORS_ORIGINS": "https://bazaarghost.stream"
@@ -108,6 +111,7 @@
       "ENVIRONMENT": "validation",
       "BUILD_COMMIT": "unreleased",
       "PUBLIC_URL": "https://bazaarghost-validation.kaio-8df.workers.dev",
+      "PUBLIC_SITE_URL": "https://bazaarghost-frontend-validation.kaio-8df.workers.dev",
       "OUTBOUND_ENABLED": "true",
       "AUTH_ENABLED": "true",
       "CORS_ORIGINS": "https://bazaarghost-validation.kaio-8df.workers.dev,https://bazaarghost.kaio-8df.workers.dev,https://bazaarghost.stream,https://www.bazaarghost.stream,http://localhost:3000"

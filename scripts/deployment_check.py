@@ -44,6 +44,9 @@ def validate(target, root=ROOT, ref=None):
     if ('REPLACE_ME' in public_url or url.scheme != 'https' or not url.hostname
             or url.username or url.password or url.query or url.fragment or url.path not in ('', '/')):
         raise ValueError('Set the public HTTPS Worker origin without credentials, path or query')
+    site_url = urlsplit(config['vars']['PUBLIC_SITE_URL'])
+    if 'REPLACE_ME' in site_url.geturl() or site_url.scheme != 'https' or not site_url.hostname or site_url.path not in ('', '/'):
+        raise ValueError('Set the frontend HTTPS origin used in notification links')
     database = config['database']
     if database['name'] != f'bazaarghost-{target}':
         raise ValueError('Database name must match the target environment')
