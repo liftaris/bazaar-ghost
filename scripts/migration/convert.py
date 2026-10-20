@@ -236,12 +236,13 @@ def convert(source, destination):
                     names = ','.join(f'"{column}"' for column in columns)
                     for values in db.execute(f'SELECT {quoted} FROM {table}'):
                         output.write(f'INSERT INTO {table}({names}) VALUES({",".join(values)});\n')
+                    if table == 'platform_accounts':
+                        # Before the Recordings, so their Sessions and the provisional-Streamer trigger see the operator links.
+                        output.write("INSERT INTO channel_ownership(channel_id,streamer_id,method,actor,started_at) "
+                                     "SELECT id,streamer_id,'legacy-link','migration:convert',created_at FROM platform_accounts "
+                                     "WHERE source<>'twitch' AND streamer_id IS NOT NULL;\n")
                 # The target's Matchup trigger queued every imported Matchup; a history import never notifies.
                 output.write(f"UPDATE notification_outbox_v2 SET sent_at='{imported_at}' WHERE sent_at IS NULL;\n")
-                # Source links were operator-set; Twitch Channels and ownership come from the streamers trigger.
-                output.write("INSERT INTO channel_ownership(channel_id,streamer_id,method,actor,started_at) "
-                             "SELECT id,streamer_id,'legacy-link','migration:convert',created_at FROM platform_accounts "
-                             "WHERE source<>'twitch' AND streamer_id IS NOT NULL;\n")
                 # Ownership triggers bump revisions during import; a fresh import starts at revision 0.
                 output.write("UPDATE public_search_state SET revision=0 WHERE id=1;\nUPDATE public_cache_state SET revision=0 WHERE id=1;\n")
                 for name, snapshot_sql in triggers:

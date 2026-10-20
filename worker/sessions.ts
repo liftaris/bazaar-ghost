@@ -160,13 +160,16 @@ export async function mergeSessions(env: Env, winner: string, loser: string, del
   const [a, b] = [await activeSession(env, winner), await activeSession(env, loser)];
   const found = new Set<number>([...(a.streamer_id != null ? [a.streamer_id] : []), ...(b.streamer_id != null ? [b.streamer_id] : []),
     ...await owners(env, winner), ...await owners(env, loser)]);
-  let chosen: number | null = found.size === 1 ? [...found][0] : null;
+  const real = (await rows(env, 'SELECT id FROM streamer_identities WHERE provisional_channel_id IS NULL AND id IN(SELECT value FROM json_each(?))',
+    JSON.stringify([...found]))).map(r => r.id as number);
+  // A provisional Streamer is a placeholder: next to exactly one real Streamer it does not make the merge ambiguous.
+  let chosen: number | null = found.size === 1 ? [...found][0] : real.length === 1 ? real[0] : null;
   if (streamerId != null) {
     integer(streamerId, 'streamer ID', 1);
     requireValue(found.size === 0 ? !!await one(env, 'SELECT 1 FROM streamer_identities WHERE id=?', streamerId) : found.has(streamerId),
       'streamer_id must be one of the Streamers involved');
     chosen = streamerId;
-  } else if (found.size > 1) {
+  } else if (found.size > 1 && real.length !== 1) {
     throw new HttpError(409, `Sessions belong to different Streamers (${[...found].join(', ')}); choose one with streamer_id`);
   }
   const moving = await rows(env, `SELECT ${COLUMNS} FROM recording_alignments WHERE session_id=? AND ${ACTIVE} ORDER BY id`, loser);

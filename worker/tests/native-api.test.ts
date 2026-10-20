@@ -41,6 +41,7 @@ beforeEach(async () => {
     statement(env, "INSERT INTO sfde_profiles(id,profile_name,crop_region) VALUES(1,'test','[0,0,1,1]')"),
     statement(env, "INSERT INTO streamers(id,login,display_name) VALUES(1,'example','Example')"),
     statement(env, "INSERT INTO platform_accounts(id,source,source_id,display_name,login) VALUES(?,'youtube',?,'Example YT','exampleyt'),(?,'youtube',?,'Reuploader','reup'),(?,'bilibili','12345','Example BB',NULL)", CH.yt1, UC("a"), CH.yt2, UC("b"), CH.bb1),
+    statement(env, "UPDATE platform_accounts SET reupload_of=1 WHERE id=?", CH.yt2),
   ]);
   for (const id of [1, 2]) await vod({ id, source: "twitch" });
 });

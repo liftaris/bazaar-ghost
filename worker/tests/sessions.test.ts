@@ -28,7 +28,7 @@ it('gives every inserted Recording a singleton Session with an offset-0 alignmen
   const v = await recording('youtube', 'abcdefghijk');
   const sid = await session(v.id);
   expect(sid).toMatch(/^[0-9a-f]{32}$/);
-  expect(await rows(env, 'SELECT origin,streamer_id FROM sessions')).toEqual([{ origin: 'singleton', streamer_id: null }]);
+  expect(await rows(env, 'SELECT origin,streamer_id FROM sessions')).toEqual([{ origin: 'singleton', streamer_id: (await one(env, 'SELECT id FROM streamer_identities WHERE provisional_channel_id IS NOT NULL'))!.id }]);
   expect(await rows(env, 'SELECT session_id,vod_id,rec_start,rec_end,offset_seconds,method FROM recording_alignments'))
     .toEqual([{ session_id: sid, vod_id: v.id, rec_start: 0, rec_end: null, offset_seconds: 0, method: 'singleton' }]);
   const m = await anchor(v.id, 120);
@@ -147,8 +147,9 @@ it('refuses to merge Sessions of two Streamers unless the operator chooses one',
 
 it('bumps public revisions for operator changes but not for singleton creation', async () => {
   const revisions = async () => (await one(env, 'SELECT (SELECT revision FROM public_cache_state) c,(SELECT revision FROM public_search_state) s'))!;
+  const a = await recording('youtube', 'abcdefghijk');
   const start = await revisions();
-  const a = await recording('youtube', 'abcdefghijk'), b = await recording('youtube', 'bbcdefghijk');
+  const b = await recording('youtube', 'bbcdefghijk');
   expect(await revisions()).toEqual(start);
   await moveRecording(env, b.id, await session(a.id), 10, how);
   const after = await revisions();

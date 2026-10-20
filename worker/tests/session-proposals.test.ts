@@ -109,7 +109,8 @@ it('accepting moves both Recordings into one Session and coalescing merges exact
   await anchor(a, 2000, 'unique-a'); await anchor(b, 2500, 'unique-b');
   await proposeForRecording(env, a);
   const pending = await one<{ id: string }>(env, "SELECT id FROM session_link_proposals WHERE status='pending'");
-  const accepted = await acceptProposal(env, pending!.id, { actor: 'op', note: 'Same stream, verified' });
+  const keep = (await one<{ streamer_id: number }>(env, 'SELECT streamer_id FROM sessions WHERE id=?', await session(a)))!.streamer_id;
+  const accepted = await acceptProposal(env, pending!.id, { actor: 'op', note: 'Same stream, verified', streamerId: keep });
   expect(await session(a)).toBe(await session(b));
   expect(accepted.proposal).toMatchObject({ status: 'accepted', decided_by: 'op', decided_by_rule: 0 });
   expect(await canonicalCount()).toBe(7);

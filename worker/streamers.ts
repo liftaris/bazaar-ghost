@@ -75,6 +75,62 @@ export async function unlinkChannel(env: Env, streamerId: number, channelId: str
   return resolveStreamer(env, streamerId);
 }
 
+/** Folds a provisional Streamer into the real one: its Channels, Sessions and reupload marks move, then it is retired. */
+export async function mergeProvisional(env: Env, id: number, input: Input) {
+  integer(id, 'streamer ID', 1);
+  const target = integer(input.into, 'target streamer ID', 1);
+  const by = provenance({method: 'operator', actor: input.actor ?? 'admin', evidence: input.evidence});
+  requireValue(target !== id, 'Cannot merge a Streamer into itself');
+  const source = await one(env, 'SELECT provisional_channel_id FROM streamer_identities WHERE id=?', id);
+  if (!source) throw new HttpError(404, 'Streamer not found');
+  if (!source.provisional_channel_id) throw new HttpError(409, 'Only provisional Streamers can be merged');
+  if (!await one(env, 'SELECT 1 FROM streamer_identities WHERE id=?', target)) throw new HttpError(404, 'Target streamer not found');
+  await atomic(env, [
+    {sql: 'SELECT EXISTS(SELECT 1 FROM streamer_identities WHERE id=? AND provisional_channel_id IS NOT NULL)', args: [id]},
+    {sql: 'SELECT EXISTS(SELECT 1 FROM streamer_identities WHERE id=?)', args: [target]},
+  ], [
+    statement(env, `UPDATE channel_ownership SET streamer_id=?,method=?,actor=?,evidence=?,started_at=? WHERE streamer_id=? AND ended_at IS NULL`,
+      target, by.method, by.actor, by.evidence ?? `Merged provisional Streamer ${id}`, now(), id),
+    statement(env, 'UPDATE channel_ownership SET streamer_id=? WHERE streamer_id=?', target, id),
+    statement(env, 'UPDATE sessions SET streamer_id=?,updated_at=? WHERE streamer_id=?', target, now(), id),
+    statement(env, 'UPDATE platform_accounts SET reupload_of=? WHERE reupload_of=?', target, id),
+    statement(env, 'DELETE FROM streamer_identities WHERE id=?', id),
+  ]);
+  return resolveStreamer(env, target);
+}
+/** Marks a Channel as a reupload channel of a Streamer: its provisional Streamer is retired and its Sessions fall back to Session linking. */
+export async function markReupload(env: Env, originalId: number, input: Input) {
+  integer(originalId, 'streamer ID', 1);
+  const channel = uuid(input.channel_id);
+  if (!await one(env, 'SELECT 1 FROM streamer_identities WHERE id=?', originalId)) throw new HttpError(404, 'Streamer not found');
+  if (!await one(env, 'SELECT 1 FROM platform_accounts WHERE id=?', channel)) throw new HttpError(404, 'Channel not found');
+  const owner = await one(env, `SELECT o.streamer_id,i.provisional_channel_id FROM channel_ownership o JOIN streamer_identities i ON i.id=o.streamer_id
+    WHERE o.channel_id=? AND o.ended_at IS NULL`, channel);
+  if (owner && !owner.provisional_channel_id) throw new HttpError(409, 'Channel is owned by a Streamer; unlink it first');
+  if (owner?.streamer_id === originalId) throw new HttpError(409, 'Channel is the Streamer\'s own provisional Channel; merge or unlink it first');
+  const provisional = owner?.streamer_id ?? null;
+  const soleOwner = `(SELECT CASE WHEN count(DISTINCT o.streamer_id)=1 THEN min(o.streamer_id) END FROM recording_alignments g JOIN vods v ON v.id=g.vod_id
+    JOIN channel_ownership o ON o.channel_id=v.platform_account_id AND o.ended_at IS NULL AND o.streamer_id<>? WHERE g.session_id=sessions.id AND g.revoked_at IS NULL)`;
+  await atomic(env, [
+    {sql: 'SELECT NOT EXISTS(SELECT 1 FROM channel_ownership o WHERE o.channel_id=? AND o.ended_at IS NULL AND o.streamer_id IS NOT ?)', args: [channel, provisional]},
+    {sql: 'SELECT EXISTS(SELECT 1 FROM streamer_identities WHERE id=?)', args: [originalId]},
+  ], [
+    statement(env, 'UPDATE platform_accounts SET reupload_of=? WHERE id=?', originalId, channel),
+    ...(provisional == null ? [] : [
+      statement(env, `UPDATE sessions SET streamer_id=${soleOwner},updated_at=? WHERE streamer_id=?`, provisional, now(), provisional),
+      statement(env, 'DELETE FROM channel_ownership WHERE streamer_id=?', provisional),
+      statement(env, 'DELETE FROM streamer_identities WHERE id=?', provisional),
+    ]),
+  ]);
+  return resolveStreamer(env, originalId);
+}
+export async function listProvisional(env: Env, after: number, limit: number) {
+  integer(after, 'after', 0); integer(limit, 'limit', 1, 200);
+  const found = await rows(env, 'SELECT * FROM streamer_identities WHERE provisional_channel_id IS NOT NULL AND id>? ORDER BY id LIMIT ?', after, limit);
+  const channels = await channelsOf(env, found.map(r => r.id));
+  return found.map(r => ({...streamer(r), channels: channels.get(r.id) ?? []}));
+}
+
 function streamer(row: Input) {
   return {id: row.id, display_name: row.display_name, avatar_url: row.avatar_url, created_at: row.created_at, updated_at: row.updated_at};
 }
@@ -98,10 +154,17 @@ export async function resolveStreamer(env: Env, id: number, withHistory = false)
 
 export async function streamersAdminRoute(req: Request, env: Env, path: string): Promise<Response> {
   const base = path.slice('/api/admin/streamers'.length);
+  if (base === '' && req.method === 'GET') {
+    const params = new URL(req.url).searchParams;
+    requireValue(params.get('provisional') === '1', 'Only provisional=1 listing is supported');
+    return Response.json(await listProvisional(env, Number(params.get('after') ?? 0), Number(params.get('limit') ?? 100)));
+  }
   if (base === '' && req.method === 'POST') return Response.json(await createStreamer(env, await body(req)), {status: 201});
-  const match = base.match(/^\/([1-9]\d{0,15})(?:\/channels(?:\/([0-9a-f-]{36}))?)?$/);
+  const match = base.match(/^\/([1-9]\d{0,15})(?:\/(?:channels(?:\/([0-9a-f-]{36}))?|merge|reuploads))?$/);
   if (!match) throw new HttpError(404, 'Unknown streamers endpoint');
   const id = Number(match[1]), channel = match[2], channels = base.includes('/channels');
+  if (base.endsWith('/merge') && req.method === 'POST') return Response.json(await mergeProvisional(env, id, await body(req)));
+  if (base.endsWith('/reuploads') && req.method === 'POST') return Response.json(await markReupload(env, id, await body(req)));
   if (!channels && req.method === 'PATCH') return Response.json(await renameStreamer(env, id, await body(req)));
   if (!channels && req.method === 'GET') return Response.json(await resolveStreamer(env, id, true));
   if (channels && !channel && req.method === 'POST') {

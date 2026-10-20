@@ -110,6 +110,11 @@ async function sessionOfVod(env: Env, vodId: number) {
   const found = await rows<{ session_id: string }>(env, 'SELECT DISTINCT session_id FROM recording_alignments WHERE vod_id=? AND revoked_at IS NULL', vodId);
   return found.length === 1 ? found[0].session_id : null;
 }
+/** The Streamer that makes a Session unlinkable to another's: provisional Streamers are placeholders, so they never block a proposal. */
+async function realStreamerOf(env: Env, session: string) {
+  return (await one<{ streamer_id: number | null }>(env, `SELECT s.streamer_id FROM sessions s JOIN streamer_identities i ON i.id=s.streamer_id
+    WHERE s.id=? AND s.merged_into IS NULL AND i.provisional_channel_id IS NULL`, session))?.streamer_id ?? null;
+}
 async function streamerOf(env: Env, session: string) {
   return (await one<{ streamer_id: number | null }>(env, 'SELECT streamer_id FROM sessions WHERE id=? AND merged_into IS NULL', session))?.streamer_id ?? null;
 }
@@ -141,7 +146,7 @@ export async function proposeForRecording(env: Env, vodId: number): Promise<Crea
   for (const { vod_id: other } of candidates) {
     const otherSession = await sessionOfVod(env, other);
     if (!otherSession) continue;
-    const [one1, two] = [await streamerOf(env, session), await streamerOf(env, otherSession)];
+    const [one1, two] = [await realStreamerOf(env, session), await realStreamerOf(env, otherSession)];
     if (one1 !== null && two !== null && one1 !== two) continue;
     // Orientation is fixed by Session ID so re-running from either Recording yields the same proposal.
     const mineIsA = session < otherSession;
