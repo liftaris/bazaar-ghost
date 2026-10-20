@@ -102,7 +102,7 @@ export async function setStreamer(env: Env, input: Record<string, any>) {
   } else {
     const checks = changes.sfde_profile_id == null ? [] : [{
       sql: `NOT EXISTS(SELECT 1 FROM vod_processing_context v JOIN chunks c ON c.vod_id=v.id
-        WHERE v.streamer_id=? AND v.platform_account_id IS NULL AND v.sfde_profile_id IS NULL
+        WHERE v.streamer_id=? AND v.source='twitch' AND v.sfde_profile_id IS NULL
         AND v.effective_profile_id<>? AND c.status IN('queued','processing'))`,
       args: [id, changes.sfde_profile_id],
     }];

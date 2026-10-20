@@ -58,8 +58,8 @@ it('distinguishes omitted and explicitly cleared links in account upserts',async
   expect((await upsertAccount(env,input)).streamer_id).toBe(1);
   expect((await upsertAccount(env,{...input,streamer_id:null})).streamer_id).toBeNull();
   expect((await one(env,'SELECT streamer_id FROM vods WHERE id=?',video.id))!.streamer_id).toBeNull();
-  await upsertAccount(env,{...input,streamer_id:1});
-  expect((await one(env,'SELECT streamer_id FROM vods WHERE id=?',video.id))!.streamer_id).toBe(1);
+  expect((await upsertAccount(env,{...input,streamer_id:1})).streamer_id).toBe(1);
+  expect((await one(env,'SELECT streamer_id FROM vods WHERE id=?',video.id))!.streamer_id).toBeNull();
 });
 
 it('sets and clears a per-video override while preserving account profile precedence',async()=>{

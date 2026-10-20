@@ -7,6 +7,7 @@ import type {
 } from "../contracts/public-api";
 import { HttpError, integer, one, requireValue, rows } from "./http";
 import { boundary, page, unchanged } from "./native-cursor";
+import { listStreamers, resolveStreamer } from "./streamers";
 import {
   creator,
   matchup,
@@ -35,6 +36,17 @@ function parameters(url: URL, allowed: string[]) {
   const limit = url.searchParams.get("limit") ?? "50";
   requireValue(/^\d+$/.test(limit), "Invalid limit");
   return integer(Number(limit), "limit", 1, 100);
+}
+type Streamer = Awaited<ReturnType<typeof resolveStreamer>>;
+function publicStreamer(row: Streamer) {
+  return {
+    id: row.id,
+    displayName: row.display_name,
+    avatarUrl: row.avatar_url,
+    channels: row.channels.map((c: Record<string, any>) => ({
+      id: c.id, platform: c.platform, sourceId: c.source_id, displayName: c.display_name, login: c.login, avatarUrl: c.avatar_url,
+    })),
+  };
 }
 function queryText(url: URL) {
   const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
@@ -309,7 +321,7 @@ async function detail(env: Env, url: URL, id: number): Promise<MatchupDetail> {
 }
 /** Recognize only explicit public contracts; social/auth routes keep their private behavior. */
 export function nativePath(path: string) {
-  return /^\/api\/v1\/(search|creators(?:\/(?:resolve|quality))?|videos(?:\/resolve|\/[1-9]\d*\/(?:playback|timeline))?|matchups\/[1-9]\d*|stats|platforms)$/.test(
+  return /^\/api\/v1\/(search|creators(?:\/(?:resolve|quality))?|videos(?:\/resolve|\/[1-9]\d*\/(?:playback|timeline))?|matchups\/[1-9]\d*|stats|platforms|streamers(?:\/[1-9]\d{0,15})?)$/.test(
     path,
   );
 }
@@ -330,6 +342,15 @@ async function nativeLoad(req: Request, env: Env): Promise<Response> {
       items: listPlatforms().map(({ id, name, mark, capabilities, embed }) => ({ id, name, mark, capabilities, embed })),
       nextCursor: null,
     };
+  } else if (path === "/streamers") {
+    const limit = parameters(url, ["cursor", "limit"]),
+      state = await boundary(env, url);
+    const found = await listStreamers(env, { after: Number(state.after[0] ?? 0), limit: limit + 1 });
+    result = await page(env, state, found, limit, (row) => [row.id]);
+    result = { ...(result as object), items: (result as { items: Streamer[] }).items.map(publicStreamer) };
+  } else if (/^\/streamers\/[1-9]\d{0,15}$/.test(path)) {
+    parameters(url, []);
+    result = publicStreamer(await resolveStreamer(env, Number(path.split("/")[2])));
   } else if (path === "/creators") result = await creators(env, url);
   else if (path === "/videos") result = await videos(env, url);
   else if (path === "/videos/resolve") {

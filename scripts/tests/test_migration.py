@@ -74,7 +74,7 @@ class MultiplatformMigrationTests(unittest.TestCase):
             'sfde_profiles': [{'id': 1, 'profile_name': 'default', 'crop_region': [0, 0, 1, 1], 'igd_crop_region': [0, 0, .1, .1]}],
             'streamers': [{'id': 1, 'login': 'original', 'sfot_profile_id': 1}],
             'platform_accounts': [
-                {'id': 'account-youtube', 'source': 'youtube', 'source_id': 'UCAAAAAAAAAAAAAAAAAAAAAA', 'display_name': 'YouTube creator', 'processing_enabled': True, 'catalog_cursor': 7},
+                {'id': 'account-youtube', 'source': 'youtube', 'source_id': 'UCAAAAAAAAAAAAAAAAAAAAAA', 'display_name': 'YouTube creator', 'streamer_id': 1, 'processing_enabled': True, 'catalog_cursor': 7},
                 {'id': 'account-bilibili', 'source': 'bilibili', 'source_id': '123', 'display_name': 'Bilibili creator', 'processing_enabled': False, 'archive_cursor': 4},
             ],
             'vods': [
@@ -101,6 +101,11 @@ class MultiplatformMigrationTests(unittest.TestCase):
         restored = self.restore()
         self.assertEqual(restored.execute('SELECT id,source,source_id FROM vods ORDER BY id').fetchall(), [
             (1, 'twitch', '12345678901'), (2, 'youtube', '12345678901'), (3, 'bilibili', 'BV1234567890:111'), (4, 'bilibili', 'BV1234567890:222')])
+        self.assertEqual(restored.execute("SELECT source_id,legacy_creator_id FROM platform_accounts WHERE source='twitch'").fetchall(), [('1', 'twitch:1')])
+        self.assertEqual(restored.execute('SELECT platform_account_id IS NOT NULL FROM vods WHERE id=1').fetchone()[0], 1)
+        self.assertEqual(restored.execute('SELECT count(*) FROM streamer_identities WHERE id=1').fetchone()[0], 1)
+        self.assertEqual(restored.execute('SELECT a.source,o.streamer_id,o.method,o.actor FROM channel_ownership o JOIN platform_accounts a ON a.id=o.channel_id ORDER BY a.source').fetchall(), [
+            ('twitch', 1, 'legacy-link', 'trigger:streamers'), ('youtube', 1, 'legacy-link', 'migration:convert')])
         self.assertEqual(restored.execute('SELECT recorded_at,published_at FROM vods WHERE id=2').fetchone(), ('2025-08-11T22:00:00.000Z', '2026-09-01T15:00:00.000Z'))
         self.assertEqual(restored.execute('SELECT old_templates FROM vod_processing_context WHERE id=2').fetchone()[0], 1)
         self.assertEqual(restored.execute('SELECT source_part_id,source_part_index FROM vods WHERE source=\'bilibili\' ORDER BY id').fetchall(), [('111', 2), ('222', 1)])
@@ -124,9 +129,9 @@ class MultiplatformMigrationTests(unittest.TestCase):
         manifest = json.loads((self.destination / 'manifest.json').read_text())
         self.assertEqual(manifest['schema_version'], 3)
         self.assertEqual(manifest['source_schema_version'], 3)
-        self.assertEqual(manifest['target_schema_version'], 11)
+        self.assertEqual(manifest['target_schema_version'], 12)
         self.assertEqual(len(manifest['migrations']), 3)
-        self.assertEqual(len(manifest['target_migrations']), 11)
+        self.assertEqual(len(manifest['target_migrations']), 12)
         self.assertEqual(manifest['target_counts']['platform_ingestion_dispatch'], 0)
         self.assertNotIn('platform_ingestion_dispatch', manifest['input_counts'])
         self.assertNotIn('platform_ingestion_dispatch', manifest['output_counts'])

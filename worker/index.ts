@@ -18,6 +18,7 @@ import { clearChunk, publish, upload } from "./detections";
 import { publicCache } from "./cache";
 import { publicRead, rpc } from "./public-api";
 import { retryVod, setProfile, setStreamer } from "./admin";
+import { streamersAdminRoute } from "./streamers";
 import { discord } from "./discord";
 import { Twitch } from "./twitch";
 import {
@@ -289,6 +290,7 @@ async function route(req: Request, env: Env): Promise<Response> {
     }
     throw new HttpError(404, "Unknown processor endpoint");
   }
+  if (path === "/api/admin/streamers" || path.startsWith("/api/admin/streamers/")) return streamersAdminRoute(req, env, path);
   if (req.method !== "POST") throw new HttpError(405, "Method not allowed");
   const input = await body(req);
   if (path === "/api/admin/appearances/link") return Response.json(await linkAppearances(env,input));

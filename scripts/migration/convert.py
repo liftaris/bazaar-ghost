@@ -233,6 +233,12 @@ def convert(source, destination):
                     names = ','.join(f'"{column}"' for column in columns)
                     for values in db.execute(f'SELECT {quoted} FROM {table}'):
                         output.write(f'INSERT INTO {table}({names}) VALUES({",".join(values)});\n')
+                # Source links were operator-set; Twitch Channels and ownership come from the streamers trigger.
+                output.write("INSERT INTO channel_ownership(channel_id,streamer_id,method,actor,started_at) "
+                             "SELECT id,streamer_id,'legacy-link','migration:convert',created_at FROM platform_accounts "
+                             "WHERE source<>'twitch' AND streamer_id IS NOT NULL;\n")
+                # Ownership triggers bump revisions during import; a fresh import starts at revision 0.
+                output.write("UPDATE public_search_state SET revision=0 WHERE id=1;\nUPDATE public_cache_state SET revision=0 WHERE id=1;\n")
                 for name, snapshot_sql in triggers:
                     # The target's own definition wins: later migrations replace application triggers.
                     row = target.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?", (name,)).fetchone()
@@ -241,7 +247,9 @@ def convert(source, destination):
             if target.execute('PRAGMA foreign_key_check').fetchall():
                 raise ValueError('Generated import violates target foreign keys')
             target_counts = {table: target.execute(f'SELECT count(*) FROM {table}').fetchone()[0] for table in target_tables}
-            if any(target_counts[table] != count for table, count in output_counts.items()):
+            # Each Twitch streamer also yields a Channel through the streamers trigger.
+            expected = {**output_counts, 'platform_accounts': output_counts['platform_accounts'] + output_counts['streamers']}
+            if any(target_counts[table] != count for table, count in expected.items()):
                 raise ValueError('Generated import changed application row counts')
         parts = split_import(destination)
         manifest = {'format_version': 2, 'schema_version': SCHEMA_VERSION,

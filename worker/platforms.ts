@@ -2,6 +2,7 @@ import { atomic } from './atomic';
 import { body, decodeRow, HttpError, integer, now, one, requireValue, rows, statement, uuid } from './http';
 import { accountIdentity, ingestionPlatforms, listPlatforms, platform as platformEntry, requireIngestion, submissionIdentity, videoIdentity } from './platform-registry';
 import { dispatch, normalizeRanges, pendingVideos, plan, recover } from './processing';
+import { linkStatements, unlinkStatement } from './streamers';
 import { renewSubscription } from './youtube-websub';
 import { CLAIMABLE_INGESTION, finishIngestionRunner, runnerOwnership, startIngestionRunner } from './platform-ingestion-dispatch';
 
@@ -31,17 +32,24 @@ function accountSettingChecks(id:string,input:Input) {
       WHERE v.platform_account_id=? AND v.sfde_profile_id IS NULL AND v.effective_profile_id<>?
       AND c.status IN('queued','processing'))`,args:[id,input.sfde_profile_id]},
   );
-  if(input.streamer_id!=null) checks.push({sql:'SELECT EXISTS(SELECT 1 FROM streamers WHERE id=?)',args:[input.streamer_id]});
   return checks;
 }
-function accountLinkStatements(env:Env,id:string,input:Input) {
-  return Object.hasOwn(input,'streamer_id') ? [statement(env,
-    'UPDATE vods SET streamer_id=?,updated_at=? WHERE platform_account_id=?',input.streamer_id,now(),id)] : [];
+// Back-compat `streamer_id`: an operator ownership change, never a write to the deprecated column.
+function accountLink(env:Env,id:string,input:Input) {
+  if(!Object.hasOwn(input,'streamer_id')) return {checks:[],mutations:[]};
+  if(input.streamer_id===null) return {checks:[],mutations:[unlinkStatement(env,id,'admin','operator unlink')]};
+  return linkStatements(env,input.streamer_id,id,{method:'operator',actor:'admin'});
+}
+async function withOwner(env:Env,account:Input) {
+  const owner=await one(env,'SELECT streamer_id FROM channel_ownership WHERE channel_id=? AND ended_at IS NULL',account.id);
+  return {...account,streamer_id:owner?.streamer_id??null};
 }
 export async function accounts(env: Env, params: URLSearchParams) {
-  if (params.has('id')) return rows(env, 'SELECT * FROM platform_accounts WHERE id=?', uuid(params.get('id'))).then(r=>r.map(decoded));
-  const platform = requireIngestion(params.get('source'),'Twitch uses the streamer catalog').id;
-  return rows(env, 'SELECT * FROM platform_accounts WHERE source=? AND source_id=?',platform,accountIdentity(platform,params.get('source_id'))).then(r=>r.map(decoded));
+  const found = params.has('id') ? await rows(env, 'SELECT * FROM platform_accounts WHERE id=?', uuid(params.get('id'))) : await (async()=>{
+    const platform = requireIngestion(params.get('source'),'Twitch uses the streamer catalog').id;
+    return rows(env, 'SELECT * FROM platform_accounts WHERE source=? AND source_id=?',platform,accountIdentity(platform,params.get('source_id')));
+  })();
+  return Promise.all(found.map(async row=>decoded(await withOwner(env,row))));
 }
 export async function upsertAccount(env: Env, input: Input) {
   const platform=requireIngestion(input.source,'Twitch uses the streamer catalog').id;
@@ -58,16 +66,18 @@ export async function upsertAccount(env: Env, input: Input) {
     SELECT 1 FROM platform_accounts a WHERE a.id=j.account_id AND a.source=? AND a.source_id=?))`, [platform,platform,identity]);
   checks.push({sql:'SELECT NOT EXISTS(SELECT 1 FROM platform_accounts WHERE source=? AND source_id=? AND id<>?)',args:[platform,identity,accountId]});
   checks.push(...accountSettingChecks(accountId,input));
-  await atomic(env,checks,[statement(env,`INSERT INTO platform_accounts(id,source,source_id,display_name,processing_enabled,sfde_profile_id,streamer_id)
-    VALUES(?,?,?,?,?,?,?) ON CONFLICT(source,source_id) DO UPDATE SET display_name=excluded.display_name,
+  const link=accountLink(env,accountId,input);
+  checks.push(...link.checks);
+  await atomic(env,checks,[statement(env,`INSERT INTO platform_accounts(id,source,source_id,display_name,processing_enabled,sfde_profile_id)
+    VALUES(?,?,?,?,?,?) ON CONFLICT(source,source_id) DO UPDATE SET display_name=excluded.display_name,
     processing_enabled=CASE WHEN ? OR ? IS NULL THEN platform_accounts.processing_enabled ELSE excluded.processing_enabled END,
-    sfde_profile_id=coalesce(?,platform_accounts.sfde_profile_id),streamer_id=CASE WHEN ? THEN excluded.streamer_id ELSE platform_accounts.streamer_id END`,
-    accountId,platform,identity,name,input.processing_enabled??false,input.sfde_profile_id??1,input.streamer_id,
-    automatic || (input.preserve_disabled??false),input.processing_enabled,input.sfde_profile_id,Object.hasOwn(input,'streamer_id')),
-    ...accountLinkStatements(env,accountId,input),
+    sfde_profile_id=coalesce(?,platform_accounts.sfde_profile_id)`,
+    accountId,platform,identity,name,input.processing_enabled??false,input.sfde_profile_id??1,
+    automatic || (input.preserve_disabled??false),input.processing_enabled,input.sfde_profile_id),
+    ...link.mutations,
     enqueueStatement(env,{source:platform,kind:'account',source_id:identity,account_id:accountId},true)]);
   const account=(await one(env,'SELECT * FROM platform_accounts WHERE source=? AND source_id=?',platform,identity))!;
-  return decoded(account);
+  return decoded(await withOwner(env,account));
 }
 export async function updateAccount(env: Env,id:string,input: Input) {
   uuid(id);
@@ -76,23 +86,25 @@ export async function updateAccount(env: Env,id:string,input: Input) {
   const fields:Input={};
   for(const key of ['catalog_cursor','archive_cursor','sfde_profile_id'])
     if(input[key]!=null) fields[key]=integer(input[key],key,1);
-  if(Object.hasOwn(input,'streamer_id')) fields.streamer_id=input.streamer_id===null?null:integer(input.streamer_id,'streamer_id',1);
+  if(Object.hasOwn(input,'streamer_id') && input.streamer_id!==null) integer(input.streamer_id,'streamer_id',1);
   if(input.processing_enabled!=null) {requireValue(typeof input.processing_enabled==='boolean','Invalid enablement'); fields.processing_enabled=input.processing_enabled;}
   if(input.display_name!=null) fields.display_name=text(input.display_name,'display name');
   if(input.last_cataloged_at!=null) fields.last_cataloged_at=date(input.last_cataloged_at);
-  requireValue(Object.keys(fields).length>0,'No account changes');
+  requireValue(Object.keys(fields).length>0||Object.hasOwn(input,'streamer_id'),'No account changes');
   requireValue(input.job_id == null && input.lease_token == null ||
     ['processing_enabled','sfde_profile_id','streamer_id'].every(key => !Object.hasOwn(input,key)), 'Automatic catalog cannot change operator settings');
   const checks=jobChecks(input, `AND j.kind='account' AND j.account_id=? AND EXISTS(
     SELECT 1 FROM platform_accounts a WHERE a.id=j.account_id AND a.source=j.source AND a.processing_enabled=1)`, [id]);
   checks.push({sql:'SELECT EXISTS(SELECT 1 FROM platform_accounts WHERE id=?)',args:[id]});
   checks.push(...accountSettingChecks(id,input));
-  await atomic(env,checks,[statement(env,`UPDATE platform_accounts SET ${Object.keys(fields).map(k=>`${k}=?`).join(',')} WHERE id=?`,...Object.values(fields),id),
-    ...accountLinkStatements(env,id,input),
+  const link=accountLink(env,id,input);
+  checks.push(...link.checks);
+  await atomic(env,checks,[...(Object.keys(fields).length?[statement(env,`UPDATE platform_accounts SET ${Object.keys(fields).map(k=>`${k}=?`).join(',')} WHERE id=?`,...Object.values(fields),id)]:[]),
+    ...link.mutations,
     ...(input.processing_enabled===true?[enqueueStatement(env,{source:previous.source,kind:'account',source_id:previous.source_id,account_id:id,wake:true},true)]:[])]);
   const account=await one(env,'SELECT * FROM platform_accounts WHERE id=?',id);
   if(!account) throw new HttpError(404,'Account not found');
-  return decoded(account);
+  return decoded(await withOwner(env,account));
 }
 export async function updateVideoProfile(env:Env,id:number,input:Input) {
   integer(id,'video ID',1);
@@ -137,13 +149,13 @@ export async function saveVideo(env: Env,input: Input) {
   checks.push({sql:`SELECT NOT EXISTS(SELECT 1 FROM vods v WHERE v.source=? AND v.source_id=? AND (
     v.platform_account_id<>? OR (EXISTS(SELECT 1 FROM chunks WHERE vod_id=v.id) AND (v.duration_seconds<>? OR (? AND v.bazaar_chapters<>?) OR (? IS NOT NULL AND v.recorded_at IS NOT ?) OR (?<>'auto' AND v.template_version<>?)))))`,
     args:[platform,identity,account.id,duration,input.explicit_ranges??false,chapters,recorded,recorded,template,template]});
-  await atomic(env,checks,[statement(env,`INSERT INTO vods(source,source_id,platform_account_id,streamer_id,title,duration_seconds,published_at,recorded_at,template_version,content_kind,bazaar_chapters,ready_for_processing,notifications_enabled,source_video_id,source_part_id,source_part_index,last_availability_check)
-    VALUES(?,?,?,(SELECT streamer_id FROM platform_accounts WHERE id=?),?,?,?,?,?,?,?,1,0,?,?,?,?) ON CONFLICT(source,source_id) DO UPDATE SET
+  await atomic(env,checks,[statement(env,`INSERT INTO vods(source,source_id,platform_account_id,title,duration_seconds,published_at,recorded_at,template_version,content_kind,bazaar_chapters,ready_for_processing,notifications_enabled,source_video_id,source_part_id,source_part_index,last_availability_check)
+    VALUES(?,?,?,?,?,?,?,?,?,?,1,0,?,?,?,?) ON CONFLICT(source,source_id) DO UPDATE SET
     title=excluded.title,duration_seconds=excluded.duration_seconds,published_at=excluded.published_at,
     recorded_at=coalesce(excluded.recorded_at,vods.recorded_at),template_version=CASE WHEN excluded.template_version='auto' THEN vods.template_version ELSE excluded.template_version END,
     content_kind=excluded.content_kind,bazaar_chapters=CASE WHEN ? THEN excluded.bazaar_chapters ELSE vods.bazaar_chapters END,
     source_part_index=excluded.source_part_index,availability='available',unavailable_since=NULL,last_availability_check=excluded.last_availability_check,ready_for_processing=1,updated_at=?`,
-    platform,identity,account.id,account.id,title,duration,published,recorded,template,video.content_kind??'archive',chapters,bv,cid,part,now(),input.explicit_ranges??false,now())]);
+    platform,identity,account.id,title,duration,published,recorded,template,video.content_kind??'archive',chapters,bv,cid,part,now(),input.explicit_ranges??false,now())]);
   const saved=(await one(env,'SELECT * FROM vods WHERE source=? AND source_id=?',platform,identity))!;
   await plan(env,saved.id,checks);
   return decoded(saved);
