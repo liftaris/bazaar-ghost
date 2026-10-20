@@ -4,7 +4,7 @@ import { body, HttpError, integer, now, one, requireValue, rows, statement } fro
 
 type Input = Record<string, any>;
 export interface Segment { rec_start: number; rec_end: number | null; offset_seconds: number }
-export interface Provenance { actor: string; evidence?: string | null; method?: 'operator' | 'proposal' | 'auto-rule' }
+export interface Provenance { actor: string; evidence?: string | null; method?: 'operator' | 'proposal' | 'auto-rule'; proposal_id?: string | null }
 
 const SESSION_ID = /^[0-9a-f]{32}$/;
 const COLUMNS = 'id,session_id,vod_id,rec_start,rec_end,offset_seconds,method,proposal_id,actor,evidence,created_at';
@@ -20,7 +20,7 @@ function provenance(input: Provenance | undefined): Required<Provenance> {
   requireValue(input.evidence == null || (typeof input.evidence === 'string' && input.evidence.length <= 2000), 'Invalid evidence');
   const method = input.method ?? 'operator';
   requireValue(method === 'operator' || method === 'proposal' || method === 'auto-rule', 'Invalid alignment method');
-  return { actor: input.actor, evidence: input.evidence ?? null, method };
+  return { actor: input.actor, evidence: input.evidence ?? null, method, proposal_id: input.proposal_id ?? null };
 }
 function number(value: unknown, label: string) {
   requireValue(typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= 1e7, `Invalid ${label}`);
@@ -86,9 +86,9 @@ export async function recomputeSessionStreamer(env: Env, id: string) {
 
 const recordingJson = (list: Array<Segment & { vod_id: number }>) => JSON.stringify(list);
 const insertSegments = (env: Env, session: string, how: Required<Provenance>, event: string, json: string) => statement(env,
-  `INSERT INTO recording_alignments(session_id,vod_id,rec_start,rec_end,offset_seconds,method,actor,evidence,event_id,created_at)
-   SELECT ?,json_extract(value,'$.vod_id'),json_extract(value,'$.rec_start'),json_extract(value,'$.rec_end'),json_extract(value,'$.offset_seconds'),?,?,?,?,?
-   FROM json_each(?)`, session, how.method, how.actor, how.evidence, event, now(), json);
+  `INSERT INTO recording_alignments(session_id,vod_id,rec_start,rec_end,offset_seconds,method,proposal_id,actor,evidence,event_id,created_at)
+   SELECT ?,json_extract(value,'$.vod_id'),json_extract(value,'$.rec_start'),json_extract(value,'$.rec_end'),json_extract(value,'$.offset_seconds'),?,?,?,?,?,?
+   FROM json_each(?)`, session, how.method, how.proposal_id, how.actor, how.evidence, event, now(), json);
 const revokeVods = (env: Env, actor: string, vodIds: number[]) => statement(env,
   `UPDATE recording_alignments SET revoked_at=?,revoked_by=? WHERE vod_id IN(SELECT value FROM json_each(?)) AND ${ACTIVE}`, now(), actor, JSON.stringify(vodIds));
 const eventStatement = (env: Env, event: string, session: string, action: string, payload: unknown, how: Required<Provenance>) => statement(env,

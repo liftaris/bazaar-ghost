@@ -52,5 +52,8 @@ FROM (SELECT group_id,min(anchor_id) AS winner FROM m5_legacy_membership GROUP B
 DROP TABLE m5_merge;
 DROP TABLE m5_legacy_membership;
 -- END generated:legacy-groups
+DROP TABLE IF EXISTS matchup_review_events;
+DROP TABLE IF EXISTS matchup_appearances;
+DROP TABLE IF EXISTS matchup_groups;
 UPDATE public_search_state SET revision=0 WHERE id=1;
 UPDATE public_cache_state SET revision=0 WHERE id=1;

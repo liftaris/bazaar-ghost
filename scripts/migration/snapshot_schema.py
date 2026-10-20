@@ -6,7 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_VERSION = 3
-TARGET_SCHEMA_VERSION = 15
+TARGET_SCHEMA_VERSION = 16
 REQUIRED_TABLES = ('sfde_profiles', 'streamers', 'vods', 'chunks', 'detections',
                    'notification_subscriptions', 'server_channels', 'processing_config', 'cataloger_runs')
 # Optional means absent from older source schemas, never permission-denied or silently omitted.
@@ -18,6 +18,8 @@ TABLES = ('sfde_profiles', 'streamers', 'platform_accounts', 'vods', 'chunks', '
           'notification_subscriptions', 'server_channels', 'processing_config', 'cataloger_runs',
           'notification_outbox', 'notification_deliveries', 'webhook_events', 'chat_mentions',
           'platform_ingestion_jobs', 'youtube_websub_subscriptions', 'youtube_websub_deliveries')
+# Reviewed groups of the source schema: loaded into same-named scratch tables that post_import.sql consumes and drops.
+SCRATCH_TABLES = ('matchup_groups', 'matchup_appearances', 'matchup_review_events')
 IMPORT_TABLES = (*TABLES[:5], 'search_names', 'search_grams', *TABLES[5:])
 KEYS = {'server_channels': 'guild_id', 'processing_config': 'key',
         'notification_subscriptions': 'discord_user_id,username_lower',

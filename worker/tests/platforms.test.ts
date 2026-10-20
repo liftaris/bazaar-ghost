@@ -3,7 +3,8 @@ import { beforeEach,afterEach,expect,it,vi } from 'vitest';
 import { upsertAccount,saveVideo,enqueueJob,claimJob,finishJob } from '../platforms';
 import { one,rows,statement } from '../http';
 import { plan,claim,owned,dispatch } from '../processing';
-import { linkAppearances,unlinkAppearance,appearanceSearch } from '../appearances';
+import { appearanceSearch } from '../appearances';
+import { linkDetections,unlinkDetection } from './link-fixture';
 import { publish,upload } from '../detections';
 import { dispatchBranch } from '../platform-ingestion-dispatch';
 import { recordingUrls } from '../platform-registry';
@@ -76,16 +77,16 @@ it('requires catalog credentials and never exposes private platform job/subscrip
  for(const path of ['/api/catalog/jobs/claim','/api/catalog/accounts/upsert']) {
   const r=await SELF.fetch('http://local'+path,{method:'POST',headers:{Authorization:`Bearer ${env.PROCESSOR_KEY}`,'Content-Type':'application/json'},body:'{}'});expect(r.status).toBe(401);
  }
- for(const table of ['platform_ingestion_jobs','youtube_websub_subscriptions','youtube_websub_deliveries','matchup_review_events'])expect((await SELF.fetch(`http://local/rest/v1/${table}`)).status).toBe(404);
+ for(const table of ['platform_ingestion_jobs','youtube_websub_subscriptions','youtube_websub_deliveries','matchup_overrides'])expect((await SELF.fetch(`http://local/rest/v1/${table}`)).status).toBe(404);
 });
 it('groups reviewed appearances before pagination and retains every surviving platform copy',async()=>{
  const a=await catalog(),b=await catalog('bilibili'),da=await detect(a.id),db=await detect(b.id);
- const group=await linkAppearances(env,{detection_ids:[da.id,db.id],evidence:'Reviewed identical opponent frame and surrounding game sequence'});
+ const group=await linkDetections(env,[da.id,db.id],'Reviewed identical opponent frame and surrounding game sequence');
  const result=await appearanceSearch(env,{source_filter:'youtube',result_limit:1});
  expect(result.length).toBe(1);expect(result[0].total_count).toBe(1);expect(result[0].appearances.length).toBe(2);expect(result[0].matchup_id).toBe(group.matchup_id);
  await statement(env,"UPDATE vods SET availability='unavailable' WHERE id=?",a.id).run();
  const remaining=await appearanceSearch(env,{});expect(remaining[0].appearances.length).toBe(1);expect(remaining[0].appearances[0].source).toBe('bilibili');
- await unlinkAppearance(env,{detection_id:db.id,evidence:'Reversing reviewed test linkage for audit'});
+ await unlinkDetection(env,db.id,'Reversing reviewed test linkage for audit');
  expect((await rows(env,"SELECT action FROM matchup_overrides WHERE revoked_at IS NULL")).map(r=>r.action)).toEqual(['unlink']);
  expect((await rows(env,"SELECT 1 FROM matchup_overrides WHERE action='link' AND revoked_at IS NOT NULL")).length).toBe(1);
  expect((await appearanceSearch(env,{})).map(r=>r.appearances.length)).toEqual([1]);

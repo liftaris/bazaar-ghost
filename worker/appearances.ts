@@ -1,5 +1,4 @@
-import { linkAnchors, splitMatchup } from './coalesce';
-import { decodeRow, HttpError, integer, one, requireValue, rows, uuid } from './http';
+import { decodeRow, integer, requireValue, rows, uuid } from './http';
 import { recordingUrls, source } from './platform-registry';
 
 type Input=Record<string,any>;
@@ -22,7 +21,7 @@ export async function videoSearch(env:Env,input:Input) {
 }
 export async function appearanceSearch(env:Env,input:Input) {
   const {where,args,limit,offset}=filters(input);
-  const visible=`WITH visible AS (SELECT coalesce(a.matchup_id,d.detection_id) AS group_id,d.* FROM video_detections d LEFT JOIN matchup_anchors c ON c.current_detection_id=d.detection_id LEFT JOIN clip_appearances a ON a.clip_id=c.id)`;
+  const visible=`WITH visible AS (SELECT coalesce(a.matchup_id,d.detection_id) AS group_id,d.* FROM video_detections d LEFT JOIN matchup_anchors c ON c.current_detection_id=d.detection_id LEFT JOIN (SELECT x.id AS clip_id,CAST(x.matchup_id AS TEXT) AS matchup_id FROM matchup_anchors x WHERE EXISTS(SELECT 1 FROM matchup_anchors y WHERE y.matchup_id=x.matchup_id AND y.id!=x.id)) a ON a.clip_id=c.id)`;
   // Select matched groups before pagination, then include all available copies of each matched group.
   const fields = [
     'detection_id','username','confidence','rank','frame_time_seconds','storage_path',
@@ -44,32 +43,4 @@ export async function appearanceSearch(env:Env,input:Input) {
     const appearances = (JSON.parse(group.copies) as Record<string,unknown>[]).map(decodeRow).map(withUrls);
     return {matchup_id:group.group_id,username:appearances[0].username,appearances,total_count:group.total_count};
   });
-}
-function evidence(input:Input) {
-  requireValue(typeof input.evidence==='string'&&input.evidence.trim().length>=10&&input.evidence.length<=4000,'Provide a substantive verification note');
-  return input.evidence.trim();
-}
-/** Links the anchors of the given detections with `link` overrides and coalesces. Returns the canonical Matchup ID as text. */
-export async function linkAppearances(env:Env,input:Input) {
-  const note=evidence(input);
-  requireValue(Array.isArray(input.detection_ids)&&input.detection_ids.length<=50,'Provide 2–50 detection IDs');
-  const ids=[...new Set<string>(input.detection_ids.map(uuid))].sort();
-  requireValue(ids.length>=2,'Provide at least two distinct detections');
-  const anchors=await rows<{id:number;matchup_id:number;vod_id:number}>(env,'SELECT id,matchup_id,vod_id FROM matchup_anchors WHERE current_detection_id IN(SELECT value FROM json_each(?))',JSON.stringify(ids));
-  if(anchors.length!==ids.length||new Set(anchors.map(a=>a.vod_id)).size<2)throw new HttpError(409,'State changed or lease expired; refresh before retrying');
-  const grouped=await rows<{matchup_id:number;n:number}>(env,`SELECT matchup_id,count(*) AS n FROM matchup_anchors WHERE matchup_id IN(SELECT value FROM json_each(?))
-    GROUP BY matchup_id HAVING count(*)>1`,JSON.stringify([...new Set(anchors.map(a=>a.matchup_id))]));
-  requireValue(grouped.length<=1,'Conflicting groups require explicit unlinking');
-  const size=await one<{n:number}>(env,'SELECT count(*) AS n FROM matchup_anchors WHERE matchup_id IN(SELECT value FROM json_each(?))',JSON.stringify([...new Set(anchors.map(a=>a.matchup_id))]));
-  requireValue(size!.n<=50,'A Matchup may have at most 50 anchors');
-  const result=await linkAnchors(env,anchors.map(a=>a.id),{actor:'appearances',evidence:note});
-  return {matchup_id:String(result.matchup_id)};
-}
-/** Separates the detection's anchor from its Matchup with `unlink` overrides. */
-export async function unlinkAppearance(env:Env,input:Input) {
-  const id=uuid(input.detection_id),note=evidence(input);
-  const anchor=await one<{id:number;matchup_id:number}>(env,'SELECT a.id,a.matchup_id FROM matchup_anchors a WHERE a.current_detection_id=? AND EXISTS(SELECT 1 FROM matchup_anchors b WHERE b.matchup_id=a.matchup_id AND b.id!=a.id)',id);
-  if(!anchor)return {unlinked:false};
-  await splitMatchup(env,anchor.matchup_id,[anchor.id],{actor:'appearances',evidence:note});
-  return {unlinked:true};
 }

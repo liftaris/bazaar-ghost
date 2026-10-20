@@ -15,6 +15,7 @@ import { dispatchBranch } from "./platform-ingestion-dispatch";
 import { atomic } from "./atomic";
 import { automaticVideoPredicate } from "./automatic-processing";
 import { expectedProfile, profileCheck } from "./profiles";
+import { proposeForRecording } from "./session-proposals";
 
 export function normalizeRanges(
   input: unknown,
@@ -380,5 +381,11 @@ export async function updateChunk(
     now(),
   ).run();
   if (!result.meta.changes) throw new HttpError(409, "Lost chunk claim");
+  if (data.status === "completed") {
+    // A finished Recording may match another Recording; failures are retried by the scheduled sweep.
+    const vod = await one(env, "SELECT v.id FROM chunks c JOIN vods v ON v.id=c.vod_id WHERE c.id=? AND v.status='completed'", id);
+    if (vod) await proposeForRecording(env, vod.id).catch((error) =>
+      console.log(JSON.stringify({ event: "session_proposal_failed", vod_id: vod.id, error: String(error) })));
+  }
   return { updated: true };
 }

@@ -9,7 +9,7 @@ import type {
 } from "../../contracts/public-api";
 import { rows, statement } from "../http";
 import { trigrams } from "../search";
-import { linkAppearances } from "../appearances";
+import { linkDetections } from "./link-fixture";
 import { boundary } from "../native-cursor";
 import { nativeRoute } from "../native-api";
 
@@ -210,10 +210,7 @@ it("invalidates continuations on corrections and preserves the shared matchup ID
 it("retains verified appearance links through OCR replacement", async () => {
   const a = await evidence(1),
     b = await evidence(2, "Opponent", 2);
-  await linkAppearances(env, {
-    detection_ids: [a, b],
-    evidence: "Verified the original footage and the board",
-  });
+  await linkDetections(env, [a, b], "Verified the original footage and the board");
   const first = (await get<Page<Matchup>>("/search")).items[0];
   await statement(env, "DELETE FROM detections WHERE id=?", a).run();
   await evidence(1, "Corrected");

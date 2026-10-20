@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeEach, expect, it, vi } from "vitest";
-import { appearanceSearch, linkAppearances, videoSearch } from "../appearances";
+import { appearanceSearch, videoSearch } from "../appearances";
+import { linkDetections } from "./link-fixture";
 import { publicCache } from "../cache";
 import { one, rows, statement } from "../http";
 import { publicRead, rpc } from "../public-api";
@@ -45,7 +46,7 @@ it("applies clip visibility to old and new search, details and public aggregate 
   expect(await rows(env, "SELECT id FROM detections")).toHaveLength(2);
 });
 it("filters reviewed groups before matching, counting and paginating appearances", async () => {
-  const group = await linkAppearances(env, { detection_ids: [twitch, youtube], evidence: "Manually reviewed the same opponent and surrounding game frames" });
+  const group = await linkDetections(env, [twitch, youtube], "Manually reviewed the same opponent and surrounding game frames");
   expect((await appearanceSearch(env, {}))[0].appearances).toHaveLength(2);
   const result = await appearanceSearch(env, { result_limit: 1, source_filter: "twitch" });
   expect(result).toHaveLength(1); expect(result[0].matchup_id).toBe(group.matchup_id);

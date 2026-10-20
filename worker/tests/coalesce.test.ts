@@ -253,18 +253,18 @@ it('lists a merged Matchup once in /clips and keeps filters', async () => {
   expect(await list(`?limit=1`)).toEqual([x]);
 });
 
-it('keeps the legacy appearance API: link, search groups, unlink', async () => {
-  const { linkAppearances, unlinkAppearance, appearanceSearch } = await import('../appearances');
+it('groups linked appearances in search and splits them again', async () => {
+  const { appearanceSearch } = await import('../appearances');
+  const { linkDetections, unlinkDetection } = await import('./link-fixture');
   const [a, b] = [await recording(), await recording('bilibili')];
   await anchor(a, 100); await anchor(b, 850);
   const [da, db] = (await rows<{ id: string }>(env, 'SELECT id FROM detections ORDER BY frame_time_seconds')).map(r => r.id);
-  const group = await linkAppearances(env, { detection_ids: [da, db], evidence: 'Verified the same fight by hand' });
+  const group = await linkDetections(env, [da, db]);
   expect(await canonicalCount()).toBe(1);
   expect((await appearanceSearch(env, {}))[0]).toMatchObject({ matchup_id: group.matchup_id, total_count: 1 });
-  expect(await linkAppearances(env, { detection_ids: [da, db], evidence: 'Verified the same fight by hand' })).toEqual(group);
-  expect(await unlinkAppearance(env, { detection_id: db, evidence: 'Reversing the earlier review' })).toEqual({ unlinked: true });
+  expect(await linkDetections(env, [da, db])).toEqual(group);
+  await unlinkDetection(env, db);
   expect(await canonicalCount()).toBe(2);
-  expect(await unlinkAppearance(env, { detection_id: db, evidence: 'Reversing the earlier review' })).toEqual({ unlinked: false });
 });
 
 it('coalesces per Recording, and the scheduled reconcile picks up dirty Sessions', async () => {

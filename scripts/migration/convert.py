@@ -15,10 +15,10 @@ import sqlite3
 import unicodedata
 
 if __package__:
-    from .snapshot_schema import (ROOT, SCHEMA_VERSION, TARGET_SCHEMA_VERSION, TABLES, REQUIRED_TABLES, OPTIONAL_TABLES,
+    from .snapshot_schema import (ROOT, SCHEMA_VERSION, TARGET_SCHEMA_VERSION, SCRATCH_TABLES, TABLES, REQUIRED_TABLES, OPTIONAL_TABLES,
                                   IMPORT_TABLES, apply_schema, migrations, private_json, private_open)
 else:
-    from snapshot_schema import (ROOT, SCHEMA_VERSION, TARGET_SCHEMA_VERSION, TABLES, REQUIRED_TABLES, OPTIONAL_TABLES,
+    from snapshot_schema import (ROOT, SCHEMA_VERSION, TARGET_SCHEMA_VERSION, SCRATCH_TABLES, TABLES, REQUIRED_TABLES, OPTIONAL_TABLES,
                                  IMPORT_TABLES, apply_schema, migrations, private_json, private_open)
 
 
@@ -226,6 +226,9 @@ def convert(source, destination):
                                          for table in ('public_cache_state', 'public_search_state'))
                 output.write(f"INSERT INTO mutation_checks(id,ok) VALUES('snapshot-import-empty',NOT({nonempty}) AND {singleton});\n")
                 output.write("DELETE FROM mutation_checks WHERE id='snapshot-import-empty';\n")
+                # The reviewed-group tables no longer exist in the target schema; they are scratch input for post_import.sql, which drops them.
+                for table in SCRATCH_TABLES:
+                    output.write(db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()[0] + ';\n')
                 # Only the old application's triggers are suspended. New anchor/Matchup/auth/cache
                 # triggers stay installed and materialize derived rows during this import.
                 for name, _ in triggers:
@@ -258,7 +261,7 @@ def convert(source, destination):
                 raise ValueError('Generated import violates target foreign keys')
             target_counts = {table: target.execute(f'SELECT count(*) FROM {table}').fetchone()[0] for table in target_tables}
             # Each Twitch streamer also yields a Channel through the streamers trigger.
-            expected = {**output_counts, 'platform_accounts': output_counts['platform_accounts'] + output_counts['streamers']}
+            expected = {**{t: c for t, c in output_counts.items() if t not in SCRATCH_TABLES}, 'platform_accounts': output_counts['platform_accounts'] + output_counts['streamers']}
             if any(target_counts[table] != count for table, count in expected.items()):
                 raise ValueError('Generated import changed application row counts')
         parts = split_import(destination)

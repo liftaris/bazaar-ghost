@@ -33,7 +33,7 @@ import {
 import { catalogRoute } from "./platforms";
 import { youtubeWebhook } from "./youtube-websub";
 import { source, videoIdentity } from "./platform-registry";
-import { linkAppearances, unlinkAppearance } from "./appearances";
+import { proposalsAdminRoute } from "./session-proposals";
 import { authRoute, authenticated } from "./auth";
 import { socialRoute } from "./social";
 import { publicImageVisible } from "./visibility";
@@ -295,10 +295,9 @@ async function route(req: Request, env: Env): Promise<Response> {
   if (path === "/api/admin/streamers" || path.startsWith("/api/admin/streamers/")) return streamersAdminRoute(req, env, path);
   if (path === "/api/admin/matchups" || path.startsWith("/api/admin/matchups/")) return matchupsAdminRoute(req, env, path);
   if (path === "/api/admin/sessions" || path.startsWith("/api/admin/sessions/")) return sessionsAdminRoute(req, env, path);
+  if (path === "/api/admin/session-proposals" || path.startsWith("/api/admin/session-proposals/")) return proposalsAdminRoute(req, env, path);
   if (req.method !== "POST") throw new HttpError(405, "Method not allowed");
   const input = await body(req);
-  if (path === "/api/admin/appearances/link") return Response.json(await linkAppearances(env,input));
-  if (path === "/api/admin/appearances/unlink") return Response.json(await unlinkAppearance(env,input));
   if (path === "/api/admin/retry-vod")
     return Response.json(await retryVod(env, input));
   if (path === "/api/admin/streamer")
