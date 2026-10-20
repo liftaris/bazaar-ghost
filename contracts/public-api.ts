@@ -137,6 +137,12 @@ export interface MatchupDetail extends Matchup {
   redirectedFrom?: number;
   detections: Evidence[];
 }
+/** A Streamer with list counts. `platforms` are those of its owned Channels with public content. */
+export interface StreamerCard extends Streamer {
+  sessionCount: number;
+  matchupCount: number;
+  platforms: PlatformId[];
+}
 /** A Session's Recordings with their time mappings; `session_time = recording_time + offsetSeconds`. */
 export interface Session {
   id: string;
@@ -148,6 +154,19 @@ export interface Session {
   }>;
   matchupCount: number;
   redirectedFrom?: string;
+}
+/** Lean Session list item. `channel` is the Channel that published the default Recording (the fallback label when there is no Streamer). */
+export interface SessionCard {
+  id: string;
+  title: string | null;
+  streamer: StreamerRef | null;
+  channel: Channel;
+  startedAt: string | null;
+  durationSeconds: number | null;
+  matchupCount: number;
+  /** Platforms with an available Recording, sorted. */
+  platforms: PlatformId[];
+  defaultRecording: { id: number; platform: PlatformId };
 }
 /** Compact timeline marker, identified by Matchup ID. */
 export interface TimelineMarker {
@@ -191,12 +210,12 @@ export interface PublicRoutes {
   "/search": Page<MatchupResult>;
   /** Private (cookie session, no-store): the caller's saved public Matchups, most recently saved first. */
   "/me/favorites": Page<MatchupResult>;
-  "/streamers": Page<Streamer>;
+  "/streamers": Page<StreamerCard>;
   "/streamers/quality": Page<StreamerQuality>;
   "/recordings": Page<Recording>;
   "/recordings/lookup": Recording;
   "/channels/lookup": ChannelLookup;
-  "/sessions": Page<Session>;
+  "/sessions": Page<SessionCard>;
   "/stats": Stats;
   "/platforms": Page<PlatformDefinition>;
   [path: `/streamers/${number}`]: Streamer;

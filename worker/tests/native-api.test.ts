@@ -9,7 +9,9 @@ import type {
   Recording,
   RecordingSource,
   Session,
+  SessionCard,
   Streamer,
+  StreamerCard,
   ChannelLookup,
 } from "../../contracts/public-api";
 import { mergeMatchups } from "../coalesce";
@@ -381,37 +383,140 @@ it("builds Channel URLs from the registry and serves a Channel by ID", async () 
   expect(await status("/channels/00000000-0000-4000-8000-0000000000ff")).toBe(404);
   expect(await status("/channels/nope")).toBe(404);
 });
-it("lists a Streamer's Sessions newest first, including reuploads, and pages with a cursor", async () => {
-  await ownedPair();
-  await evidence(100, "Opponent", 1);
-  const reupload = await vod({ source: "youtube", account: CH.yt2, recordedAt: "2026-01-01T00:00:00Z" });
-  await moveRecording(env, reupload, await sessionOf(1), 0, how);
-  const empty = await vod({ source: "youtube", account: CH.yt2, availability: "unavailable" });
-  await statement(env, "UPDATE vods SET availability='unavailable' WHERE id=?", empty).run();
-  const list = await get<Page<Session>>("/sessions?streamerId=1");
-  const first = await sessionOf(1);
-  expect(list.items.map((s) => s.id)).toContain(first);
-  expect(new Set(list.items.map((s) => s.id)).size).toBe(list.items.length);
-  expect(list.items.find((s) => s.id === first)!.recordings.map((r) => r.recording.id)).toContain(reupload);
-  expect(await get<Session>(`/sessions/${first}`)).toEqual(list.items.find((s) => s.id === first));
-  const one = await get<Page<Session>>("/sessions?streamerId=1&limit=1");
-  expect(one.items).toHaveLength(1);
-  expect(one.nextCursor).not.toBeNull();
-  expect((await get<Page<Session>>(`/sessions?streamerId=1&limit=1&cursor=${one.nextCursor}`)).items[0].id).not.toBe(one.items[0].id);
-  expect((await get<Page<Session>>("/sessions?streamerId=999")).items).toEqual([]);
-  expect(await status("/sessions")).toBe(400);
-  expect(await status("/sessions?streamerId=abc")).toBe(400);
+it("filters by platform lists, excluded platforms and recorded time", async () => {
+  const yt = await vod({ source: "youtube", account: CH.yt1, recordedAt: "2026-03-02T00:00:00Z" });
+  const tw = await vod({ source: "twitch", recordedAt: "2026-03-10T00:00:00Z" });
+  const yt2 = await vod({ source: "youtube", account: CH.yt1, recordedAt: "2026-03-10T00:00:00Z" });
+  const bb = await vod({ source: "bilibili", account: CH.bb1, part: { video: "BV1abcdefghi", part: "555", index: 1 } });
+  await evidence(10, "Twitchfight", tw);
+  await evidence(20, "Youtubefight", yt);
+  await evidence(30, "Bilifight", bb);
+  await evidence(40, "Bothfight", tw);
+  await evidence(43, "Bothfight", yt2);
+  await together(tw, yt2);
+  const names = async (query: string) => (await get<Page<MatchupResult>>(`/search?${query}`)).items.map((i) => i.opponent.username).sort();
+  expect(await names("platform=youtube,bilibili")).toEqual(["Bilifight", "Bothfight", "Youtubefight"]);
+  expect(await names("excludePlatform=twitch")).toEqual(["Bilifight", "Bothfight", "Youtubefight"]);
+  expect(await names("excludePlatform=twitch,youtube")).toEqual(["Bilifight"]);
+  expect(await names("platform=twitch&excludePlatform=youtube")).toEqual(["Bothfight", "Twitchfight"]);
+  const both = (await get<Page<MatchupResult>>("/search?q=Bothfight&excludePlatform=twitch")).items[0];
+  expect(both.sources.map((x) => x.platform)).toEqual(["twitch", "youtube"]);
+  expect(await names("from=2026-03-05T00:00:00Z")).toEqual(["Bothfight", "Twitchfight"]);
+  expect(await names("to=2026-03-05T00:00:00.000Z")).toEqual(["Youtubefight"]);
+  expect(await names("from=2026-03-01&to=2026-03-31T23:59:59%2B00:00")).toEqual(["Bothfight", "Twitchfight", "Youtubefight"]);
+  expect(await names("from=2026-03-01&to=2026-03-02")).toEqual([]);
+  for (const bad of ["platform=nope", "platform=twitch,nope", "platform=", "excludePlatform=nope", "from=yesterday", "to=2026-13-45", "from=2026-03-01T00:00:00", "sort=time", "sort=asc&sessionId=" + "0".repeat(32), "sessionId=abc"])
+    expect(await status(`/search?${bad}`), bad).toBe(400);
 });
-it("lists Streamers that have public Matchups, searchable by any Channel", async () => {
+it("lists a Session's Matchups in session-time order in one long page", async () => {
+  const yt = await vod({ source: "youtube", account: CH.yt1 });
+  await evidence(300, "Third", 1);
+  await evidence(100, "First", 1);
+  await evidence(200, "Second", yt);
+  await evidence(250, "Other", 2);
+  await moveRecording(env, yt, await sessionOf(1), 50, how);
+  const id = await sessionOf(1);
+  const order = async (query = "") => (await get<Page<MatchupResult>>(`/search?sessionId=${id}&sort=time${query}`)).items.map((i) => i.opponent.username);
+  expect(await order()).toEqual(["First", "Second", "Third"]);
+  expect(await order("&limit=500")).toEqual(["First", "Second", "Third"]);
+  expect((await get<Page<MatchupResult>>(`/search?sessionId=${id}`)).items.map((i) => i.opponent.username).sort()).toEqual(["First", "Second", "Third"]);
+  const first = await get<Page<MatchupResult>>(`/search?sessionId=${id}&sort=time&limit=2`);
+  expect(first.items.map((i) => i.opponent.username)).toEqual(["First", "Second"]);
+  const rest = await get<Page<MatchupResult>>(`/search?sessionId=${id}&sort=time&limit=2&cursor=${first.nextCursor}`);
+  expect(rest.items.map((i) => i.opponent.username)).toEqual(["Third"]);
+  expect(rest.nextCursor).toBeNull();
+  expect(await status(`/search?sessionId=${id}&sort=time&limit=501`)).toBe(400);
+  expect(await status("/search?limit=101")).toBe(400);
+  expect((await get<Page<MatchupResult>>(`/search?sessionId=${"0".repeat(32)}&sort=time`)).items).toEqual([]);
+});
+it("lists Sessions as lean cards: searchable, filterable, newest first, pageable", async () => {
+  await ownedPair();
+  const mine = await vod({ source: "youtube", account: CH.yt1, recordedAt: "2026-03-02T00:00:00Z" });
+  const reupload = await vod({ source: "youtube", account: CH.yt2, recordedAt: "2026-03-03T00:00:00Z" });
+  const stranger = await vod({ source: "youtube", account: CH.yt2, recordedAt: "2026-02-01T00:00:00Z" });
+  await statement(env, "UPDATE vods SET title='Unrelated stream' WHERE id=?", stranger).run();
+  await statement(env, "UPDATE vods SET recorded_at='2026-03-01T00:00:00.000Z',title='Morning ladder' WHERE id=1").run();
+  await evidence(100, "Opponent", 1);
+  await evidence(200, "Opponent2", stranger);
+  await together(1, reupload);
+  await together(1, mine);
+  const empty = await vod({ source: "youtube", account: CH.yt2, availability: "unavailable" });
+  const home = await sessionOf(1);
+  const list = await get<Page<SessionCard>>("/sessions");
+  expect(list.items.map((s) => s.id)).toEqual([home, await sessionOf(stranger), await sessionOf(2)]);
+  expect(list.items.map((s) => s.id)).not.toContain(await sessionOf(empty));
+  expect(list.items[0]).toEqual({
+    id: home,
+    title: "Morning ladder",
+    streamer: { id: 1, displayName: "Example", avatarUrl: null },
+    channel: expect.objectContaining({ platform: "twitch", streamerId: 1 }),
+    startedAt: "2026-03-01T00:00:00.000Z",
+    durationSeconds: 10000,
+    matchupCount: 1,
+    platforms: ["twitch", "youtube"],
+    defaultRecording: { id: 1, platform: "twitch" },
+  });
+  expect(list.items[1]).toMatchObject({ streamer: null, channel: { id: CH.yt2, streamerId: null }, title: "Unrelated stream", platforms: ["youtube"] });
+  const ids = async (query: string) => (await get<Page<SessionCard>>(`/sessions?${query}`)).items.map((s) => s.id);
+  expect(await ids("streamerId=1")).toEqual([home, await sessionOf(2)]);
+  expect(await ids("streamerId=999")).toEqual([]);
+  expect(await ids("platform=youtube")).toEqual([home, await sessionOf(stranger)]);
+  expect(await ids("excludePlatform=youtube")).toEqual([home, await sessionOf(2)]);
+  expect(await ids("platform=twitch&excludePlatform=twitch")).toEqual([home]);
+  expect(await ids("platform=twitch&excludePlatform=twitch,youtube")).toEqual([]);
+  expect((await get<Page<SessionCard>>("/sessions?platform=youtube")).items[0].defaultRecording).toEqual({ id: expect.any(Number), platform: "youtube" });
+  expect(await ids("from=2026-02-15T00:00:00Z")).toEqual([home]);
+  expect(await ids("to=2026-02-15T00:00:00Z")).toEqual([await sessionOf(stranger)]);
+  expect(await ids("q=morning")).toEqual([home]);
+  expect(await ids("q=EXAMPLE")).toEqual([home, await sessionOf(2)]);
+  expect(await ids("q=reuploader")).toEqual([home, await sessionOf(stranger)]);
+  expect(await ids("q=zzz")).toEqual([]);
+  const one = await get<Page<SessionCard>>("/sessions?limit=1");
+  expect(one.items.map((s) => s.id)).toEqual([home]);
+  expect((await get<Page<SessionCard>>(`/sessions?limit=1&cursor=${one.nextCursor}`)).items[0].id).toBe(await sessionOf(stranger));
+  expect(await status("/sessions?streamerId=abc")).toBe(400);
+  expect(await status("/sessions?platform=nope")).toBe(400);
+  expect(await status("/sessions?from=nope")).toBe(400);
+  expect(await status("/sessions?recordingId=1")).toBe(400);
+  expect((await get<Session>(`/sessions/${home}`)).recordings.map((r) => r.recording.id)).toEqual([1, mine, reupload]);
+});
+it("ranks Sessions and Streamers by exact, then prefix, then contains matches", async () => {
+  const exact = await createStreamer(env, { display_name: "Kripp" });
+  const prefix = await createStreamer(env, { display_name: "Kripparrian" });
+  const inner = await createStreamer(env, { display_name: "Not Kripp Really" });
+  for (const [streamer, matchups] of [[exact.id, 1], [prefix.id, 3], [inner.id, 5]] as const) {
+    const account = crypto.randomUUID();
+    await statement(env, "INSERT INTO platform_accounts(id,source,source_id,display_name,login) VALUES(?,'youtube',?,?,?)", account, UC(String(streamer).slice(-1).padEnd(1, "z")) + streamer, `chan${streamer}`, `login${streamer}`).run();
+    await linkChannel(env, streamer, account, operator);
+    const v = await vod({ source: "youtube", account, recordedAt: `2026-04-0${matchups}T00:00:00Z` });
+    for (let i = 0; i < matchups; i++) await evidence(10 + i * 100, `Foe${streamer}x${i}`, v);
+  }
+  const ids = async (path: string) => (await get<Page<StreamerCard>>(path)).items.map((s) => s.id);
+  expect(await ids("/streamers?q=kripp")).toEqual([exact.id, prefix.id, inner.id]);
+  expect(await ids("/streamers")).toEqual([inner.id, prefix.id, exact.id, 1].filter((id) => id !== 1));
+  const paged = await get<Page<StreamerCard>>("/streamers?q=kripp&limit=2");
+  expect(paged.items.map((s) => s.id)).toEqual([exact.id, prefix.id]);
+  expect((await get<Page<StreamerCard>>(`/streamers?q=kripp&limit=2&cursor=${paged.nextCursor}`)).items.map((s) => s.id)).toEqual([inner.id]);
+  const sessions = async (query: string) => (await get<Page<SessionCard>>(`/sessions?${query}`)).items.map((s) => s.streamer?.id);
+  expect(await sessions("q=kripp")).toEqual([exact.id, prefix.id, inner.id]);
+});
+it("lists Streamers that have public Matchups with counts and platforms, searchable by any Channel", async () => {
   await ownedPair();
   const yt = await vod({ source: "youtube", account: CH.yt1 });
   await evidence(20, "Opponent", yt);
+  await evidence(30, "Another", 1);
   await createStreamer(env, { display_name: "Nobody" });
-  const list = await get<Page<Streamer>>("/streamers");
+  const list = await get<Page<StreamerCard>>("/streamers");
   expect(list.items.map((s) => s.id)).toEqual([1]);
+  expect(list.items[0]).toMatchObject({ sessionCount: 3, matchupCount: 2, platforms: ["twitch", "youtube"] });
   expect(list.items[0].channels.map((c) => [c.platform, c.streamerId]).sort()).toEqual([["bilibili", 1], ["twitch", 1], ["youtube", 1]]);
-  expect((await get<Page<Streamer>>("/streamers?q=exampleyt")).items.map((s) => s.id)).toEqual([1]);
-  expect((await get<Page<Streamer>>("/streamers?q=zzz")).items).toEqual([]);
+  expect((await get<Page<StreamerCard>>("/streamers?q=exampleyt")).items.map((s) => s.id)).toEqual([1]);
+  expect((await get<Page<StreamerCard>>("/streamers?q=zzz")).items).toEqual([]);
+  expect((await get<Page<StreamerCard>>("/streamers?platform=youtube")).items.map((s) => s.id)).toEqual([1]);
+  expect((await get<Page<StreamerCard>>("/streamers?platform=bilibili")).items).toEqual([]);
+  expect((await get<Page<StreamerCard>>("/streamers?excludePlatform=twitch,youtube")).items).toEqual([]);
+  expect((await get<Page<StreamerCard>>("/streamers?excludePlatform=bilibili")).items.map((s) => s.id)).toEqual([1]);
+  expect(await status("/streamers?platform=nope")).toBe(400);
   expect((await get<Streamer>("/streamers/1")).displayName).toBe("Example");
   expect(await status("/streamers/999")).toBe(404);
 });

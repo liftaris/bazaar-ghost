@@ -76,6 +76,7 @@ export interface MatchupRow {
   recorded_timestamp: string | null;
   indexed_at: string;
   session_id: string | null;
+  session_time: number | null;
   score: number;
   exact: number;
 }

@@ -71,7 +71,7 @@ class FullTargetD1Tests(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             conversion.convert(source, destination)
         manifest = json.loads((destination / 'manifest.json').read_text())
-        self.assertEqual(manifest['target_schema_version'], 19)
+        self.assertEqual(manifest['target_schema_version'], 20)
         self.migrate()
         before_triggers = self.query("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name")
         for part in sorted(destination.glob('import-*.sql')):

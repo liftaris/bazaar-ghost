@@ -1,4 +1,4 @@
-import type { Evidence, Page, Playback, Session, Stats, TimelineMarker } from "../contracts/public-api";
+import type { Evidence, Page, Playback, Session, SessionCard, Stats, StreamerCard, TimelineMarker } from "../contracts/public-api";
 import { canonicalMatchup } from "./coalesce";
 import { HttpError, integer, one, requireValue, rows } from "./http";
 import { boundary, page, unchanged } from "./native-cursor";
@@ -28,7 +28,7 @@ const idValue = (value: string, label = "ID") => {
   return Number(value);
 };
 const CHANNEL_ID = /^[0-9a-f-]{36}$/;
-export function parameters(url: URL, allowed: string[]) {
+export function parameters(url: URL, allowed: string[], max = 100) {
   requireValue(url.href.length <= 4096, "Request URL too long");
   for (const key of url.searchParams.keys())
     requireValue(
@@ -37,21 +37,37 @@ export function parameters(url: URL, allowed: string[]) {
     );
   const limit = url.searchParams.get("limit") ?? "50";
   requireValue(/^\d+$/.test(limit), "Invalid limit");
-  return integer(Number(limit), "limit", 1, 100);
+  return integer(Number(limit), "limit", 1, max);
 }
 function queryText(url: URL) {
   const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
   requireValue(q.length <= 128, "Search must be at most 128 characters");
   return q;
 }
-/** Filters shared by /search and /recordings. `scope` renders the "has an available Source matching" test. */
+/** Platform ID lists (`platform` includes, `excludePlatform` excludes), comma separated; unknown IDs are rejected. */
+function platformList(url: URL, key: "platform" | "excludePlatform") {
+  const value = url.searchParams.get(key);
+  if (value === null) return [];
+  const ids = value.split(",").map((id) => platform(id).id);
+  requireValue(ids.length <= 20, `Too many ${key} values`);
+  return [...new Set(ids)];
+}
+/** An ISO 8601 instant, normalized to the stored `YYYY-MM-DDTHH:MM:SS.sssZ` form so it compares as text. */
+function instant(url: URL, key: "from" | "to") {
+  const value = url.searchParams.get(key);
+  if (value === null) return undefined;
+  requireValue(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2}))?$/.test(value), `Invalid ${key}`);
+  const time = new Date(value);
+  requireValue(!Number.isNaN(time.getTime()), `Invalid ${key}`);
+  return time.toISOString();
+}
+const SESSION_ID = /^[0-9a-f]{32}$/;
+/** Filters shared by /search and /recordings. */
 function filters(url: URL) {
-  const found: { platform?: string; channel?: string; streamer?: number; recording?: number } = {};
-  const platformId = url.searchParams.get("platform"),
-    channelId = url.searchParams.get("channelId"),
+  const found: { channel?: string; streamer?: number; recording?: number } = {};
+  const channelId = url.searchParams.get("channelId"),
     streamerId = url.searchParams.get("streamerId"),
     recordingId = url.searchParams.get("recordingId");
-  if (platformId !== null) found.platform = platform(platformId).id;
   if (channelId !== null) {
     requireValue(CHANNEL_ID.test(channelId), "Invalid channelId");
     found.channel = channelId;
@@ -96,10 +112,20 @@ async function streamersOf(env: Env, ids: number[]) {
 }
 
 export async function search(env: Env, url: URL) {
-  const limit = parameters(url, ["q", "streamerId", "channelId", "platform", "recordingId", "limit", "cursor"]);
+  const timeline = url.searchParams.has("sessionId") && url.searchParams.get("sort") === "time";
+  // A whole recording's ghosts are listed in one page, so session-time lists may be longer.
+  const limit = parameters(url, ["q", "streamerId", "channelId", "platform", "excludePlatform", "from", "to", "sessionId", "sort", "recordingId", "limit", "cursor"], timeline ? 500 : 100);
   const q = queryText(url),
     state = await boundary(env, url),
-    filter = filters(url);
+    filter = filters(url),
+    include = platformList(url, "platform"),
+    exclude = platformList(url, "excludePlatform"),
+    from = instant(url, "from"),
+    to = instant(url, "to"),
+    sessionId = url.searchParams.get("sessionId"),
+    sort = url.searchParams.get("sort");
+  requireValue(sort === null || (sort === "time" && sessionId !== null), "sort=time requires sessionId");
+  requireValue(sessionId === null || SESSION_ID.test(sessionId), "Invalid sessionId");
   const grams = trigrams(q);
   if (q && !grams.length) return { items: [], nextCursor: null };
   const clauses = ["p.matchup_id<=?"],
@@ -109,13 +135,18 @@ export async function search(env: Env, url: URL) {
     clauses.push(`EXISTS(SELECT 1 FROM public_sources f WHERE f.matchup_id=p.matchup_id AND f.available=1 AND ${sql})`);
     args.push(...values);
   };
-  if (filter.platform) scope("f.platform=?", filter.platform);
+  if (include.length) scope("f.platform IN(SELECT value FROM json_each(?))", JSON.stringify(include));
+  if (exclude.length) scope("f.platform NOT IN(SELECT value FROM json_each(?))", JSON.stringify(exclude));
   if (filter.channel) scope("f.channel_id=?", filter.channel);
   if (filter.recording) scope("f.vod_id=?", filter.recording);
   if (filter.streamer !== undefined) {
     clauses.push("EXISTS(SELECT 1 FROM matchup_streamers ms WHERE ms.matchup_id=p.matchup_id AND ms.streamer_id=?)");
     args.push(filter.streamer);
   }
+  // A Matchup without a recorded time never satisfies a date filter.
+  if (from) (clauses.push("p.recorded_timestamp>=?"), args.push(from));
+  if (to) (clauses.push("p.recorded_timestamp<=?"), args.push(to));
+  if (sessionId) (clauses.push("p.session_id=?"), args.push(sessionId));
   const candidates = q
     ? `candidates AS (SELECT g.name,1.0*count(*)/(?+n.gram_count-count(*)) AS score
     FROM search_grams g JOIN search_names n ON n.name=g.name
@@ -125,20 +156,24 @@ export async function search(env: Env, url: URL) {
     FROM public_sources s JOIN candidates c ON c.name=s.username_lower WHERE s.matchup_id<=? GROUP BY s.matchup_id),`
     : "";
   const binds: unknown[] = q ? [grams.length, JSON.stringify(grams), grams.length, q, state.matchups] : [];
-  const position = state.after.length ? "WHERE (exact,score,indexed_at,matchup_id)<(?,?,?,?)" : "";
+  // Session-time order puts Matchups with no mapped time last.
+  const order = timeline ? "(coalesce(session_time,1e15),matchup_id)" : "(exact,score,indexed_at,matchup_id)";
+  const position = state.after.length ? `WHERE ${order}${timeline ? ">" : "<"}(${state.after.map(() => "?").join(",")})` : "";
   const found = await rows<MatchupRow>(
     env,
     `WITH ${candidates} matched AS (
     SELECT p.*,${q ? "h.score,h.exact" : "1.0 AS score,0 AS exact"}
     FROM ${q ? "hits h JOIN public_matchups p ON p.matchup_id=h.matchup_id" : "public_matchups p"}
     WHERE ${clauses.join(" AND ")}) SELECT * FROM matched ${position}
-    ORDER BY exact DESC,score DESC,indexed_at DESC,matchup_id DESC LIMIT ?`,
+    ORDER BY ${timeline ? "coalesce(session_time,1e15),matchup_id" : "exact DESC,score DESC,indexed_at DESC,matchup_id DESC"} LIMIT ?`,
     ...binds,
     ...args,
     ...state.after,
     limit + 1,
   );
-  const resultPage = await page(env, state, found, limit, (row) => [row.exact, row.score, row.indexed_at, row.matchup_id]);
+  const resultPage = await page(env, state, found, limit, (row) =>
+    timeline ? [row.session_time ?? 1e15, row.matchup_id] : [row.exact, row.score, row.indexed_at, row.matchup_id],
+  );
   return { ...resultPage, items: await matchupCards(env, resultPage.items) };
 }
 /** Public Matchup cards (ordered Sources, Streamer) for already-selected rows, keeping their order. */
@@ -169,7 +204,7 @@ async function recordings(env: Env, url: URL) {
   requireValue(!url.searchParams.has("recordingId"), "Unsupported query parameter");
   const clauses = ["r.id<=?", "r.availability='available'"],
     args: unknown[] = [state.recordings];
-  if (filter.platform) (clauses.push("r.platform=?"), args.push(filter.platform));
+  if (url.searchParams.has("platform")) (clauses.push("r.platform=?"), args.push(platform(url.searchParams.get("platform")).id));
   if (filter.channel) (clauses.push("r.channel_id=?"), args.push(filter.channel));
   if (filter.streamer !== undefined) {
     clauses.push("(r.channel_streamer_id=? OR EXISTS(SELECT 1 FROM sessions s WHERE s.id=r.session_id AND s.streamer_id=?))");
@@ -251,24 +286,83 @@ async function channelDetail(env: Env, url: URL, id: string) {
   if (!found) throw new HttpError(404, "Channel not found");
   return channelWithOwner(env, found, found.platform);
 }
-async function streamers(env: Env, url: URL) {
-  const limit = parameters(url, ["q", "cursor", "limit"]),
+/** The Channel `a` published an available Recording of a visible Matchup (what public_sources lists, reached by index). */
+const publicContent = `EXISTS(SELECT 1 FROM vods v JOIN matchup_anchors x ON x.vod_id=v.id AND x.current_detection_id IS NOT NULL
+  JOIN matchups m ON m.id=x.matchup_id AND m.status='visible' AND m.merged_into IS NULL WHERE v.platform_account_id=a.id AND v.availability='available')`;
+/** Streamers with at least one public Matchup, with list counts, ordered by Matchup count (best name match first with `q`).
+ * A Streamer's platforms are those of its owned Channels with public content; counts are not narrowed by platform filters. */
+async function streamers(env: Env, url: URL): Promise<Page<StreamerCard>> {
+  const limit = parameters(url, ["q", "platform", "excludePlatform", "cursor", "limit"]),
     state = await boundary(env, url),
-    q = queryText(url);
-  // The picker lists Streamers that have at least one public Matchup.
-  const clauses = [
-    "i.id>?",
-    "EXISTS(SELECT 1 FROM matchup_streamers ms WHERE ms.streamer_id=i.id AND EXISTS(SELECT 1 FROM public_sources ps WHERE ps.matchup_id=ms.matchup_id))",
-  ];
-  const args: unknown[] = [Number(state.after[0] ?? 0)];
+    q = queryText(url),
+    include = platformList(url, "platform"),
+    exclude = platformList(url, "excludePlatform");
+  const clauses = ["mc.n>0"],
+    args: unknown[] = [state.matchups];
+  const owned = (sql: string, ...values: unknown[]) => {
+    clauses.push(`EXISTS(SELECT 1 FROM streamer_platforms sp WHERE sp.streamer_id=i.id AND ${sql})`);
+    args.push(...values);
+  };
+  if (include.length) owned("sp.platform IN(SELECT value FROM json_each(?))", JSON.stringify(include));
+  if (exclude.length) owned("sp.platform NOT IN(SELECT value FROM json_each(?))", JSON.stringify(exclude));
+  // exact name 0, prefix 1, contains 2 (the display name or an owned Channel's name or login)
+  let tier = "0";
+  const tierArgs: unknown[] = [];
   if (q) {
-    clauses.push(`(instr(lower(i.display_name),?)>0 OR EXISTS(SELECT 1 FROM channel_ownership o JOIN platform_accounts a ON a.id=o.channel_id
-      WHERE o.streamer_id=i.id AND o.ended_at IS NULL AND (instr(lower(a.display_name),?)>0 OR instr(lower(coalesce(a.login,'')),?)>0)))`);
-    args.push(q, q, q);
+    const names = `SELECT lower(i.display_name) AS n UNION ALL SELECT lower(a.display_name) FROM channel_ownership o JOIN platform_accounts a ON a.id=o.channel_id
+      WHERE o.streamer_id=i.id AND o.ended_at IS NULL UNION ALL SELECT lower(coalesce(a.login,'')) FROM channel_ownership o JOIN platform_accounts a ON a.id=o.channel_id
+      WHERE o.streamer_id=i.id AND o.ended_at IS NULL`;
+    tier = `coalesce((SELECT min(CASE WHEN n=? THEN 0 WHEN instr(n,?)=1 THEN 1 ELSE 2 END) FROM (${names}) WHERE instr(n,?)>0),9)`;
+    tierArgs.push(q, q, q);
+    clauses.push("tier<9");
   }
-  const ids = await rows<{ id: number }>(env, `SELECT i.id FROM streamer_identities i WHERE ${clauses.join(" AND ")} ORDER BY i.id LIMIT ?`, ...args, limit + 1);
-  const found = (await listStreamers(env, { ids: ids.map((row) => row.id) })).map((row) => publicStreamer(row as StreamerRefRow, row.channels));
-  return page(env, state, found, limit, (row) => [row.id]);
+  if (state.after.length) (clauses.push("(tier,-mc.n,i.id)>(?,?,?)"), args.push(...state.after));
+  const ids = await rows<{ id: number; tier: number; n: number }>(
+    env,
+    `WITH mc AS (SELECT ms.streamer_id AS id,count(DISTINCT ms.matchup_id) AS n FROM matchup_streamers ms
+      WHERE ms.matchup_id<=? AND ms.matchup_id IN(SELECT matchup_id FROM public_sources) GROUP BY ms.streamer_id),
+    streamer_platforms AS (SELECT DISTINCT o.streamer_id,a.source AS platform FROM channel_ownership o JOIN platform_accounts a ON a.id=o.channel_id
+      WHERE o.ended_at IS NULL AND ${publicContent})
+    SELECT i.id,${tier} AS tier,mc.n FROM streamer_identities i JOIN mc ON mc.id=i.id WHERE ${clauses.join(" AND ")} ORDER BY tier,mc.n DESC,i.id LIMIT ?`,
+    args[0],
+    ...tierArgs,
+    ...args.slice(1),
+    limit + 1,
+  );
+  const selected = ids.slice(0, limit),
+    json = JSON.stringify(selected.map((row) => row.id));
+  const [found, sessionCounts, platformRows] = await Promise.all([
+    listStreamers(env, { ids: selected.map((row) => row.id) }),
+    rows<{ id: number; n: number }>(
+      env,
+      `WITH pairs AS (
+        SELECT s.streamer_id AS id,s.id AS session_id FROM sessions s WHERE s.merged_into IS NULL AND s.streamer_id IN(SELECT value FROM json_each(?1))
+        UNION SELECT o.streamer_id,g.session_id FROM channel_ownership o JOIN vods v ON v.platform_account_id=o.channel_id
+          JOIN recording_alignments g ON g.vod_id=v.id AND g.revoked_at IS NULL JOIN sessions s ON s.id=g.session_id AND s.merged_into IS NULL
+          WHERE o.ended_at IS NULL AND o.streamer_id IN(SELECT value FROM json_each(?1)))
+      SELECT id,count(*) AS n FROM pairs p WHERE EXISTS(SELECT 1 FROM recording_alignments g JOIN vods v ON v.id=g.vod_id
+        WHERE g.session_id=p.session_id AND g.revoked_at IS NULL AND v.availability='available') GROUP BY id`,
+      json,
+    ),
+    rows<{ id: number; platform: string }>(
+      env,
+      `SELECT DISTINCT o.streamer_id AS id,a.source AS platform FROM channel_ownership o JOIN platform_accounts a ON a.id=o.channel_id
+      WHERE o.ended_at IS NULL AND o.streamer_id IN(SELECT value FROM json_each(?)) AND ${publicContent} ORDER BY a.source`,
+      json,
+    ),
+  ]);
+  const byId = new Map(found.map((row) => [row.id, row]));
+  const items = selected.map((row): StreamerCard => {
+    const streamer = byId.get(row.id)!;
+    return {
+      ...publicStreamer(streamer as StreamerRefRow, streamer.channels),
+      sessionCount: sessionCounts.find((c) => c.id === row.id)?.n ?? 0,
+      matchupCount: row.n,
+      platforms: platformRows.filter((p) => p.id === row.id).map((p) => p.platform),
+    };
+  });
+  const resultPage = await page(env, state, ids, limit, (row) => [row.tier, -row.n, row.id]);
+  return { ...resultPage, items };
 }
 async function timeline(env: Env, url: URL, id: number): Promise<Page<TimelineMarker>> {
   const limit = parameters(url, ["cursor", "limit"]),
@@ -391,35 +485,123 @@ async function sessionsOf(env: Env, ids: string[]): Promise<Session[]> {
     };
   });
 }
-/** A Streamer's Sessions, newest first by latest Recording time (recorded, else published; Sessions without Recordings last), then ID.
- * Listed when the Session has a public Matchup or an available Recording. A Session is the Streamer's when it names them
- * or any of its Recordings was published by a Channel they actively own (reuploads included, as in /recordings?streamerId). */
-async function sessions(env: Env, url: URL): Promise<Page<Session>> {
-  const limit = parameters(url, ["streamerId", "limit", "cursor"]),
-    state = await boundary(env, url);
-  const streamerId = url.searchParams.get("streamerId");
-  requireValue(streamerId !== null, "streamerId required");
-  const streamer = idValue(streamerId, "streamerId");
-  const position = state.after.length ? "WHERE (latest,id)<(?5,?6)" : "";
-  const found = await rows<{ id: string; latest: string }>(
+/** Rows of a Session's Recordings (one per Recording, canonical Sessions only) with the facts every Session query ranks on. */
+const sessionRecordings = `SELECT g.session_id,r.id,r.platform,r.title,r.duration_seconds,r.availability='available' AS available,
+    coalesce(r.recorded_at,r.published_at) AS at,s.streamer_id AS session_streamer,r.channel_streamer_id,
+    CASE WHEN s.streamer_id IS NOT NULL AND r.channel_streamer_id IS NOT s.streamer_id THEN 1 ELSE 0 END AS is_reupload,
+    r.channel_id,r.channel_source_id,r.channel_name,r.channel_login,r.channel_avatar,s.title AS session_title,lower(i.display_name) AS streamer_name
+  FROM (SELECT DISTINCT session_id,vod_id FROM recording_alignments WHERE revoked_at IS NULL) g
+  JOIN sessions s ON s.id=g.session_id AND s.merged_into IS NULL
+  JOIN public_recordings r ON r.id=g.vod_id AND r.id<=?
+  LEFT JOIN streamer_identities i ON i.id=s.streamer_id`;
+interface SessionRecordingRow {
+  session_id: string;
+  id: number;
+  platform: string;
+  title: string | null;
+  duration_seconds: number;
+  available: number;
+  at: string | null;
+  is_reupload: number;
+  channel_id: string;
+  channel_source_id: string;
+  channel_name: string;
+  channel_login: string | null;
+  channel_avatar: string | null;
+  channel_streamer_id: number | null;
+  session_title: string | null;
+}
+/** Sessions that have an available Recording, searched and filtered, newest first (relevance first with `q`).
+ * A Session is a Streamer's when it names them or any of its Recordings was published by a Channel they actively own
+ * (reuploads included). `startedAt` is its earliest Recording time (recorded, else published). */
+async function sessions(env: Env, url: URL): Promise<Page<SessionCard>> {
+  const limit = parameters(url, ["q", "streamerId", "platform", "excludePlatform", "from", "to", "limit", "cursor"]),
+    state = await boundary(env, url),
+    q = queryText(url),
+    include = platformList(url, "platform"),
+    exclude = platformList(url, "excludePlatform"),
+    from = instant(url, "from"),
+    to = instant(url, "to"),
+    streamerId = url.searchParams.get("streamerId");
+  const having = ["max(available)=1"],
+    args: unknown[] = [];
+  const scope = (sql: string, ...values: unknown[]) => (having.push(`max(available=1 AND ${sql})=1`), args.push(...values));
+  if (include.length) scope("platform IN(SELECT value FROM json_each(?))", JSON.stringify(include));
+  if (exclude.length) scope("platform NOT IN(SELECT value FROM json_each(?))", JSON.stringify(exclude));
+  if (streamerId !== null) {
+    having.push("max(session_streamer=? OR channel_streamer_id=?)=1");
+    args.push(idValue(streamerId, "streamerId"), idValue(streamerId, "streamerId"));
+  }
+  // A Session without a Recording time never satisfies a date filter.
+  if (from) (having.push("min(at)>=?"), args.push(from));
+  if (to) (having.push("min(at)<=?"), args.push(to));
+  let relevance = "0";
+  if (q) {
+    const names = ["streamer_name", "lower(channel_name)", "lower(coalesce(channel_login,''))"];
+    relevance = `max(CASE WHEN ${names.map((n) => `${n}=?`).join(" OR ")} THEN 3
+      WHEN ${names.map((n) => `instr(${n},?)=1`).join(" OR ")} THEN 2
+      WHEN ${[...names, "lower(coalesce(title,''))"].map((n) => `instr(${n},?)>0`).join(" OR ")} THEN 1 ELSE 0 END)`;
+    having.push("rel>0");
+  }
+  if (state.after.length) (having.push("(rel,started,session_id)<(?,?,?)"), args.push(...state.after));
+  const found = await rows<{ session_id: string; rel: number; started: string }>(
     env,
-    `WITH mine AS (SELECT s.id,coalesce((SELECT max(coalesce(r.recorded_at,r.published_at)) FROM recording_alignments g
-        JOIN public_recordings r ON r.id=g.vod_id WHERE g.session_id=s.id AND g.revoked_at IS NULL AND r.id<=?1),'') AS latest
-      FROM sessions s WHERE s.merged_into IS NULL
-      AND (s.streamer_id=?2 OR EXISTS(SELECT 1 FROM recording_alignments g JOIN public_recordings r ON r.id=g.vod_id
-        WHERE g.session_id=s.id AND g.revoked_at IS NULL AND r.channel_streamer_id=?2 AND r.id<=?1))
-      AND (EXISTS(SELECT 1 FROM public_matchups m WHERE m.session_id=s.id AND m.matchup_id<=?3)
-        OR EXISTS(SELECT 1 FROM recording_alignments g JOIN public_recordings r ON r.id=g.vod_id
-        WHERE g.session_id=s.id AND g.revoked_at IS NULL AND r.availability='available' AND r.id<=?1)))
-    SELECT id,latest FROM mine ${position} ORDER BY latest DESC,id DESC LIMIT ?4`,
+    `WITH recs AS (${sessionRecordings}) SELECT session_id,${relevance} AS rel,coalesce(min(at),'') AS started FROM recs
+    GROUP BY session_id HAVING ${having.join(" AND ")} ORDER BY rel DESC,started DESC,session_id DESC LIMIT ?`,
     state.recordings,
-    streamer,
-    state.matchups,
+    ...(q ? Array(10).fill(q) : []),
+    ...args,
     limit + 1,
-    ...state.after,
   );
-  const resultPage = await page(env, state, found, limit, (row) => [row.latest, row.id]);
-  return { ...resultPage, items: await sessionsOf(env, resultPage.items.map((row) => row.id)) };
+  const resultPage = await page(env, state, found, limit, (row) => [row.rel, row.started, row.session_id]);
+  return { ...resultPage, items: await sessionCards(env, resultPage.items.map((row) => row.session_id), state, { include, exclude }) };
+}
+async function sessionCards(env: Env, ids: string[], state: { recordings: number }, scope: { include: string[]; exclude: string[] }): Promise<SessionCard[]> {
+  if (!ids.length) return [];
+  const json = JSON.stringify(ids);
+  const [recs, counts, owners] = await Promise.all([
+    rows<SessionRecordingRow>(
+      env,
+      `WITH recs AS (${sessionRecordings}) SELECT * FROM recs WHERE session_id IN(SELECT value FROM json_each(?))`,
+      state.recordings,
+      json,
+    ),
+    rows<{ session_id: string; n: number }>(
+      env,
+      "SELECT session_id,count(*) AS n FROM public_matchups WHERE session_id IN(SELECT value FROM json_each(?)) GROUP BY session_id",
+      json,
+    ),
+    rows<StreamerRefRow & { session_id: string }>(
+      env,
+      `SELECT s.id AS session_id,i.id,i.display_name,i.avatar_url FROM sessions s JOIN streamer_identities i ON i.id=s.streamer_id
+      WHERE s.id IN(SELECT value FROM json_each(?))`,
+      json,
+    ),
+  ]);
+  const countOf = new Map(counts.map((c) => [c.session_id, c.n])),
+    ownerOf = new Map(owners.map((o) => [o.session_id, streamerRef(o)]));
+  return ids.flatMap((id) => {
+    const own = recs.filter((r) => r.session_id === id);
+    const inScope = (r: SessionRecordingRow) =>
+      +(!!r.available && (!scope.include.length || scope.include.includes(r.platform)) && !scope.exclude.includes(r.platform));
+    // The best Recording: in the requested platforms, available, the Streamer's own before a reupload, then the earliest.
+    const best = own.toSorted(
+      (a, b) =>
+        inScope(b) - inScope(a) || b.available - a.available || a.is_reupload - b.is_reupload || (a.at ?? "\uffff").localeCompare(b.at ?? "\uffff") || a.id - b.id,
+    )[0];
+    if (!best) return [];
+    return {
+      id,
+      title: best.title ?? best.session_title,
+      streamer: ownerOf.get(id) ?? null,
+      channel: channel(best, best.platform),
+      startedAt: own.reduce<string | null>((min, r) => (r.at && (!min || r.at < min) ? r.at : min), null),
+      durationSeconds: best.duration_seconds,
+      matchupCount: countOf.get(id) ?? 0,
+      platforms: [...new Set(own.filter((r) => r.available).map((r) => r.platform))].sort(),
+      defaultRecording: { id: best.id, platform: best.platform },
+    };
+  });
 }
 
 /** Recognize only explicit public contracts; social/auth routes keep their private behavior. */
