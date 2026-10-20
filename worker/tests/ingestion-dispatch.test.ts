@@ -244,6 +244,6 @@ it('connects a requested candidate through catalog planning, workflow dispatch, 
   }
   expect((await one(env, 'SELECT status FROM vods WHERE id=?', video.id))!.status).toBe('completed');
   expect(await rows(env, "SELECT status,count(*) AS n FROM chunks GROUP BY status")).toEqual([{ status: 'completed', n: 11 }]);
-  expect((await one(env, 'SELECT source,source_id,username FROM video_detections'))).toEqual({ source: 'youtube', source_id: job.source_id, username: 'Fixture opponent' });
+  expect((await one(env, 'SELECT platform AS source,source_id,username FROM public_sources'))).toEqual({ source: 'youtube', source_id: job.source_id, username: 'Fixture opponent' });
   expect((await SELF.fetch('http://local' + imagePath)).status).toBe(200);
 });

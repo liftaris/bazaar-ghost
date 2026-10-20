@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:test';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { appearanceSearch } from '../appearances';
+import { nativeRoute } from '../native-api';
 import { catalogRoute, saveVideo, updateAccount, upsertAccount } from '../platforms';
 import { dispatch, pendingVideos, plan } from '../processing';
 import { one, rows, statement } from '../http';
@@ -45,10 +45,10 @@ async function detection(vodId:number) {
 it('preserves the populated source_video_id contract for ordinary YouTube appearances',async()=>{
   const {video}=await catalog();
   await detection(video.id);
-  expect((await one(env,'SELECT source_video_id FROM video_detections'))!.source_video_id).toBe('abcdefghijk');
+  expect((await one(env,'SELECT source_video_id FROM public_sources'))!.source_video_id).toBe('abcdefghijk');
 });
 
-it('does not throw when a source disappears between grouped-search reads',async()=>{
+it('restarts the search with 409 instead of mixing results when a source disappears between reads',async()=>{
   const {video}=await catalog();
   await detection(video.id);
   let changed=false;
@@ -56,7 +56,7 @@ it('does not throw when a source disappears between grouped-search reads',async(
     get(target,key) {
       if(key==='prepare') return (sql:string)=>{
         const prepared=target.prepare(sql);
-        if(!sql.includes('count(*) OVER() AS total_count')) return prepared;
+        if(!sql.includes('FROM public_matchups p')) return prepared;
         const wrap=(value:D1PreparedStatement):D1PreparedStatement=>new Proxy(value,{
           get(stmt,method) {
             if(method==='bind') return (...args:unknown[])=>wrap(stmt.bind(...args));
@@ -78,10 +78,8 @@ it('does not throw when a source disappears between grouped-search reads',async(
       return typeof value==='function'?value.bind(target):value;
     },
   });
-  const result=await appearanceSearch({...env,DB:database},{});
+  await expect(nativeRoute(new Request('http://local/api/v1/search'),{...env,DB:database})).rejects.toMatchObject({status:409});
   expect(changed).toBe(true);
-  // A consistent pre-change snapshot or a consistent refreshed empty result is valid.
-  expect(result.length===0 || result.every(group=>group.appearances.length>0)).toBe(true);
 });
 
 it('makes a previously disabled historical catalog eligible for the ingestion dispatch path after enablement',async()=>{

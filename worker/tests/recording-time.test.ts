@@ -19,7 +19,7 @@ it('never invents a recording time for non-Twitch videos: current templates and 
   const chunk = (await plan(env, saved.id))[0];
   await env.DB.exec("INSERT INTO search_names(name,gram_count) VALUES('opp',1)");
   await statement(env, `INSERT INTO detections(id,chunk_id,vod_id,username,username_lower,frame_time_seconds,confidence,igd,storage_path) VALUES('d1',?,?,'Opp','opp',10,0.97,1,'p/1.jpg')`, chunk.id, saved.id).run();
-  expect(await one(env, 'SELECT recorded_timestamp FROM video_detections')).toEqual({ recorded_timestamp: null });
+  expect(await one(env, 'SELECT recorded_timestamp FROM public_sources')).toEqual({ recorded_timestamp: null });
   const response = await nativeRoute(new Request('http://local/api/v1/matchups/1'), env);
   expect(response.status).toBe(200);
   expect(((await response.json()) as any).recordedAt).toBeNull();

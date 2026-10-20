@@ -33,7 +33,6 @@ it("applies Matchup visibility to search views, public Matchups and aggregate co
   expect(await rows(env, "SELECT * FROM detection_search")).toEqual([]);
   expect((await rows(env, "SELECT detection_id FROM public_matchups")).map(row => row.detection_id)).toEqual([youtube]);
   expect((await rows(env, "SELECT detection_id FROM public_sources")).map(row => row.detection_id)).toEqual([youtube]);
-  expect(await rows(env, "SELECT detection_id FROM video_detections WHERE detection_id=?", twitch)).toEqual([]);
   expect(await rows(env, "SELECT id FROM detections")).toHaveLength(2);
 });
 it("hides every Source of a linked Matchup together and restores it as one", async () => {

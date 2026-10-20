@@ -5,6 +5,11 @@ DROP VIEW public_videos;
 DROP VIEW streamers_with_detections;
 DROP VIEW vod_stats;
 DROP VIEW vod_embed_info;
+-- Only the removed appearance search read this per-detection view; public_sources replaces it.
+DROP VIEW video_detections;
+-- legacy_creator_id fed only the dropped public_videos view. The column stays (dropping it needs a table rebuild
+-- and the D1 cascade hazard); nothing writes it after this.
+DROP TRIGGER platform_account_legacy_creator;
 
 CREATE INDEX vods_account_source ON vods(platform_account_id,source);
 

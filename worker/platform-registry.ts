@@ -110,11 +110,3 @@ export function parseUrl(url: string): ParsedUrl | null {
   }
   return null;
 }
-/** Timestamped links for a video_detections-shaped row; the registry owns the URL shapes. */
-export function recordingUrls(row: Record<string, any>) {
-  const recording = { sourceId: row.source_id, videoId: row.source_video_id, partId: row.source_part_id, partIndex: row.source_part_index };
-  return {
-    video_url: watchUrl(row.source, recording, row.frame_time_seconds),
-    embed_url: embedUrl(row.source, recording, row.frame_time_seconds),
-  };
-}

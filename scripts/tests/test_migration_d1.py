@@ -89,7 +89,7 @@ class FullTargetD1Tests(unittest.TestCase):
             {'id':4,'source':'bilibili','source_id':'BV1234567890:222','source_video_id':'BV1234567890','source_part_id':'222','source_part_index':1},
         ])
         self.assertEqual(self.query('SELECT recorded_at,published_at FROM vods WHERE id=2'), [{'recorded_at':'2025-08-11T22:00:00.000Z','published_at':'2026-09-01T15:00:00.000Z'}])
-        self.assertEqual(self.query('SELECT source_video_id FROM video_detections WHERE vod_id=2'), [{'source_video_id':'12345678901'}])
+        self.assertEqual(self.query('SELECT source_video_id FROM public_sources WHERE vod_id=2'), [{'source_video_id':'12345678901'}])
         self.assertEqual(self.query("SELECT count(*) n FROM sqlite_master WHERE name IN('matchup_groups','matchup_appearances','matchup_review_events','clip_appearances')"), [{'n':0}])
         self.assertEqual(self.query('SELECT count(*) n FROM notification_outbox WHERE sent_at IS NULL'), [{'n':0}])
         subscription = self.query(f"SELECT length(callback_token) token_length,length(secret) secret_length,callback_token!='{'a'*64}' AS token_rotated,secret!='{'b'*64}' AS secret_rotated FROM youtube_websub_subscriptions")
@@ -116,7 +116,7 @@ class FullTargetD1Tests(unittest.TestCase):
         self.query("UPDATE matchups SET status='hidden' WHERE id IN(SELECT matchup_id FROM matchup_anchors WHERE vod_id=1)")
         self.assertEqual(self.query('SELECT revision FROM public_cache_state'),[{'revision':1}])
         self.assertEqual(self.query('SELECT count(*) n FROM detection_search'),[{'n':0}])
-        self.assertEqual(self.query('SELECT count(*) n FROM video_detections'),[{'n':2}])  # hiding the merged Matchup hides every Source
+        self.assertEqual(self.query('SELECT count(*) n FROM public_sources'),[{'n':2}])  # hiding the merged Matchup hides every Source
         self.migrate(state='occupied-auth')
         self.query("INSERT INTO app_users(id,name,email,emailVerified,createdAt,updatedAt) VALUES('existing','Existing','fixture@invalid.test',0,'2026-09-07T00:00:00.000Z','2026-09-07T00:00:00.000Z')",state='occupied-auth')
         self.execute_file(destination/'import.sql',state='occupied-auth',succeeds=False)
