@@ -247,6 +247,13 @@ def convert(source, destination):
                     row = target.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?", (name,)).fetchone()
                     output.write((row[0] if row else snapshot_sql) + ';\n')
             target.executescript((destination / 'import.sql').read_text())
+            # Legacy reviewed groups become link overrides and merged Matchups; generated from the same statements as migration 0015.
+            post_import = (ROOT / 'scripts/migration/post_import.sql').read_text()
+            with private_open(destination / 'post_import.sql') as output:
+                output.write(post_import)
+            target.executescript(post_import)
+            if target.execute('SELECT revision FROM public_cache_state WHERE id=1').fetchone()[0]:
+                raise ValueError('Post-import left a non-zero cache revision')
             if target.execute('PRAGMA foreign_key_check').fetchall():
                 raise ValueError('Generated import violates target foreign keys')
             target_counts = {table: target.execute(f'SELECT count(*) FROM {table}').fetchone()[0] for table in target_tables}
@@ -262,12 +269,14 @@ def convert(source, destination):
                     'target_counts': target_counts,
                     'input_counts': counts, 'output_counts': output_counts, 'absent_source_tables': absent,
                     'import_parts': parts, 'imported_at': imported_at,
+                    'post_import': {'file': 'post_import.sql', 'sha256': hashlib.sha256(post_import.encode()).hexdigest()},
                     'policies': {'notification_history': 'marked sent', 'websub_capabilities': 'rotated',
                                  'websub_subscriptions': 'unconfirmed; renew only after target cutover review',
                                  'websub_delivery_receipts': 'retained', 'ingestion_jobs': 'retained; active leases refused',
                                  'auth': 'source auth is excluded; target auth and social tables must be empty',
                                  'ingestion_dispatch': 'source dispatch state is excluded; target dispatcher table must be empty',
-                                 'target': f'full schema 0001–{TARGET_SCHEMA_VERSION:04d} required; anchors and Matchups derive from imported detections'}}
+                                 'target': f'full schema 0001–{TARGET_SCHEMA_VERSION:04d} required; anchors and Matchups derive from imported detections',
+                                 'matchup_groups': 'run post_import.sql once after the import parts: reviewed groups become link overrides and merged Matchups'}}
         private_json(destination / 'manifest.json', manifest)
         print(json.dumps({'counts': counts, 'absent_tables': sorted(absent), 'rotated_websub_subscriptions': counts['youtube_websub_subscriptions']}, indent=2))
         return counts

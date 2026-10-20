@@ -47,12 +47,14 @@ it("applies clip visibility to old and new search, details and public aggregate 
 it("filters reviewed groups before matching, counting and paginating appearances", async () => {
   const group = await linkAppearances(env, { detection_ids: [twitch, youtube], evidence: "Manually reviewed the same opponent and surrounding game frames" });
   expect((await appearanceSearch(env, {}))[0].appearances).toHaveLength(2);
+  const result = await appearanceSearch(env, { result_limit: 1, source_filter: "twitch" });
+  expect(result).toHaveLength(1); expect(result[0].matchup_id).toBe(group.matchup_id);
+  expect(result[0].total_count).toBe(1); expect(result[0].appearances).toHaveLength(2);
+  // Hiding is per Matchup: it hides every Source of a merged Matchup.
   await hide(twitch);
   expect(await appearanceSearch(env, { source_filter: "twitch" })).toEqual([]);
-  const result = await appearanceSearch(env, { result_limit: 1 });
-  expect(result).toHaveLength(1); expect(result[0].matchup_id).toBe(group.matchup_id);
-  expect(result[0].total_count).toBe(1); expect(result[0].appearances.map(row => row.detection_id)).toEqual([youtube]);
-  await hide(youtube); expect(await appearanceSearch(env, {})).toEqual([]);
+  expect(await appearanceSearch(env, {})).toEqual([]);
+  await hide(youtube, "visible"); expect((await appearanceSearch(env, {}))[0].appearances).toHaveLength(2);
 });
 it("does not unhide an anchor when OCR replaces its detection UUID", async () => {
   await hide(twitch);

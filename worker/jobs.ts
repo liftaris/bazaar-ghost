@@ -6,6 +6,7 @@ import { cleanupAuth } from "./auth";
 import { dispatchCatalog, requestCatalog, runCatalogBatch, type CatalogBatch } from "./catalog-work";
 import { dispatchIngestion, hasDueIngestionDispatch } from "./platform-ingestion-dispatch";
 import { isPlatformEnabled } from "./platform-settings";
+import { reconcileDirtySessions } from "./coalesce";
 
 export type Job = {
   type: string;
@@ -42,6 +43,7 @@ export async function processPending(env: Env) {
   );
   for (const d of outbox)
     await env.JOBS.send({ type: "notify", id: d.detection_id });
+  await reconcileDirtySessions(env);
 }
 export async function clearDevStorage(env: Env, cursor?: string) {
   requireValue(

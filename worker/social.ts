@@ -134,15 +134,19 @@ async function mutate(env: AuthEnv, identity: Identity, category: Category, chec
 async function listClips(req: Request, env: AuthEnv, favorites = false) {
   const url = new URL(req.url), { limit, after } = pagination(url, favorites ? [] : ['source', 'vod_id', 'detection_id']);
   const clauses = ["m.status='visible'", 'c.id>?'], args: unknown[] = [after];
+  // A merged Matchup is listed once: through the lowest of its anchors that satisfies the same filters.
+  const same: string[] = [], sameArgs: unknown[] = [];
   let identity: Identity | undefined;
   if (favorites) {
     identity = await authenticated(req, env);
     clauses.push('EXISTS(SELECT 1 FROM matchup_favorites f WHERE f.matchup_id=c.matchup_id AND f.user_id=?)');
     args.push(identity.userId);
   }
-  if (url.searchParams.has('source')) { clauses.push('v.source=?'); args.push(source(url.searchParams.get('source'))); }
-  if (url.searchParams.has('vod_id')) { clauses.push('c.vod_id=?'); args.push(clipId(url.searchParams.get('vod_id'))); }
-  if (url.searchParams.has('detection_id')) { clauses.push('c.current_detection_id=?'); args.push(key(url.searchParams.get('detection_id'))); }
+  if (url.searchParams.has('source')) { const value = source(url.searchParams.get('source')); clauses.push('v.source=?'); args.push(value); same.push('v2.source=?'); sameArgs.push(value); }
+  if (url.searchParams.has('vod_id')) { const value = clipId(url.searchParams.get('vod_id')); clauses.push('c.vod_id=?'); args.push(value); same.push('c2.vod_id=?'); sameArgs.push(value); }
+  if (url.searchParams.has('detection_id')) { const value = key(url.searchParams.get('detection_id')); clauses.push('c.current_detection_id=?'); args.push(value); same.push('c2.current_detection_id=?'); sameArgs.push(value); }
+  clauses.push(`NOT EXISTS(SELECT 1 FROM matchup_anchors c2 JOIN vods v2 ON v2.id=c2.vod_id WHERE c2.matchup_id=c.matchup_id AND c2.id<c.id${same.map(clause => ' AND ' + clause).join('')})`);
+  args.push(...sameArgs);
   if (identity) { const check = identityCheck(identity); clauses.push(check.sql); args.push(...check.args); }
   const result = await rows<ClipRow>(env, `SELECT ${clipFields} ${clipFrom} WHERE ${clauses.join(' AND ')} ORDER BY c.id LIMIT ?`, ...args, limit + 1);
   const paged = page(result, limit, row => row.id);

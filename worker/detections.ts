@@ -8,6 +8,7 @@ import {
   statement,
   uuid,
 } from "./http";
+import { coalesceVod } from "./coalesce";
 import { owned } from "./processing";
 import { trigrams } from "./search";
 
@@ -146,6 +147,10 @@ export async function publish(
   if (statements.length) await env.DB.batch(statements);
   // A stale claim never publishes. Surface the race as a conflict rather than false success.
   await owned(env, id, token);
+  // New anchors may match another Recording of the same Session; failures leave the Session flagged for the scheduled reconcile.
+  if (input.some((record) => record.confidence > 0.7))
+    await coalesceVod(env, chunk.vod_id).catch((error) =>
+      console.log(JSON.stringify({ event: "coalesce_failed", vod_id: chunk.vod_id, error: String(error) })));
   return { published: input.length };
 }
 export async function clearChunk(env: Env, id: string, token: string | null) {

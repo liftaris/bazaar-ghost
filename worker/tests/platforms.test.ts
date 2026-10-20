@@ -86,7 +86,9 @@ it('groups reviewed appearances before pagination and retains every surviving pl
  await statement(env,"UPDATE vods SET availability='unavailable' WHERE id=?",a.id).run();
  const remaining=await appearanceSearch(env,{});expect(remaining[0].appearances.length).toBe(1);expect(remaining[0].appearances[0].source).toBe('bilibili');
  await unlinkAppearance(env,{detection_id:db.id,evidence:'Reversing reviewed test linkage for audit'});
- expect((await rows(env,'SELECT * FROM matchup_review_events')).length).toBe(2);
+ expect((await rows(env,"SELECT action FROM matchup_overrides WHERE revoked_at IS NULL")).map(r=>r.action)).toEqual(['unlink']);
+ expect((await rows(env,"SELECT 1 FROM matchup_overrides WHERE action='link' AND revoked_at IS NOT NULL")).length).toBe(1);
+ expect((await appearanceSearch(env,{})).map(r=>r.appearances.length)).toEqual([1]);
 });
 it('dispatches validation jobs only from the validation branch and rejects unrecognized environments',async()=>{
  expect(dispatchBranch('validation')).toBe('migration/cloudflare');expect(()=>dispatchBranch('test')).toThrow();

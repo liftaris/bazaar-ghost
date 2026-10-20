@@ -71,11 +71,12 @@ class FullTargetD1Tests(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             conversion.convert(source, destination)
         manifest = json.loads((destination / 'manifest.json').read_text())
-        self.assertEqual(manifest['target_schema_version'], 14)
+        self.assertEqual(manifest['target_schema_version'], 15)
         self.migrate()
         before_triggers = self.query("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name")
         for part in sorted(destination.glob('import-*.sql')):
             self.execute_file(part)
+        self.execute_file(destination / 'post_import.sql')
         counts_sql = 'SELECT ' + ','.join(f'(SELECT count(*) FROM {table}) AS "{table}"' for table in manifest['target_counts'])
         counts = self.query(counts_sql)[0]
         self.assertEqual(counts, manifest['target_counts'])
@@ -104,7 +105,10 @@ class FullTargetD1Tests(unittest.TestCase):
         self.assertEqual(self.query(counts_sql)[0],counts)
         self.assertEqual(self.query("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name"),before_triggers)
         # The full-target triggers still operate on the imported anchors, Matchups and public views.
-        self.assertEqual(self.query('SELECT count(*) n,sum(matchup_id=id) m FROM matchup_anchors'),[{'n':4,'m':4}])
+        self.assertEqual(self.query('SELECT count(*) n,sum(matchup_id=id) m FROM matchup_anchors'),[{'n':4,'m':3}])
+        self.assertEqual(self.query('SELECT count(*) n,count(DISTINCT matchup_id) c FROM clip_appearances'),[{'n':2,'c':1}])
+        self.assertEqual(self.query('SELECT count(*) n FROM matchup_overrides WHERE action=\'link\' AND actor=\'legacy-group\''),[{'n':1}])
+        self.assertEqual(self.query('SELECT count(*) n FROM matchups WHERE merged_into IS NOT NULL'),[{'n':1}])
         self.assertEqual(self.query('SELECT count(*) n FROM matchups'),[{'n':4}])
         # Imported Recordings each got a singleton Session and Matchups carry Session time.
         self.assertEqual(self.query("SELECT (SELECT count(*) FROM sessions) s,(SELECT count(*) FROM vods) v,(SELECT count(*) FROM recording_alignments WHERE method='singleton' AND offset_seconds=0 AND revoked_at IS NULL) a"),[{'s':counts['vods'],'v':counts['vods'],'a':counts['vods']}])
@@ -112,7 +116,7 @@ class FullTargetD1Tests(unittest.TestCase):
         self.query("UPDATE matchups SET status='hidden' WHERE id IN(SELECT matchup_id FROM matchup_anchors WHERE vod_id=1)")
         self.assertEqual(self.query('SELECT revision FROM public_cache_state'),[{'revision':1}])
         self.assertEqual(self.query('SELECT count(*) n FROM detection_search'),[{'n':0}])
-        self.assertEqual(self.query('SELECT count(*) n FROM video_detections'),[{'n':3}])
+        self.assertEqual(self.query('SELECT count(*) n FROM video_detections'),[{'n':2}])  # hiding the merged Matchup hides every Source
         self.migrate(state='occupied-auth')
         self.query("INSERT INTO app_users(id,name,email,emailVerified,createdAt,updatedAt) VALUES('existing','Existing','fixture@invalid.test',0,'2026-09-07T00:00:00.000Z','2026-09-07T00:00:00.000Z')",state='occupied-auth')
         self.execute_file(destination/'import.sql',state='occupied-auth',succeeds=False)

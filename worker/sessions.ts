@@ -1,4 +1,5 @@
 import { atomic } from './atomic';
+import { markAndCoalesce } from './coalesce';
 import { body, HttpError, integer, now, one, requireValue, rows, statement } from './http';
 
 type Input = Record<string, any>;
@@ -125,6 +126,7 @@ export async function setAlignment(env: Env, session: string, vodId: number, lis
     eventStatement(env, event, session, action, { vod_ids: [vodId], before, after_count: after.length }, by),
   ]);
   await recomputeSessionStreamer(env, session);
+  await markAndCoalesce(env, [session, ...before.map(r => r.session_id as string)], by.actor);
   return { event_id: event, session: await getSession(env, session) };
 }
 export function moveRecording(env: Env, vodId: number, toSession: string, offset: number, how: Provenance) {
@@ -146,6 +148,7 @@ export async function revokeAlignment(env: Env, alignmentId: number, how: { acto
     if (error instanceof HttpError && error.status === 409) throw new HttpError(409, 'A recording keeps at least one alignment; move it to another Session instead');
     throw error;
   });
+  await markAndCoalesce(env, [row.session_id], by.actor);
   return { event_id: event, session: await getSession(env, row.session_id) };
 }
 
@@ -185,6 +188,7 @@ export async function mergeSessions(env: Env, winner: string, loser: string, del
     statement(env, 'UPDATE sessions SET streamer_id=?,updated_at=? WHERE id=? AND streamer_id IS NOT ?', chosen, now(), winner, chosen),
     eventStatement(env, event, winner, 'merge', payload, by),
   ]);
+  await markAndCoalesce(env, [winner, loser], by.actor);
   return { event_id: event, session: await getSession(env, winner) };
 }
 
@@ -225,6 +229,7 @@ export async function undoSessionEvent(env: Env, eventId: string, how: { actor: 
   }
   mutations.push(eventStatement(env, undo, event.session_id, 'undo', { undoes: eventId, vod_ids: vodIds }, by));
   await atomic(env, checks, mutations);
+  await markAndCoalesce(env, [event.session_id, payload.winner, payload.loser, ...restore.map(r => r.session_id)].filter(Boolean), by.actor);
   return { event_id: undo, session: await getSession(env, event.session_id) };
 }
 

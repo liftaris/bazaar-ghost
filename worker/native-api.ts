@@ -5,6 +5,7 @@ import type {
   Stats,
   TimelineMarker,
 } from "../contracts/public-api";
+import { canonicalMatchup } from "./coalesce";
 import { HttpError, integer, one, requireValue, rows } from "./http";
 import { boundary, page, unchanged } from "./native-cursor";
 import { listStreamers, resolveStreamer } from "./streamers";
@@ -294,29 +295,34 @@ async function playback(env: Env, url: URL, id: number): Promise<Playback> {
 }
 async function detail(env: Env, url: URL, id: number): Promise<MatchupDetail> {
   parameters(url, []);
-  const row = await one<MatchupRow>(
+  // The requested ID is an anchor ID (or a retired Matchup ID, which is its founding anchor's ID).
+  let row = await one<MatchupRow>(
     env,
     "SELECT *,1.0 AS score,0 AS exact FROM public_matchups WHERE matchup_id=?",
     id,
   );
-  if (!row) throw new HttpError(404, "Matchup not available");
-  const group = await one<{ matchup_id: string }>(
-    env,
-    "SELECT matchup_id FROM clip_appearances WHERE clip_id=?",
-    id,
-  );
-  const appearances = group
-    ? await rows<MatchupRow>(
+  if (!row) {
+    // A Matchup whose own founding anchor is gone still resolves through its redirect to its first public anchor.
+    const canonical = await canonicalMatchup(env, id);
+    if (canonical !== null)
+      row = await one<MatchupRow>(
         env,
-        `SELECT m.*,1.0 AS score,0 AS exact FROM public_matchups m JOIN clip_appearances a ON a.clip_id=m.matchup_id
-    WHERE a.matchup_id=? ORDER BY m.matchup_id LIMIT 50`,
-        group.matchup_id,
-      )
-    : [row];
+        "SELECT *,1.0 AS score,0 AS exact FROM public_matchups WHERE canonical_id=? ORDER BY matchup_id LIMIT 1",
+        canonical,
+      );
+  }
+  if (!row) throw new HttpError(404, "Matchup not available");
+  const members = await rows<MatchupRow>(
+    env,
+    `SELECT *,1.0 AS score,0 AS exact FROM public_matchups WHERE canonical_id=(SELECT matchup_id FROM matchup_anchors WHERE id=?)
+    ORDER BY matchup_id LIMIT 50`,
+    row.matchup_id,
+  );
+  const grouped = (await one<{ n: number }>(env, "SELECT count(*) AS n FROM matchup_anchors WHERE matchup_id=(SELECT matchup_id FROM matchup_anchors WHERE id=?)", row.matchup_id))!.n > 1;
   return {
     matchup: matchup(row),
-    groupId: group?.matchup_id ?? null,
-    appearances: appearances.map(matchup),
+    groupId: grouped ? String((row as unknown as { canonical_id: number }).canonical_id) : null,
+    appearances: (grouped ? members : [row]).map(matchup),
   };
 }
 /** Recognize only explicit public contracts; social/auth routes keep their private behavior. */
