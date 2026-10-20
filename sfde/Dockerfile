@@ -55,6 +55,8 @@ COPY --chown=sfde:sfde config.yaml .
 COPY --chown=sfde:sfde src/ ./src/
 COPY --chown=sfde:sfde streamlink_plugins/ ./streamlink_plugins/
 COPY --chown=sfde:sfde templates/ ./templates/
+# The registry lives outside this context; pass it with --build-context contracts=../contracts.
+COPY --from=contracts --chown=sfde:sfde platforms.json ./contracts/platforms.json
 ENTRYPOINT ["python", "-u", "src/sfde.py"]
 
 FROM runtime AS test

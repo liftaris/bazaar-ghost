@@ -2,10 +2,10 @@ name: Tests
 on:
   push:
     branches: [main, dev]
-    paths: ["sfde/**", "worker/**", "package*.json", "cloudflare.config.ts", "wrangler.config.ts", "config/**", "vitest.config.ts", "tsconfig.json", "scripts/**", ".github/workflows/**"]
+    paths: ["sfde/**", "contracts/**", "worker/**", "package*.json", "cloudflare.config.ts", "wrangler.config.ts", "config/**", "vitest.config.ts", "tsconfig.json", "scripts/**", ".github/workflows/**"]
   pull_request:
     branches: [main, dev]
-    paths: ["sfde/**", "worker/**", "package*.json", "cloudflare.config.ts", "wrangler.config.ts", "config/**", "vitest.config.ts", "tsconfig.json", "scripts/**", ".github/workflows/**"]
+    paths: ["sfde/**", "contracts/**", "worker/**", "package*.json", "cloudflare.config.ts", "wrangler.config.ts", "config/**", "vitest.config.ts", "tsconfig.json", "scripts/**", ".github/workflows/**"]
   workflow_dispatch:
   workflow_call:
 permissions:
@@ -20,6 +20,7 @@ jobs:
       - uses: docker/build-push-action@v7.4.0
         with:
           context: ./sfde
+          build-contexts: contracts=./contracts
           target: test
           tags: sfde:test
           load: true

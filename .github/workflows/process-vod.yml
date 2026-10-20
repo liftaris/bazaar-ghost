@@ -121,6 +121,7 @@ jobs:
         timeout-minutes: 10
         with:
           context: ./sfde
+          build-contexts: contracts=./contracts
           tags: sfde:dev
           load: true
           cache-from: type=gha

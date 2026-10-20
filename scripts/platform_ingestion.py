@@ -17,6 +17,7 @@ from media_source import youtube_metadata
 from extraction_errors import safe_error_category
 from bilibili_source import video_metadata
 from platform_discovery import account_page, bazaar_title, bilibili_api, bilibili_candidates, discover
+from platform_registry import ingestion_sources
 from video_catalog import save_video
 
 
@@ -197,7 +198,7 @@ def run(limit: int, seconds: int, discovery: bool = True, dispatch: bool = False
     if context and (initialize_discovery or not discovery):
         raise ValueError('Automatic ingestion requires existing-work mode')
     if discovery and initialize_discovery:
-        for source in ('youtube', 'bilibili'):
+        for source in ingestion_sources():
             enqueue(source, 'discovery', 'bazaar')
     deadline = time.monotonic() + seconds
     summary = {'jobs': 0, 'errors': 0, 'warnings': 0, 'cataloged': 0, 'dispatched': 0}
@@ -237,7 +238,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
     add = commands.add_parser('enroll')
-    add.add_argument('--source', required=True, choices=('youtube', 'bilibili'))
+    add.add_argument('--source', required=True, choices=ingestion_sources())
     add.add_argument('--identity', required=True, help='YouTube UC ID/@handle/URL, or Bilibili uploader UID')
     add.add_argument('--profile-id', type=int)
     add.add_argument('--streamer-id', type=int)

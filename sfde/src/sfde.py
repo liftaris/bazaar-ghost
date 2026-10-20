@@ -26,6 +26,7 @@ os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 # Import worker modules
 from video import SourceTimeline, timestamped_frames
 from video_endpoint import VideoEndpointError, verify_video_endpoint
+from platform_registry import platform
 from media_source import ffmpeg_input_args, ffmpeg_progressive_args, resolve_media, validate_source_id
 from renditions import parse_rendition, processing_quality
 from frame_processor import FrameProcessor
@@ -595,7 +596,7 @@ class SFDEProcessor:
         boundary. Seeking the playlist itself preserves the requested offset.
         """
         media = resolve_media(self.source, self.vod_id, self.quality,
-                              **({'stream_quality': self.stream_quality} if self.source == 'twitch' and self.stream_quality else {}))
+                              **({'stream_quality': self.stream_quality} if platform(self.source)['capabilities']['qualitySelectable'] and self.stream_quality else {}))
         self._media_input_args = ffmpeg_input_args(media)
         self._media_progressive_args = ffmpeg_progressive_args(media)
         self.logger.info('Media resolved with %s (%sp input)', media['resolver'], media['height'])

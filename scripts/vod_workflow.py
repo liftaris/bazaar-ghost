@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'sfde' / 'src'))
 from backend_environment import open_backend, verify_backend
 from media_source import resolve_media, validate_source_id
+from platform_registry import platform
 from renditions import select_rendition
 
 SUPPORTED = ('360p', '480p', '720p', '1080p')
@@ -50,7 +51,7 @@ def input_chunk_ids() -> List[str]:
 
 def get_vod() -> Dict[str, Any]:
     source_id = os.environ['VOD_ID']
-    source = os.getenv('VIDEO_SOURCE', 'twitch')
+    source = os.environ['VIDEO_SOURCE']
     validate_source_id(source, source_id)
     return api('vod', {'source': source, 'source_id': source_id})
 
@@ -127,7 +128,7 @@ def prepare() -> None:
     old = vod['old_templates']
     output('old_templates', str(old).lower())
     preferred = os.getenv('REQUESTED_QUALITY', '480p')
-    if vod['source'] in ('youtube', 'bilibili'):
+    if not platform(vod['source'])['capabilities']['qualitySelectable']:
         selected = '480p' if old else preferred.removesuffix('60')
         if selected not in SUPPORTED:
             raise ValueError('Unsupported processing quality')
@@ -141,7 +142,7 @@ def prepare() -> None:
             raise RuntimeError('Streamlink could not fetch renditions; availability was not changed')
         streams = json.loads(result.stdout).get('streams', {})
         selected = select_quality(streams, preferred, old)
-    if vod['source'] == 'twitch':
+    if platform(vod['source'])['capabilities']['qualitySelectable']:
         rendition = select_rendition({selected: {}}, preferred, old)
         output('quality', rendition['quality'])
         output('stream_quality', rendition['stream_quality'])

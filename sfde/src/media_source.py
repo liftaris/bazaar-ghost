@@ -10,22 +10,21 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 from bilibili_source import split_identity
+from platform_registry import platform, recording_url, video_identity
 from extraction_errors import ExtractionError, extraction_error, safe_error_category
 from renditions import parse_rendition, select_rendition
 
 
 logger = logging.getLogger('sfde.media')
-SUPPORTED_SOURCES = ('twitch', 'youtube', 'bilibili')
 QUALITY_HEIGHTS = (360, 480, 720, 1080)
 
 
 def validate_source_id(source: str, source_id: str) -> str:
     """Validate an external identifier without interpreting it as a shell argument."""
-    patterns = {'twitch': r'[0-9]+', 'youtube': r'[A-Za-z0-9_-]{11}',
-                'bilibili': r'BV[A-Za-z0-9]{10}:[1-9][0-9]*'}
-    if source not in patterns or not isinstance(source_id, str) or not re.fullmatch(patterns[source], source_id):
-        raise ValueError('Expected a supported platform and valid video identifier')
-    return source_id
+    try:
+        return video_identity(source, source_id)
+    except ValueError:
+        raise ValueError('Expected a supported platform and valid video identifier') from None
 
 
 def youtube_id(value: str) -> str:
@@ -53,12 +52,10 @@ def watch_url(source: str, source_id: str, timestamp: Optional[int] = None) -> s
     validate_source_id(source, source_id)
     if timestamp is not None and (type(timestamp) is not int or timestamp < 0):
         raise ValueError('Timestamp must be a nonnegative integer')
-    if source == 'youtube':
-        return f'https://www.youtube.com/watch?v={source_id}' + (f'&t={timestamp}s' if timestamp is not None else '')
-    if source == 'bilibili':
-        bvid, cid = split_identity(source_id)
-        return f'https://www.bilibili.com/video/{bvid}/?cid={cid}' + (f'&t={timestamp}' if timestamp is not None else '')
-    return f'https://www.twitch.tv/videos/{source_id}' + (f'?t={timestamp}s' if timestamp is not None else '')
+    values = {'id': source_id}
+    if platform(source)['recording']['parts']:
+        values['videoId'], values['partId'] = split_identity(source_id)
+    return recording_url(source, 'resolveUrl', values, timestamp)
 
 
 def _height(quality: str) -> int:
@@ -106,13 +103,13 @@ def resolve_media(source: str, source_id: str, quality: str = '480p', *, stream_
                                   capture_output=True, text=True, timeout=90, check=False)
         if response.returncode == 0:
             streams = json.loads(response.stdout).get('streams', {})
-            if source == 'twitch':
+            if platform(source)['capabilities']['qualitySelectable']:
                 playable = {name: stream for name, stream in streams.items()
                             if stream.get('url') and stream.get('type') in ('http', 'hls')}
                 if stream_quality:
                     parse_rendition(stream_quality)
                     if stream_quality not in playable:
-                        raise ValueError('Selected Twitch rendition is no longer available')
+                        raise ValueError('Selected rendition is no longer available')
                     name = stream_quality
                 else:
                     name = select_rendition(playable, quality)['stream_quality']

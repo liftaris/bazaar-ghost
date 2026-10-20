@@ -1,6 +1,9 @@
 services:
   sfde:
-    build: .
+    build:
+      context: .
+      additional_contexts:
+        contracts: ../contracts
     image: sfde:dev
     env_file:
       - ../.env.dev
