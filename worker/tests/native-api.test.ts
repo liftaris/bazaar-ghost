@@ -24,7 +24,7 @@ import { nativeRoute } from "../native-api";
 import { registerPlatformsForTest, type PlatformEntry } from "../platform-registry";
 import { mergeSessions, moveRecording } from "../sessions";
 import { createStreamer, linkChannel } from "../streamers";
-import { publicRevision } from "../visibility";
+import { publicRevision, publicState } from "../visibility";
 
 const how = { actor: "tester", evidence: "Reviewed the same fight in both recordings" };
 const operator = { method: "operator", actor: "tester" };
@@ -338,13 +338,18 @@ it("checks moderation and availability even after warming the public payload cac
   const visible = (await get<Page<MatchupResult>>("/search")).items[0];
   const request = new Request(`https://cache-test.local/api/v1/matchups/${visible.id}`);
   const hosted = { ...env, ENVIRONMENT: "validation" };
+  const elapsed = () => publicState(hosted, true);
+  await elapsed();
   expect((await nativeRoute(request, hosted)).status).toBe(200);
   expect((await nativeRoute(request, hosted)).status).toBe(200);
   await statement(env, "UPDATE matchups SET status='hidden' WHERE id=?", visible.id).run();
+  await elapsed();
   await expect(nativeRoute(request, hosted)).rejects.toMatchObject({ status: 404 });
   await statement(env, "UPDATE matchups SET status='visible' WHERE id=?", visible.id).run();
+  await elapsed();
   expect((await nativeRoute(request, hosted)).status).toBe(200);
   await statement(env, "UPDATE vods SET availability='unavailable' WHERE id=1").run();
+  await elapsed();
   await expect(nativeRoute(request, hosted)).rejects.toMatchObject({ status: 404 });
 });
 it("returns platform-neutral Recordings, lookups and player capabilities for a YouTube upload", async () => {
@@ -643,4 +648,37 @@ it("answers the Discord /search command with the same Matchups as the public sea
   expect(lines[0]).toContain("**Example** vs **Opponent**");
   expect(lines[0]).toContain(`https://site.example/matchups/${items[0].id}`);
   expect(await ask("zzzzzz")).toBe("No results found for **zzzzzz**");
+});
+it("reports D1 round trips in Server-Timing and spends none on a repeated hosted read", async () => {
+  await evidence(1);
+  const hosted = { ...env, ENVIRONMENT: "validation" };
+  await publicState(hosted, true);
+  const request = () => nativeRoute(new Request("https://local/api/v1/stats"), hosted);
+  const first = await request();
+  expect(first.headers.get("Server-Timing")).toMatch(/^d1;dur=[\d.]+;desc="\d+ queries",sql;dur=[\d.]+,total;dur=[\d.]+$/);
+  const again = await request();
+  expect(again.headers.get("Server-Timing")).toContain('desc="0 queries"');
+  expect(await again.json()).toEqual(await first.json());
+});
+it("restarts a cursor-less read once when the memoized revision predates a correction", async () => {
+  await evidence(1);
+  const hosted = { ...env, ENVIRONMENT: "validation" };
+  await publicState(hosted, true);
+  await statement(env, "UPDATE public_search_state SET revision=revision+1 WHERE id=1").run();
+  const response = await nativeRoute(new Request("https://local/api/v1/search"), hosted);
+  expect(response.status).toBe(200);
+  expect((await response.json<Page<MatchupResult>>()).items).toHaveLength(1);
+});
+it("reuses the revision for a few seconds in hosted environments, and always reads it elsewhere", async () => {
+  await evidence(1);
+  const hosted = { ...env, ENVIRONMENT: "validation" };
+  const before = await publicState(hosted, true);
+  await statement(env, "UPDATE public_search_state SET revision=revision+1 WHERE id=1").run();
+  expect((await publicState(hosted)).search).toBe(before.search);
+  expect((await publicState(hosted, true)).search).toBe(before.search + 1);
+  expect((await publicState(env)).search).toBe(before.search + 1);
+  await statement(env, "UPDATE public_search_state SET revision=revision+1 WHERE id=1").run();
+  expect((await publicState(env)).search).toBe(before.search + 2);
+  vi.spyOn(Date, "now").mockReturnValue(Date.now() + 3001);
+  expect((await publicState(hosted)).search).toBe(before.search + 2);
 });

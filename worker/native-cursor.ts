@@ -1,4 +1,5 @@
-import { HttpError, one, requireValue } from "./http";
+import { HttpError, requireValue } from "./http";
+import { publicState } from "./visibility";
 
 /** A short-lived result boundary; inserts cannot move existing pages. */
 export interface Boundary {
@@ -73,21 +74,14 @@ export async function boundary(env: Env, url: URL): Promise<Cursor> {
       throw new HttpError(400, "Invalid cursor");
     }
   }
-  const row = await one<{ revision: number; matchups: number; recordings: number }>(
-    env,
-    `SELECT revision,(SELECT coalesce(max(id),0) FROM matchups) AS matchups,
-    (SELECT coalesce(max(id),0) FROM vods) AS recordings FROM public_search_state WHERE id=1`,
-  );
-  if (!row) throw new Error("Search boundary unavailable");
-  return { ...row, expires: Date.now() + 900_000, query, after: [] };
+  const { search, matchups, recordings } = await publicState(env);
+  return { revision: search, matchups, recordings, expires: Date.now() + 900_000, query, after: [] };
 }
-/** Detect corrections during or between requests instead of silently skipping records. */
-export async function unchanged(env: Env, value: Boundary) {
-  const row = await one<{ revision: number }>(
-    env,
-    "SELECT revision FROM public_search_state WHERE id=1",
-  );
-  if (row?.revision !== value.revision)
+/** Detect corrections during or between requests instead of silently skipping records.
+ * `fresh` bypasses the short-lived revision memo; the final check of a request uses it.
+ */
+export async function unchanged(env: Env, value: Boundary, fresh = false) {
+  if ((await publicState(env, fresh)).search !== value.revision)
     throw new HttpError(409, "Results changed; refresh this search");
 }
 /** Return a bounded page and sign its continuation without counting the whole result set. */

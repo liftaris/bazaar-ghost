@@ -19,6 +19,8 @@ import {
 import { trigrams } from "./search";
 import { missingChunks, normalizeRanges } from "./processing";
 import { publicCache } from "./cache";
+import { Timing } from "./timing";
+import { memoizesState } from "./visibility";
 import { listPlatforms, platform } from "./platform-registry";
 import { listStreamers, resolveStreamer } from "./streamers";
 
@@ -674,14 +676,27 @@ async function nativeLoad(req: Request, env: Env): Promise<Response> {
 export async function nativeRoute(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
   if (req.method !== "GET" || url.pathname === `${prefix}/platforms`) return nativeLoad(req, env);
-  const state = await boundary(env, url);
-  const cacheUrl = new URL(url);
-  cacheUrl.searchParams.set("native-revision", `${state.revision}:${state.matchups}:${state.recordings}`);
-  const response = await publicCache(new Request(cacheUrl, req), env, async () => {
-    const loaded = await nativeLoad(req, env);
-    await unchanged(env, state);
-    return loaded;
-  });
-  await unchanged(env, state);
-  return response;
+  const timing = new Timing(),
+    timed = timing.wrap(env);
+  const attempt = async () => {
+    const state = await boundary(timed, url);
+    const cacheUrl = new URL(url);
+    cacheUrl.searchParams.set("native-revision", `${state.revision}:${state.matchups}:${state.recordings}`);
+    return publicCache(new Request(cacheUrl, req), timed, async () => {
+      const loaded = await nativeLoad(req, timed);
+      await unchanged(timed, state, true);
+      return loaded;
+    });
+  };
+  let response: Response;
+  try {
+    response = await attempt();
+  } catch (error) {
+    // A boundary taken from the short-lived revision memo may predate a correction; the failed check refreshed it.
+    if (!memoizesState(env) || !(error instanceof HttpError) || error.status !== 409 || url.searchParams.has("cursor")) throw error;
+    response = await attempt();
+  }
+  const result = new Response(response.body, response);
+  result.headers.set("Server-Timing", timing.header());
+  return result;
 }

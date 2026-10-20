@@ -3,7 +3,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { linkDetections } from "./link-fixture";
 import { publicCache } from "../cache";
 import { one, rows, statement } from "../http";
-import { publicImageVisible, publicRevision } from "../visibility";
+import { publicImageVisible, publicRevision, publicState } from "../visibility";
 import worker from "../index";
 
 let twitch: string, youtube: string;
@@ -75,12 +75,16 @@ it("changes the cache key immediately after a moderation transaction and restore
   const request = new Request(`https://${crypto.randomUUID()}.example.org/api/v1/search`);
   const load = vi.fn(async () => Response.json(await rows(env, "SELECT detection_id FROM public_matchups")));
   const hosted = { ...env, ENVIRONMENT: "validation" };
+  const elapsed = () => publicState(hosted, true);
+  await elapsed();
   const first = await publicCache(request, hosted, load);
   expect(first.headers.get("Cache-Control")).toBe("public,max-age=0,must-revalidate"); expect(await first.json()).toHaveLength(2);
   expect(await (await publicCache(request, hosted, load)).json()).toHaveLength(2); expect(load).toHaveBeenCalledTimes(1);
   await hide(twitch);
+  await elapsed();
   expect(await (await publicCache(request, hosted, load)).json()).toHaveLength(1); expect(load).toHaveBeenCalledTimes(2);
   await hide(twitch, "visible");
+  await elapsed();
   expect(await (await publicCache(request, hosted, load)).json()).toHaveLength(2); expect(load).toHaveBeenCalledTimes(3);
 });
 it("rolls back revision changes together with a failed moderation batch", async () => {
