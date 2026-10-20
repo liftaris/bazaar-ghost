@@ -212,7 +212,6 @@ export interface PublicRoutes {
   "/me/favorites": Page<MatchupResult>;
   "/streamers": Page<StreamerCard>;
   "/streamers/quality": Page<StreamerQuality>;
-  "/recordings": Page<Recording>;
   "/recordings/lookup": Recording;
   "/channels/lookup": ChannelLookup;
   "/sessions": Page<SessionCard>;

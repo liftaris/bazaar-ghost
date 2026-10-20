@@ -64,7 +64,7 @@ function instant(url: URL, key: "from" | "to") {
   return time.toISOString();
 }
 const SESSION_ID = /^[0-9a-f]{32}$/;
-/** Filters shared by /search and /recordings. */
+/** Filters of /search. */
 function filters(url: URL) {
   const found: { channel?: string; streamer?: number; recording?: number } = {};
   const channelId = url.searchParams.get("channelId"),
@@ -217,40 +217,6 @@ async function matchupDetail(env: Env, url: URL, id: number) {
 }
 
 const recordingCount = `(SELECT count(DISTINCT s.matchup_id) FROM public_sources s WHERE s.vod_id=r.id) AS matchup_count`;
-async function recordings(env: Env, url: URL) {
-  const limit = parameters(url, ["q", "streamerId", "channelId", "platform", "hasMatchups", "limit", "cursor"]);
-  const state = await boundary(env, url),
-    q = queryText(url),
-    filter = filters(url);
-  requireValue(!url.searchParams.has("recordingId"), "Unsupported query parameter");
-  const clauses = ["r.id<=?", "r.availability='available'"],
-    args: unknown[] = [state.recordings];
-  if (url.searchParams.has("platform")) (clauses.push("r.platform=?"), args.push(platform(url.searchParams.get("platform")).id));
-  if (filter.channel) (clauses.push("r.channel_id=?"), args.push(filter.channel));
-  if (filter.streamer !== undefined) {
-    clauses.push("(r.channel_streamer_id=? OR EXISTS(SELECT 1 FROM sessions s WHERE s.id=r.session_id AND s.streamer_id=?))");
-    args.push(filter.streamer, filter.streamer);
-  }
-  const has = url.searchParams.get("hasMatchups");
-  requireValue(has === null || has === "true" || has === "false", "Invalid hasMatchups");
-  if (has === "true") {
-    clauses.push("EXISTS(SELECT 1 FROM public_sources s WHERE s.vod_id=r.id AND s.matchup_id<=?)");
-    args.push(state.matchups);
-  }
-  if (q) {
-    clauses.push("(instr(lower(coalesce(r.title,'')),?)>0 OR instr(lower(r.source_id),?)>0)");
-    args.push(q, q);
-  }
-  if (state.after.length) (clauses.push("r.id<?"), args.push(state.after[0]));
-  const found = await rows<RecordingRow>(
-    env,
-    `SELECT r.*,${recordingCount} FROM public_recordings r WHERE ${clauses.join(" AND ")} ORDER BY r.id DESC LIMIT ?`,
-    ...args,
-    limit + 1,
-  );
-  const resultPage = await page(env, state, found, limit, (row) => [row.id]);
-  return { ...resultPage, items: resultPage.items.map(recording) };
-}
 async function getRecording(env: Env, id: number) {
   const row = await one<RecordingRow>(env, `SELECT r.*,${recordingCount} FROM public_recordings r WHERE r.id=?`, id);
   if (!row) throw new HttpError(404, "Recording not found");
@@ -635,7 +601,7 @@ async function sessionCards(env: Env, ids: string[], state: { recordings: number
 
 /** Recognize only explicit public contracts; social/auth routes keep their private behavior. */
 export function nativePath(path: string) {
-  return /^\/api\/v1\/(search|stats|platforms|streamers(?:\/quality|\/[1-9]\d{0,15})?|recordings(?:\/lookup|\/[1-9]\d{0,15}\/(?:playback|timeline|detections))?|channels\/(?:lookup|[0-9a-f-]{36})|matchups\/[1-9]\d{0,15}|sessions|sessions\/[0-9a-f]{32})$/.test(
+  return /^\/api\/v1\/(search|stats|platforms|streamers(?:\/quality|\/[1-9]\d{0,15})?|recordings\/(?:lookup|[1-9]\d{0,15}\/(?:playback|timeline|detections))|channels\/(?:lookup|[0-9a-f-]{36})|matchups\/[1-9]\d{0,15}|sessions|sessions\/[0-9a-f]{32})$/.test(
     path,
   );
 }
@@ -669,8 +635,7 @@ async function nativeLoad(req: Request, env: Env): Promise<Response> {
     parameters(url, []);
     const found = await resolveStreamer(env, Number(path.split("/")[2]));
     output = publicStreamer(found as StreamerRefRow, found.channels);
-  } else if (path === "/recordings") output = await recordings(env, url);
-  else if (path === "/recordings/lookup") output = await lookupRecording(env, url);
+  } else if (path === "/recordings/lookup") output = await lookupRecording(env, url);
   else if (path === "/channels/lookup") output = await lookupChannel(env, url);
   else if (path.startsWith("/channels/")) output = await channelDetail(env, url, path.slice("/channels/".length));
   else if (path === "/sessions") output = await sessions(env, url);

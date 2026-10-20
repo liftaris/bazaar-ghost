@@ -551,12 +551,9 @@ it("retains linked Matchups through OCR replacement", async () => {
   expect(detail.sources).toHaveLength(2);
   expect(detail.detections.map((d) => d.id)).toContain(replacement);
 });
-it("returns unique Recording cards and distinguishes unprocessed coverage from zero matches", async () => {
+it("distinguishes unprocessed coverage from zero matches", async () => {
   await evidence(1);
   await evidence(2);
-  const result = await get<Page<Recording>>("/recordings?hasMatchups=true");
-  expect(result.items).toHaveLength(1);
-  expect(result.items[0].matchupCount).toBe(2);
   const playback = await get<Playback>("/recordings/2/playback");
   expect(playback.timeline.items).toEqual([]);
   expect(playback.processing.completedRanges).toEqual([]);
@@ -617,12 +614,10 @@ it("validates filters and no longer serves the removed compatibility routes", as
     "/search?limit=1&limit=2",
     "/search?source=youtube",
     "/search?videoId=1",
-    "/recordings?table=users",
-    "/recordings?recordingId=1",
     "/search?recordingId=-1",
   ])
     expect(await status(path), path).toBe(400);
-  for (const path of ["/videos", "/creators", "/creators/resolve", "/videos/resolve", "/clips"])
+  for (const path of ["/recordings", "/videos", "/creators", "/creators/resolve", "/videos/resolve", "/clips"])
     expect(await status(path), path).not.toBe(200);
   expect((await SELF.fetch("https://local/rest/v1/streamers?select=login")).status).toBe(401);
   expect(await rows(env, "PRAGMA foreign_key_check")).toEqual([]);
