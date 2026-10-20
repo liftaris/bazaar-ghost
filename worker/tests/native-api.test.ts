@@ -682,3 +682,20 @@ it("reuses the revision for a few seconds in hosted environments, and always rea
   vi.spyOn(Date, "now").mockReturnValue(Date.now() + 3001);
   expect((await publicState(hosted)).search).toBe(before.search + 2);
 });
+it("ranks selective searches (name, Recording, Session) exactly like the public_matchups view", async () => {
+  await evidence(10, "Alpha", 1, 0.9);
+  await evidence(20, "Alpha", 1, 0.99, "2026-10-02T00:00:00Z");
+  await evidence(30, "Alphabet", 1, 0.8);
+  await evidence(40, "Beta", 2, 0.97);
+  await together(1, 2);
+  const view = async (where: string, ...args: unknown[]) =>
+    (await rows<{ matchup_id: number }>(env, `SELECT matchup_id FROM public_matchups WHERE ${where} ORDER BY indexed_at DESC,matchup_id DESC`, ...args)).map((r) => r.matchup_id);
+  const ids = async (query: string) => (await get<Page<MatchupResult>>(`/search?${query}`)).items.map((i) => i.id);
+  const session = await sessionOf(1);
+  expect(await ids(`sessionId=${session}`)).toEqual(await view("session_id=?", session));
+  expect(await ids("recordingId=2")).toEqual(await view("matchup_id IN(SELECT matchup_id FROM matchup_anchors WHERE vod_id=2)"));
+  const named = await ids("q=alpha");
+  expect(named.toSorted()).toEqual((await view("lower(username) LIKE 'alpha%'")).toSorted());
+  expect((await get<Page<MatchupResult>>("/search?q=alpha")).items.map((i) => i.opponent.username)[0]).toBe("Alpha");
+  expect(await ids("q=alpha&sessionId=" + session)).toEqual(named);
+});

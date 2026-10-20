@@ -86,13 +86,6 @@ async function channelsOf(env: Env, ids: number[]) {
   for (const {streamer_id, ...channel} of found) by.set(streamer_id, [...(by.get(streamer_id) ?? []), channel]);
   return by;
 }
-export async function listStreamers(env: Env, options: {after?: number; limit?: number; ids?: number[]}) {
-  const found = options.ids
-    ? await rows(env, 'SELECT * FROM streamer_identities WHERE id IN(SELECT value FROM json_each(?)) ORDER BY id', JSON.stringify(options.ids))
-    : await rows(env, 'SELECT * FROM streamer_identities WHERE id>? ORDER BY id LIMIT ?', options.after ?? 0, options.limit ?? 50);
-  const channels = found.length ? await channelsOf(env, found.map(r => r.id)) : new Map();
-  return found.map(row => ({...streamer(row), channels: channels.get(row.id) ?? []}));
-}
 export async function resolveStreamer(env: Env, id: number, withHistory = false) {
   integer(id, 'streamer ID', 1);
   const row = await one(env, 'SELECT * FROM streamer_identities WHERE id=?', id);

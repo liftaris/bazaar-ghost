@@ -22,7 +22,7 @@ import { publicCache } from "./cache";
 import { Timing } from "./timing";
 import { memoizesState } from "./visibility";
 import { listPlatforms, platform } from "./platform-registry";
-import { listStreamers, resolveStreamer } from "./streamers";
+import { resolveStreamer } from "./streamers";
 
 const prefix = "/api/v1";
 const idValue = (value: string, label = "ID") => {
@@ -149,15 +149,34 @@ export async function search(env: Env, url: URL) {
   if (from) (clauses.push("p.recorded_timestamp>=?"), args.push(from));
   if (to) (clauses.push("p.recorded_timestamp<=?"), args.push(to));
   if (sessionId) (clauses.push("p.session_id=?"), args.push(sessionId));
-  const candidates = q
+  // Rank only the Matchups a selective condition names (same ranking as the public_matchups view): name hits with `q`,
+  // else a Session, a Recording or a Streamer. Without one, every public Matchup is ranked.
+  let pool = "",
+    poolBinds: unknown[] = [];
+  if (q) pool = "SELECT matchup_id FROM hits";
+  else if (sessionId) (pool = "SELECT id FROM matchups WHERE session_id=?"), (poolBinds = [sessionId]);
+  else if (filter.recording) (pool = "SELECT matchup_id FROM matchup_anchors WHERE vod_id=?"), (poolBinds = [filter.recording]);
+  else if (filter.streamer !== undefined) (pool = "SELECT matchup_id FROM matchup_streamers WHERE streamer_id=?"), (poolBinds = [filter.streamer]);
+  const hits = q
     ? `candidates AS (SELECT g.name,1.0*count(*)/(?+n.gram_count-count(*)) AS score
     FROM search_grams g JOIN search_names n ON n.name=g.name
     WHERE g.gram IN(SELECT value FROM json_each(?)) GROUP BY g.name
     HAVING 1.0*count(*)/(?+n.gram_count-count(*))>=0.25),
-    hits AS (SELECT s.matchup_id,max(c.score) AS score,max(s.username_lower=?) AS exact
-    FROM public_sources s JOIN candidates c ON c.name=s.username_lower WHERE s.matchup_id<=? GROUP BY s.matchup_id),`
+    hits AS (SELECT a.matchup_id,max(c.score) AS score,max(d.username_lower=?) AS exact
+    FROM candidates c JOIN detections d ON d.username_lower=c.name JOIN matchup_anchors a ON a.current_detection_id=d.id
+    WHERE a.matchup_id<=? GROUP BY a.matchup_id),`
     : "";
-  const binds: unknown[] = q ? [grams.length, JSON.stringify(grams), grams.length, q, state.matchups] : [];
+  const named = pool
+    ? `named AS (SELECT r.matchup_id,r.detection_id,r.username,r.confidence,r.rank,r.igd,r.recorded_timestamp,r.latest_indexed_at AS indexed_at,
+      m.session_id,m.session_time
+      FROM (SELECT ps.matchup_id,ps.detection_id,ps.username,ps.confidence,ps.rank,ps.igd,ps.recorded_timestamp,
+        row_number() OVER (PARTITION BY ps.matchup_id ORDER BY ps.confidence DESC,ps.rank IS NULL,ps.igd IS NULL,ps.indexed_at,ps.detection_id) AS display_rank,
+        max(ps.indexed_at) OVER (PARTITION BY ps.matchup_id) AS latest_indexed_at
+        FROM public_sources ps WHERE ps.matchup_id IN(${pool})) r
+      JOIN matchups m ON m.id=r.matchup_id WHERE r.display_rank=1),`
+    : "";
+  const candidates = hits + named;
+  const binds: unknown[] = [...(q ? [grams.length, JSON.stringify(grams), grams.length, q, state.matchups] : []), ...poolBinds];
   // Session-time order puts Matchups with no mapped time last.
   const order = timeline ? "(coalesce(session_time,1e15),matchup_id)" : "(exact,score,indexed_at,matchup_id)";
   const position = state.after.length ? `WHERE ${order}${timeline ? ">" : "<"}(${state.after.map(() => "?").join(",")})` : "";
@@ -165,7 +184,7 @@ export async function search(env: Env, url: URL) {
     env,
     `WITH ${candidates} matched AS (
     SELECT p.*,${q ? "h.score,h.exact" : "1.0 AS score,0 AS exact"}
-    FROM ${q ? "hits h JOIN public_matchups p ON p.matchup_id=h.matchup_id" : "public_matchups p"}
+    FROM ${q ? "hits h JOIN named p ON p.matchup_id=h.matchup_id" : pool ? "named p" : "public_matchups p"}
     WHERE ${clauses.join(" AND ")}) SELECT * FROM matched ${position}
     ORDER BY ${timeline ? "coalesce(session_time,1e15),matchup_id" : "exact DESC,score DESC,indexed_at DESC,matchup_id DESC"} LIMIT ?`,
     ...binds,
@@ -291,6 +310,10 @@ async function channelDetail(env: Env, url: URL, id: string) {
 /** The Channel `a` published an available Recording of a visible Matchup (what public_sources lists, reached by index). */
 const publicContent = `EXISTS(SELECT 1 FROM vods v JOIN matchup_anchors x ON x.vod_id=v.id AND x.current_detection_id IS NOT NULL
   JOIN matchups m ON m.id=x.matchup_id AND m.status='visible' AND m.merged_into IS NULL WHERE v.platform_account_id=a.id AND v.availability='available')`;
+/** What public_sources requires of a Matchup `u.matchup_id`: visible, not merged, with an available Recording that has a current detection. */
+const publicMatchup = `EXISTS(SELECT 1 FROM matchups m WHERE m.id=u.matchup_id AND m.status='visible' AND m.merged_into IS NULL)
+  AND EXISTS(SELECT 1 FROM matchup_anchors b JOIN vods bv ON bv.id=b.vod_id
+    WHERE b.matchup_id=u.matchup_id AND b.current_detection_id IS NOT NULL AND bv.availability='available')`;
 /** Streamers with at least one public Matchup, with list counts, ordered by Matchup count (best name match first with `q`).
  * A Streamer's platforms are those of its owned Channels with public content; counts are not narrowed by platform filters. */
 async function streamers(env: Env, url: URL): Promise<Page<StreamerCard>> {
@@ -300,70 +323,74 @@ async function streamers(env: Env, url: URL): Promise<Page<StreamerCard>> {
     include = platformList(url, "platform"),
     exclude = platformList(url, "excludePlatform");
   const clauses = ["mc.n>0"],
-    args: unknown[] = [state.matchups];
+    args: unknown[] = [];
   const owned = (sql: string, ...values: unknown[]) => {
     clauses.push(`EXISTS(SELECT 1 FROM streamer_platforms sp WHERE sp.streamer_id=i.id AND ${sql})`);
     args.push(...values);
   };
   if (include.length) owned("sp.platform IN(SELECT value FROM json_each(?))", JSON.stringify(include));
   if (exclude.length) owned("sp.platform NOT IN(SELECT value FROM json_each(?))", JSON.stringify(exclude));
-  // exact name 0, prefix 1, contains 2 (the display name or an owned Channel's name or login)
-  let tier = "0";
+  // exact name 0, prefix 1, contains 2 (the display name or an owned Channel's name or login); only those Streamers are counted
+  let named = "SELECT id,0 AS tier FROM streamer_identities";
   const tierArgs: unknown[] = [];
   if (q) {
     const names = `SELECT lower(i.display_name) AS n UNION ALL SELECT lower(a.display_name) FROM channel_ownership o JOIN platform_accounts a ON a.id=o.channel_id
       WHERE o.streamer_id=i.id AND o.ended_at IS NULL UNION ALL SELECT lower(coalesce(a.login,'')) FROM channel_ownership o JOIN platform_accounts a ON a.id=o.channel_id
       WHERE o.streamer_id=i.id AND o.ended_at IS NULL`;
-    tier = `coalesce((SELECT min(CASE WHEN n=? THEN 0 WHEN instr(n,?)=1 THEN 1 ELSE 2 END) FROM (${names}) WHERE instr(n,?)>0),9)`;
+    named = `SELECT i.id,coalesce((SELECT min(CASE WHEN n=? THEN 0 WHEN instr(n,?)=1 THEN 1 ELSE 2 END) FROM (${names}) WHERE instr(n,?)>0),9) AS tier
+      FROM streamer_identities i WHERE tier<9`;
     tierArgs.push(q, q, q);
-    clauses.push("tier<9");
   }
-  if (state.after.length) (clauses.push("(tier,-mc.n,i.id)>(?,?,?)"), args.push(...state.after));
-  const ids = await rows<{ id: number; tier: number; n: number }>(
+  if (state.after.length) (clauses.push("(i.tier,-mc.n,i.id)>(?,?,?)"), args.push(...state.after));
+  // matchup_streamers' three sources, by index; counting only the named Streamers one by one beats counting every Streamer.
+  const mc = q
+    ? `SELECT n.id,(SELECT count(*) FROM (
+        SELECT a.matchup_id FROM channel_ownership o JOIN vods v ON v.platform_account_id=o.channel_id JOIN matchup_anchors a ON a.vod_id=v.id
+          WHERE o.streamer_id=n.id AND o.ended_at IS NULL
+        UNION SELECT a.matchup_id FROM sessions s JOIN vods v ON v.session_id=s.id JOIN matchup_anchors a ON a.vod_id=v.id WHERE s.streamer_id=n.id
+        UNION SELECT m.id FROM sessions s JOIN matchups m ON m.session_id=s.id WHERE s.streamer_id=n.id) u
+        WHERE u.matchup_id<=? AND ${publicMatchup}) AS n FROM named n`
+    : `SELECT u.streamer_id AS id,count(DISTINCT u.matchup_id) AS n FROM (
+        SELECT o.streamer_id,a.matchup_id FROM channel_ownership o JOIN vods v ON v.platform_account_id=o.channel_id JOIN matchup_anchors a ON a.vod_id=v.id
+          WHERE o.ended_at IS NULL
+        UNION SELECT s.streamer_id,a.matchup_id FROM sessions s JOIN vods v ON v.session_id=s.id JOIN matchup_anchors a ON a.vod_id=v.id WHERE s.streamer_id IS NOT NULL
+        UNION SELECT s.streamer_id,m.id FROM sessions s JOIN matchups m ON m.session_id=s.id WHERE s.streamer_id IS NOT NULL) u
+        WHERE u.matchup_id<=? AND ${publicMatchup} GROUP BY u.streamer_id`;
+  // One round trip: the ranked page and, for each Streamer on it, its Channels, Session count and platforms.
+  const found = await rows<StreamerRefRow & { tier: number; n: number; channels: string; session_count: number; platforms: string }>(
     env,
-    `WITH mc AS (SELECT ms.streamer_id AS id,count(DISTINCT ms.matchup_id) AS n FROM matchup_streamers ms
-      WHERE ms.matchup_id<=? AND ms.matchup_id IN(SELECT matchup_id FROM public_sources) GROUP BY ms.streamer_id),
+    `WITH named AS MATERIALIZED (${named}),
+    mc AS (${mc}),
     streamer_platforms AS (SELECT DISTINCT o.streamer_id,a.source AS platform FROM channel_ownership o JOIN platform_accounts a ON a.id=o.channel_id
-      WHERE o.ended_at IS NULL AND ${publicContent})
-    SELECT i.id,${tier} AS tier,mc.n FROM streamer_identities i JOIN mc ON mc.id=i.id WHERE ${clauses.join(" AND ")} ORDER BY tier,mc.n DESC,i.id LIMIT ?`,
-    args[0],
+      WHERE o.ended_at IS NULL AND ${publicContent}),
+    ranked AS (SELECT i.id,i.tier,mc.n FROM named i JOIN mc ON mc.id=i.id WHERE ${clauses.join(" AND ")} ORDER BY i.tier,mc.n DESC,i.id LIMIT ?)
+    SELECT r.id,r.tier,r.n,i.display_name,i.avatar_url,
+      (SELECT json_group_array(json_object('id',c.id,'platform',c.source,'source_id',c.source_id,'display_name',c.display_name,'login',c.login,'avatar_url',c.avatar_url))
+        FROM (SELECT a.* FROM channel_ownership o JOIN platform_accounts a ON a.id=o.channel_id WHERE o.ended_at IS NULL AND o.streamer_id=r.id
+          ORDER BY a.source,a.display_name,a.id) c) AS channels,
+      (SELECT count(*) FROM (
+        SELECT s.id AS session_id FROM sessions s WHERE s.merged_into IS NULL AND s.streamer_id=r.id
+        UNION SELECT g.session_id FROM channel_ownership o JOIN vods v ON v.platform_account_id=o.channel_id
+          JOIN recording_alignments g ON g.vod_id=v.id AND g.revoked_at IS NULL JOIN sessions s ON s.id=g.session_id AND s.merged_into IS NULL
+          WHERE o.ended_at IS NULL AND o.streamer_id=r.id) p
+        WHERE EXISTS(SELECT 1 FROM recording_alignments g JOIN vods v ON v.id=g.vod_id
+          WHERE g.session_id=p.session_id AND g.revoked_at IS NULL AND v.availability='available')) AS session_count,
+      (SELECT json_group_array(platform) FROM (SELECT platform FROM streamer_platforms WHERE streamer_id=r.id ORDER BY platform)) AS platforms
+    FROM ranked r JOIN streamer_identities i ON i.id=r.id ORDER BY r.tier,r.n DESC,r.id`,
     ...tierArgs,
-    ...args.slice(1),
+    state.matchups,
+    ...args,
     limit + 1,
   );
-  const selected = ids.slice(0, limit),
-    json = JSON.stringify(selected.map((row) => row.id));
-  const [found, sessionCounts, platformRows] = await Promise.all([
-    listStreamers(env, { ids: selected.map((row) => row.id) }),
-    rows<{ id: number; n: number }>(
-      env,
-      `WITH pairs AS (
-        SELECT s.streamer_id AS id,s.id AS session_id FROM sessions s WHERE s.merged_into IS NULL AND s.streamer_id IN(SELECT value FROM json_each(?1))
-        UNION SELECT o.streamer_id,g.session_id FROM channel_ownership o JOIN vods v ON v.platform_account_id=o.channel_id
-          JOIN recording_alignments g ON g.vod_id=v.id AND g.revoked_at IS NULL JOIN sessions s ON s.id=g.session_id AND s.merged_into IS NULL
-          WHERE o.ended_at IS NULL AND o.streamer_id IN(SELECT value FROM json_each(?1)))
-      SELECT id,count(*) AS n FROM pairs p WHERE EXISTS(SELECT 1 FROM recording_alignments g JOIN vods v ON v.id=g.vod_id
-        WHERE g.session_id=p.session_id AND g.revoked_at IS NULL AND v.availability='available') GROUP BY id`,
-      json,
-    ),
-    rows<{ id: number; platform: string }>(
-      env,
-      `SELECT DISTINCT o.streamer_id AS id,a.source AS platform FROM channel_ownership o JOIN platform_accounts a ON a.id=o.channel_id
-      WHERE o.ended_at IS NULL AND o.streamer_id IN(SELECT value FROM json_each(?)) AND ${publicContent} ORDER BY a.source`,
-      json,
-    ),
-  ]);
-  const byId = new Map(found.map((row) => [row.id, row]));
-  const items = selected.map((row): StreamerCard => {
-    const streamer = byId.get(row.id)!;
-    return {
-      ...publicStreamer(streamer as StreamerRefRow, streamer.channels),
-      sessionCount: sessionCounts.find((c) => c.id === row.id)?.n ?? 0,
+  const items = found.slice(0, limit).map(
+    (row): StreamerCard => ({
+      ...publicStreamer(row, JSON.parse(row.channels)),
+      sessionCount: row.session_count,
       matchupCount: row.n,
-      platforms: platformRows.filter((p) => p.id === row.id).map((p) => p.platform),
-    };
-  });
-  const resultPage = await page(env, state, ids, limit, (row) => [row.tier, -row.n, row.id]);
+      platforms: JSON.parse(row.platforms),
+    }),
+  );
+  const resultPage = await page(env, state, found, limit, (row) => [row.tier, -row.n, row.id]);
   return { ...resultPage, items };
 }
 async function timeline(env: Env, url: URL, id: number): Promise<Page<TimelineMarker>> {

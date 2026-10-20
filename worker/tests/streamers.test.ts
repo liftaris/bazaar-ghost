@@ -1,6 +1,6 @@
 import { env, SELF } from 'cloudflare:test';
 import { beforeEach, expect, it } from 'vitest';
-import { createStreamer, linkChannel, listStreamers, renameStreamer, resolveStreamer, unlinkChannel } from '../streamers';
+import { createStreamer, linkChannel, renameStreamer, resolveStreamer, unlinkChannel } from '../streamers';
 import { updateAccount, upsertAccount } from '../platforms';
 import { pendingVideos } from '../processing';
 import { one, rows } from '../http';
@@ -53,7 +53,6 @@ it('supports a Streamer with only YouTube Channels, two on one platform', async 
   await linkChannel(env, streamer.id, a.id, operator);
   const resolved = await linkChannel(env, streamer.id, b.id, operator);
   expect(resolved.channels.map((c: any) => [c.platform, c.display_name])).toEqual([['youtube', 'Clips'], ['youtube', 'Main']]);
-  expect((await listStreamers(env, { limit: 10 })).map(s => s.id)).toEqual([streamer.id]);
 });
 
 it('records link history, rejects a competing owner with 409 and allows relinking after unlink', async () => {
