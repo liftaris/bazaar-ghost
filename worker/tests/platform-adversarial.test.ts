@@ -132,6 +132,6 @@ it('rejects a conflicting video owner without replacing the account or title', a
 it('does not expose platform lease, secret, assertion or account tables publicly', async () => {
   for (const table of ['platform_accounts', 'platform_ingestion_jobs', 'youtube_websub_subscriptions', 'youtube_websub_deliveries', 'mutation_checks', 'matchup_review_events']) {
     const response = await SELF.fetch(`http://local/rest/v1/${table}?select=*`);
-    expect(response.status, table).toBe(404);
+    expect(response.status, table).toBe(401);
   }
 });

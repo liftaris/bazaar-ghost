@@ -1,18 +1,30 @@
 /** Public, platform-neutral contracts. Copied into the frontend by generate_frontend_api.py. */
-export type Platform = "twitch" | "youtube" | "bilibili";
+/** A registry platform ID; never a closed union, so a new platform needs no contract change. */
+export type PlatformId = string;
 /** A bounded page. A null cursor means the result set is exhausted. */
 export interface Page<T> {
   items: T[];
   nextCursor: string | null;
 }
-/** Platform account identity; display names are never identifiers. */
-export interface Creator {
+/** A Streamer without its Channels, as attached to Matchups and Sessions. */
+export interface StreamerRef {
+  id: number;
+  displayName: string;
+  avatarUrl: string | null;
+}
+/** A platform account. `streamerId` is its active owner; display names are never identifiers. */
+export interface Channel {
   id: string;
-  platform: Platform;
+  platform: PlatformId;
   sourceId: string;
-  name: string;
+  displayName: string;
   login: string | null;
   avatarUrl: string | null;
+  streamerId: number | null;
+}
+/** A person with every Channel they actively own, across platforms. */
+export interface Streamer extends StreamerRef {
+  channels: Channel[];
 }
 /** What a platform's player and catalog support; clients gate UI on these instead of platform names. */
 export interface PlatformCapabilities {
@@ -26,69 +38,127 @@ export interface PlatformCapabilities {
   clipParentRange: boolean;
   qualitySelectable: boolean;
 }
-/** A registered platform. `Platform` above stays a closed union for v1 only. */
+/** A registered platform. */
 export interface PlatformDefinition {
-  id: string;
+  id: PlatformId;
   name: string;
   mark: string;
   capabilities: PlatformCapabilities;
   embed: { kind: string; requires: string[] };
 }
 /** Public OCR quality summary used by the existing help page. */
-export interface CreatorQuality {
+export interface StreamerQuality {
   login: string;
   displayName: string;
   averageConfidence: number;
 }
-/** Video metadata shared by search and playback responses. */
-export interface Video {
+/** One platform copy of a Session's footage. A Bilibili part is its own Recording. */
+export interface Recording {
   id: number;
-  platform: Platform;
+  platform: PlatformId;
   sourceId: string;
+  partId: string | null;
   title: string;
   publishedAt: string | null;
+  recordedAt: string | null;
   durationSeconds: number;
   availability: string;
-  creator: Creator;
+  available: boolean;
+  channel: Channel;
+  sessionId: string | null;
+  /** Visible Matchups with a Detection in this Recording; null where the route does not count them. */
   matchupCount: number | null;
 }
-/** A durable video anchor with its current OCR evidence, independent of OCR UUIDs. */
+/** Where a Source plays. `at` is Recording-relative (part-relative on Bilibili). */
+export interface RecordingSource {
+  kind: "recording";
+  platform: PlatformId;
+  recording: { id: number; sourceId: string; partId?: string; title: string; publishedAt: string | null; recordedAt: string | null };
+  at: number;
+  channel: Channel;
+  isReupload: boolean;
+  available: boolean;
+  watchUrl: string;
+  embedUrl?: string;
+}
+/** A short platform video of the Matchup. Declared for later use; the API does not emit it yet. */
+export interface ClipSource {
+  kind: "clip";
+  platform: PlatformId;
+  clip: { id: string; sourceId: string };
+  range?: [number, number];
+  parent?: { id: number; sourceId: string; partId?: string };
+  attribution: Channel;
+  available: boolean;
+  watchUrl: string;
+  embedUrl?: string;
+}
+/** A playable way to watch a Matchup. Order is defined (MAT-03): recordings before clips, available first,
+ * own before reuploads, best Detection confidence, earliest recording time, lowest Recording ID. */
+export type Source = RecordingSource | ClipSource;
+/** The best-supported name, rank and in-game day of a Matchup (MAT-04). */
+export interface Opponent {
+  username: string;
+  rank: string | null;
+  igd: number | null;
+  confidence: number;
+}
+/** One distinct fight with every way to watch it. */
 export interface Matchup {
   id: number;
-  video: Video;
-  timestampSeconds: number;
+  opponent: Opponent;
+  streamer: StreamerRef | null;
+  session: { id: string } | null;
   recordedAt: string | null;
   indexedAt: string;
-  detection: {
-    id: string;
-    username: string;
-    confidence: number;
-    rank: string | null;
-    igd: number | null;
-    truncated: boolean;
-    noRightEdge: boolean;
-    screenshotUrl: string | null;
-  };
+  sources: Source[];
+}
+/** A search hit: relevance is search-only and separate from OCR confidence. */
+export interface MatchupResult extends Matchup {
   relevance: { score: number; exact: boolean };
 }
-/** Verified alternate recordings of this occurrence; never inferred from a name alone. */
-export interface MatchupDetail {
-  matchup: Matchup;
-  groupId: string | null;
-  appearances: Matchup[];
+/** SFDE evidence for a Matchup in one Recording. `screenshotUrl` is null when its Recording is unavailable. */
+export interface Evidence {
+  id: string;
+  recordingId: number;
+  at: number;
+  username: string;
+  confidence: number;
+  rank: string | null;
+  igd: number | null;
+  truncated: boolean;
+  noRightEdge: boolean;
+  screenshotUrl: string | null;
 }
-/** Compact timeline marker, identified by durable matchup ID. */
+/** A Matchup with all its contributing Detections. `redirectedFrom` is set when the requested ID was retired. */
+export interface MatchupDetail extends Matchup {
+  redirectedFrom?: number;
+  detections: Evidence[];
+}
+/** A Session's Recordings with their time mappings; `session_time = recording_time + offsetSeconds`. */
+export interface Session {
+  id: string;
+  title: string | null;
+  streamer: StreamerRef | null;
+  recordings: Array<{
+    recording: Recording;
+    segments: Array<{ recStart: number; recEnd: number | null; offsetSeconds: number }>;
+  }>;
+  matchupCount: number;
+  redirectedFrom?: string;
+}
+/** Compact timeline marker, identified by Matchup ID. */
 export interface TimelineMarker {
   id: number;
   timestampSeconds: number;
   username: string;
   rank: string | null;
 }
-/** Player capabilities and completed coverage are distinct from video availability. */
+/** Player capabilities and completed coverage are distinct from Recording availability. */
 export interface Playback {
-  video: Video;
+  recording: Recording;
   player: {
-    platform: Platform;
+    platform: PlatformId;
     sourceId: string;
     watchUrl: string;
     embedUrl: string | null;
@@ -103,23 +173,31 @@ export interface Playback {
   };
   timeline: Page<TimelineMarker>;
 }
-/** Public aggregate counts, cached separately from result pages. */
+/** A Channel resolved from a platform login, with its owner if any. */
+export interface ChannelLookup {
+  channel: Channel;
+  streamer: StreamerRef | null;
+}
+/** Public aggregate counts of public Matchups, cached separately from result pages. */
 export interface Stats {
-  creators: number;
-  videos: number;
   matchups: number;
+  recordings: number;
+  streamers: number;
 }
 /** Response types for the supported public GET routes. */
 export interface PublicRoutes {
-  "/search": Page<Matchup>;
-  "/creators": Page<Creator>;
-  "/creators/resolve": Creator;
-  "/creators/quality": Page<CreatorQuality>;
-  "/videos": Page<Video>;
-  "/videos/resolve": Video;
+  "/search": Page<MatchupResult>;
+  "/streamers": Page<Streamer>;
+  "/streamers/quality": Page<StreamerQuality>;
+  "/recordings": Page<Recording>;
+  "/recordings/lookup": Recording;
+  "/channels/lookup": ChannelLookup;
   "/stats": Stats;
   "/platforms": Page<PlatformDefinition>;
-  [path: `/videos/${number}/playback`]: Playback;
-  [path: `/videos/${number}/timeline`]: Page<TimelineMarker>;
+  [path: `/streamers/${number}`]: Streamer;
+  [path: `/recordings/${number}/playback`]: Playback;
+  [path: `/recordings/${number}/timeline`]: Page<TimelineMarker>;
+  [path: `/recordings/${number}/detections`]: Page<Evidence>;
   [path: `/matchups/${number}`]: MatchupDetail;
+  [path: `/sessions/${string}`]: Session;
 }

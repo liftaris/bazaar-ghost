@@ -185,20 +185,28 @@ class ValidationRunnerTests(unittest.TestCase):
         self.assertEqual(prepared['stream_quality'], '720p60')
         self.assertEqual(prepared['sfde_profile'], vod['profile'])
 
-    def test_public_proof_reads_past_first_page_and_exact_page_boundary_without_ignoring_extras(self):
+    def test_public_proof_reads_every_cursor_page_and_does_not_ignore_extras(self):
         selected = validation.options(VALUES)
-        for count in (500, 501, 1001):
-            rows = [{'detection_id': index} for index in range(count)]
-            def public(path, data):
-                self.assertEqual(path, '/rest/v1/rpc/search_video_detections')
-                self.assertEqual(data['source_filter'], 'youtube')
-                self.assertEqual(data['video_filter'], 1)
-                return rows[data['result_offset']:data['result_offset'] + data['result_limit']]
-            with self.subTest(count=count), patch.object(validation, 'public_json', side_effect=public) as api:
-                self.assertEqual(validation.public_detections(selected, 1, count), rows)
-                self.assertEqual([call.args[1]['result_offset'] for call in api.call_args_list], list(range(0, count + 1, 500)))
+        recording = {'id': 1, 'platform': 'youtube', 'sourceId': selected['video_id']}
+        for count in (100, 101, 250):
+            items = [{'id': f'd{index}', 'at': index, 'username': 'Opponent', 'rank': 'gold', 'igd': 1, 'screenshotUrl': '/detections/x.jpg'} for index in range(count)]
+            def public(path, data=None):
+                if path.startswith('/api/v1/recordings/lookup?'):
+                    self.assertIn('platform=youtube', path)
+                    return recording
+                self.assertTrue(path.startswith('/api/v1/recordings/1/detections?limit=100'))
+                start = int(path.split('cursor=')[1]) if 'cursor=' in path else 0
+                end = start + 100
+                return {'items': items[start:end], 'nextCursor': str(end) if end < count else None}
+            with self.subTest(count=count), patch.object(validation, 'public_json', side_effect=public):
+                found = validation.public_detections(selected, 1, count)
+                self.assertEqual([row['detection_id'] for row in found], [item['id'] for item in items])
+                self.assertEqual(found[0], {'vod_id': 1, 'source': 'youtube', 'source_id': selected['video_id'], 'detection_id': 'd0',
+                                            'frame_time_seconds': 0, 'username': 'Opponent', 'rank': 'gold', 'igd': 1, 'storage_path': '/detections/x.jpg'})
             with patch.object(validation, 'public_json', side_effect=public), self.assertRaises(validation.ValidationFailure):
                 validation.public_detections(selected, 1, count - 1)
+        with patch.object(validation, 'public_json', return_value={**recording, 'id': 2}), self.assertRaises(validation.ValidationFailure):
+            validation.public_detections(selected, 1, 1)
 
     def test_plan_proof_requires_exact_ranges_source_and_fresh_unclaimed_chunks(self):
         selected = validation.options(VALUES)
@@ -407,9 +415,9 @@ class ValidationRunnerTests(unittest.TestCase):
                     (root / 'ocr' / f'detections_{chunk_id}.json').write_text(json.dumps(summaries[chunk_id]))
             def public(path, data=None):
                 if path == '/health': return {'ok': True, 'environment': 'validation', 'build_commit': 'b' * 40}
-                return [{'vod_id': 1, 'source': source, 'source_id': video_id, 'detection_id': 'public-' + chunk['id'],
-                         'frame_time_seconds': chunk['start_seconds'] + 12, 'username': 'Opponent', 'rank': 'gold', 'igd': 12,
-                         'storage_path': '/detections/example/current.jpg'} for chunk in chunks]
+                if path.startswith('/api/v1/recordings/lookup?'): return {'id': 1, 'platform': source, 'sourceId': video_id}
+                return {'nextCursor': None, 'items': [{'id': 'public-' + chunk['id'], 'at': chunk['start_seconds'] + 12, 'username': 'Opponent',
+                         'rank': 'gold', 'igd': 12, 'screenshotUrl': '/detections/example/current.jpg'} for chunk in chunks]}
             with patch.dict(os.environ, values, clear=True), patch.object(validation, 'ROOT', root), patch.object(validation, 'OCR_OUTPUT', root / 'ocr'), \
                  patch.object(validation, 'verify_backend', side_effect=lambda: order.append('health')), \
                  patch.object(validation, 'youtube_metadata', side_effect=lambda value: order.append('metadata') or {'channel_id': 'UCtest'}) as metadata, \

@@ -225,46 +225,35 @@ it('merges and splits Matchups across Sessions through manual links (unaligned)'
   expect((await coalesceSession(env, await session(b))).changed).toBe(0);
 });
 
-it('resolves retired Matchup IDs through every v1 route', async () => {
+it('resolves retired Matchup IDs through the public and social routes', async () => {
   const [a, b] = [await recording(), await recording()];
   const x = await anchor(a, 100), y = await anchor(b, 100);
   await together(a, b);
-  expect((await SELF.fetch(`http://local/api/v1/matchups/${y}`)).status).toBe(200);
   const detail = await (await SELF.fetch(`http://local/api/v1/matchups/${y}`)).json<any>();
-  expect(detail.matchup.id).toBe(y);
-  expect(detail.groupId).toBe(String(x));
-  expect(detail.appearances.map((m: any) => m.id)).toEqual([x, y]);
-  expect((await SELF.fetch(`http://local/api/v1/clips/${y}`)).status).toBe(200);
-  const clip = await socialRoute(new Request(`http://localhost:8787/api/v1/clips/${y}`), socialEnv);
-  expect(clip.status).toBe(200);
-  expect((await clip.json<any>()).matchup_id).toBe(x);
+  expect(detail).toMatchObject({ id: x, redirectedFrom: y });
+  expect(detail.sources.map((s: any) => s.recording.id)).toEqual([a, b]);
   const viaMatchup = await socialRoute(new Request(`http://localhost:8787/api/v1/matchups/${y}/comments`), socialEnv);
   expect(viaMatchup.status).toBe(200);
 });
 
-it('lists a merged Matchup once in /clips and keeps filters', async () => {
-  const [a, b, c] = [await recording(), await recording('bilibili'), await recording()];
-  const x = await anchor(a, 100), y = await anchor(b, 100), z = await anchor(c, 500, 'Other');
-  await together(a, b);
-  const list = async (query = '') => (await (await socialRoute(new Request(`http://localhost:8787/api/v1/clips${query}`), socialEnv)).json<any>()).items.map((i: any) => i.id);
-  expect(await list()).toEqual([x, z]);
-  expect(await list('?source=bilibili')).toEqual([y]);
-  expect(await list(`?vod_id=${b}`)).toEqual([y]);
-  expect(await list(`?limit=1`)).toEqual([x]);
-});
-
-it('groups linked appearances in search and splits them again', async () => {
-  const { appearanceSearch } = await import('../appearances');
+it('lists a linked Matchup once in /search with every Source, and splits it again', async () => {
   const { linkDetections, unlinkDetection } = await import('./link-fixture');
   const [a, b] = [await recording(), await recording('bilibili')];
   await anchor(a, 100); await anchor(b, 850);
   const [da, db] = (await rows<{ id: string }>(env, 'SELECT id FROM detections ORDER BY frame_time_seconds')).map(r => r.id);
   const group = await linkDetections(env, [da, db]);
   expect(await canonicalCount()).toBe(1);
-  expect((await appearanceSearch(env, {}))[0]).toMatchObject({ matchup_id: group.matchup_id, total_count: 1 });
+  const search = async (query = '') => (await (await SELF.fetch(`http://local/api/v1/search${query}`)).json<any>()).items;
+  let items = await search();
+  expect(items).toHaveLength(1);
+  expect(String(items[0].id)).toBe(group.matchup_id);
+  expect(items[0].sources.map((s: any) => s.recording.id)).toEqual([a, b]);
+  expect((await search('?platform=bilibili'))[0].sources).toHaveLength(2);
   expect(await linkDetections(env, [da, db])).toEqual(group);
   await unlinkDetection(env, db);
   expect(await canonicalCount()).toBe(2);
+  items = await search();
+  expect(items.map((i: any) => i.sources.length)).toEqual([1, 1]);
 });
 
 it('coalesces per Recording, and the scheduled reconcile picks up dirty Sessions', async () => {

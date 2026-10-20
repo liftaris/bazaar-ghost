@@ -204,7 +204,7 @@ it('requires catalog authentication for lifecycle callbacks', async () => {
     const response = await SELF.fetch('http://local/api/catalog/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.PROCESSOR_KEY}` }, body: '{}' });
     expect(response.status).toBe(401);
   }
-  expect((await SELF.fetch('http://local/rest/v1/platform_ingestion_dispatch')).status).toBe(404);
+  expect((await SELF.fetch('http://local/rest/v1/platform_ingestion_dispatch')).status).toBe(401);
 });
 
 it('connects a requested candidate through catalog planning, workflow dispatch, chunk completion and scheduled tail continuation', async () => {

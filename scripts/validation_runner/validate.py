@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.parse import quote, urlencode
 from urllib.request import Request
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -420,23 +421,27 @@ def public_json(path, data=None):
 
 
 def public_detections(selected, vod_id, expected_count):
-    # One detection per sampled frame is the outer bound. Request the page past
-    # an exact multiple of 500 too, so extra persisted rows cannot be overlooked.
+    # One detection per sampled frame is the outer bound. Always read until the cursor
+    # ends, so extra persisted rows cannot be overlooked at an exact page multiple.
     if not 0 <= expected_count <= MAX_CHUNKS * math.ceil(MAX_CHUNK_SECONDS / 2):
         raise ValidationFailure('OCR detection total exceeds the bounded sampled timeline')
-    result = []
-    for offset in range(0, expected_count + 1, 500):
-        page = public_json('/rest/v1/rpc/search_video_detections',
-                           {'source_filter': selected['source'], 'video_filter': vod_id,
-                            'result_limit': 500, 'result_offset': offset})
-        if not isinstance(page, list) or len(page) > 500:
+    recording = public_json('/api/v1/recordings/lookup?' + urlencode({'platform': selected['source'], 'sourceId': selected['video_id']}))
+    if recording.get('id') != vod_id:
+        raise ValidationFailure('Public evidence belongs to another recording')
+    result, cursor = [], None
+    for _ in range(expected_count // 100 + 2):
+        page = public_json(f'/api/v1/recordings/{vod_id}/detections?limit=100' + ('' if cursor is None else '&cursor=' + quote(cursor)))
+        if not isinstance(page.get('items'), list) or len(page['items']) > 100:
             raise ValidationFailure('Unexpected public detection page')
-        result.extend(page)
+        result.extend({'vod_id': recording['id'], 'source': recording['platform'], 'source_id': recording['sourceId'],
+                       'detection_id': item['id'], 'frame_time_seconds': item['at'], 'username': item['username'],
+                       'rank': item['rank'], 'igd': item['igd'], 'storage_path': item['screenshotUrl']} for item in page['items'])
         if len(result) > expected_count:
             raise ValidationFailure('Public detection set exceeds the fresh OCR result set')
-        if len(page) < 500:
-            break
-    return result
+        cursor = page.get('nextCursor')
+        if cursor is None:
+            return result
+    raise ValidationFailure('Public detection pages did not terminate')
 
 
 def verify_jpeg(payload):

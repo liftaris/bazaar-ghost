@@ -205,37 +205,6 @@ it("cron handlers enqueue bounded work and outbound-disabled installs remain idl
   await scheduled(controller, { ...env, JOBS: jobs, OUTBOUND_ENABLED: "true" });
   expect(send).toHaveBeenCalledWith({ type: "discover" });
 });
-it("public caching distinguishes request bodies and single-object response shapes", async () => {
-  const testEnv = { ...env, ENVIRONMENT: "dev" };
-  await env.DB.prepare(
-    "INSERT INTO streamers(id,login) VALUES(1,'cache_test')",
-  ).run();
-  const call = (name: string, accept = "application/json") =>
-    worker.fetch(
-      new Request(
-        `https://cache-test.local/rest/v1/streamers?login=eq.${name}`,
-        { headers: { Accept: accept } },
-      ),
-      testEnv,
-    );
-  const many = await call("cache_test");
-  expect(many.headers.get("cache-control")).toBe("public,max-age=0,must-revalidate");
-  expect(Array.isArray(await many.json())).toBe(true);
-  const single = await call("cache_test", "application/vnd.pgrst.object+json");
-  expect((await single.json<any>()).login).toBe("cache_test");
-  expect(await (await call("missing")).json()).toEqual([]);
-  for (const value of ["one", "two"]) {
-    const response = await worker.fetch(
-      new Request(
-        "https://cache-test.local/rest/v1/rpc/fuzzy_search_detections",
-        { method: "POST", body: JSON.stringify({ search_query: value }) },
-      ),
-      testEnv,
-    );
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual([]);
-  }
-});
 it("empty imported chapter lists cannot starve eligible VODs in the scheduler", async () => {
   await env.DB.prepare(
     "INSERT INTO streamers(id,login) VALUES(1,'scheduler_test')",

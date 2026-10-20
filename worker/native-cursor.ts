@@ -4,7 +4,7 @@ import { HttpError, one, requireValue } from "./http";
 export interface Boundary {
   revision: number;
   matchups: number;
-  videos: number;
+  recordings: number;
   expires: number;
 }
 interface Cursor extends Boundary {
@@ -59,10 +59,7 @@ export async function boundary(env: Env, url: URL): Promise<Cursor> {
         ),
         "Invalid cursor",
       );
-      const value: Cursor & { clips?: number } = JSON.parse(new TextDecoder().decode(bytes));
-      // Cursors issued before the Matchup rename carry the boundary as `clips`.
-      value.matchups ??= value.clips as number;
-      delete value.clips;
+      const value: Cursor = JSON.parse(new TextDecoder().decode(bytes));
       requireValue(
         value.query === query && Array.isArray(value.after),
         "Cursor belongs to another query",
@@ -76,10 +73,10 @@ export async function boundary(env: Env, url: URL): Promise<Cursor> {
       throw new HttpError(400, "Invalid cursor");
     }
   }
-  const row = await one<{ revision: number; matchups: number; videos: number }>(
+  const row = await one<{ revision: number; matchups: number; recordings: number }>(
     env,
     `SELECT revision,(SELECT coalesce(max(id),0) FROM matchups) AS matchups,
-    (SELECT coalesce(max(id),0) FROM vods) AS videos FROM public_search_state WHERE id=1`,
+    (SELECT coalesce(max(id),0) FROM vods) AS recordings FROM public_search_state WHERE id=1`,
   );
   if (!row) throw new Error("Search boundary unavailable");
   return { ...row, expires: Date.now() + 900_000, query, after: [] };

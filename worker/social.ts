@@ -2,28 +2,14 @@ import { atomic } from './atomic';
 import { authenticated, identityCheck, requireCsrf, type AuthEnv, type Identity } from './auth';
 import { digest, only, privateResponse } from './auth/security';
 import { authorized, HttpError, integer, one, readBytes, requireValue, rows, statement, uuid } from './http';
-import { recordingUrls, source } from './platform-registry';
 
 type Check = { sql: string; args: unknown[] };
 type Category = 'reaction' | 'comment' | 'report';
-interface ClipRow {
-  id: number; matchup_id: number; vod_id: number; anchor_seconds: number; created_at: string;
-  source: string; source_id: string; title: string | null; availability: string;
-  detection_id: string | null; username: string | null; confidence: number | null;
-  rank: string | null; igd: number | null; storage_path: string | null;
-  frame_time_seconds: number | null; source_video_id: string | null; source_part_id: string | null; source_part_index: number | null;
-  like_count: number;
-}
 interface CommentRow {
   sequence: number; id: string; matchup_id: number; origin_id: number; author_id: string; name: string;
   body: string | null; original_body_hash: string; version: number; status: string;
   created_at: string; updated_at: string;
 }
-const clipFields = `c.id,c.matchup_id,c.vod_id,c.anchor_seconds,c.created_at,v.source,v.source_id,v.title,v.availability,
-  d.detection_id,d.username,d.confidence,d.rank,d.igd,d.storage_path,d.frame_time_seconds,d.source_video_id,d.source_part_id,d.source_part_index,
-  (SELECT count(DISTINCT l.user_id) FROM matchup_likes l JOIN app_users u ON u.id=l.user_id WHERE l.matchup_id=c.matchup_id AND u.status='active') AS like_count`;
-const clipFrom = `FROM matchup_anchors c JOIN matchups m ON m.id=c.matchup_id JOIN vods v ON v.id=c.vod_id
-  LEFT JOIN video_detections d ON d.detection_id=c.current_detection_id`;
 const commentFields = 'c.*,u.name';
 const commentFrom = 'FROM matchup_comments c JOIN app_users u ON u.id=c.author_id JOIN matchups p ON p.id=c.matchup_id';
 
@@ -47,9 +33,9 @@ async function input(req: Request, keys: string[]) {
   return result;
 }
 function key(value: unknown) { return uuid(value).toLowerCase(); }
-function clipId(value: string | unknown) {
-  requireValue(typeof value === 'number' || (typeof value === 'string' && /^[1-9][0-9]*$/.test(value)), 'Invalid clip ID');
-  return integer(Number(value), 'clip ID', 1);
+function matchupId(value: string | unknown) {
+  requireValue(typeof value === 'number' || (typeof value === 'string' && /^[1-9][0-9]*$/.test(value)), 'Invalid Matchup ID');
+  return integer(Number(value), 'Matchup ID', 1);
 }
 function pagination(url: URL, extra: string[] = []) {
   for (const name of url.searchParams.keys())
@@ -65,24 +51,15 @@ function page<T>(values: T[], limit: number, cursor: (item: T) => number) {
   const items = values.slice(0, limit);
   return { items, next_after: values.length > limit ? cursor(items[items.length - 1]) : null };
 }
-function publicClip(row: ClipRow) {
-  return { id: row.id, matchup_id: row.matchup_id, vod_id: row.vod_id, anchor_seconds: row.anchor_seconds, created_at: row.created_at,
-    source: row.source, source_id: row.source_id, title: row.title, availability: row.availability,
-    detection: row.detection_id ? { id: row.detection_id, username: row.username, confidence: row.confidence,
-      rank: row.rank, igd: row.igd, screenshot: row.storage_path, video_url: recordingUrls(row).video_url } : null,
-    like_count: row.like_count };
-}
 function publicComment(row: CommentRow) {
-  return { id: row.id, clip_id: row.origin_id, matchup_id: row.matchup_id, author: { id: row.author_id, name: row.name }, body: row.body,
+  return { id: row.id, matchup_id: row.matchup_id, author: { id: row.author_id, name: row.name }, body: row.body,
     version: row.version, created_at: row.created_at, updated_at: row.updated_at };
 }
-async function visibleClip(env: Env, id: number) {
-  const result = await one<ClipRow>(env, `SELECT ${clipFields} ${clipFrom} WHERE c.id=? AND m.status='visible'`, id);
-  if (!result) throw new HttpError(404, 'Clip not found');
-  return result;
+async function requireVisible(env: Env, id: number) {
+  if (!await one(env, "SELECT 1 FROM matchups WHERE id=? AND status='visible'", id)) throw new HttpError(404, 'Matchup not found');
 }
 function visibleCheck(id: number): Check {
-  return { sql: "EXISTS(SELECT 1 FROM matchup_anchors a JOIN matchups m ON m.id=a.matchup_id WHERE a.id=? AND m.status='visible')", args: [id] };
+  return { sql: "EXISTS(SELECT 1 FROM matchups WHERE id=? AND status='visible')", args: [id] };
 }
 /** Follows `merged_into` to the surviving Matchup; null when the Matchup does not exist. */
 async function resolveMatchup(env: Env, id: number) {
@@ -95,19 +72,11 @@ async function resolveMatchup(env: Env, id: number) {
   }
   return null;
 }
-/** Social routes address a Matchup through its lowest-ID anchor, which is its founding anchor. */
-async function anchorOfMatchup(env: Env, id: number) {
+/** Social routes address the canonical Matchup; a retired ID follows its redirect. */
+async function canonicalOr404(env: Env, id: number) {
   const matchup = await resolveMatchup(env, id);
-  const row = matchup === null ? null : await one<{ id: number | null }>(env, 'SELECT min(id) AS id FROM matchup_anchors WHERE matchup_id=?', matchup);
-  if (!row?.id) throw new HttpError(404, 'Matchup not found');
-  return row.id;
-}
-async function moderationMatchup(env: Env, kind: string, id: number) {
-  const found = kind === 'clips'
-    ? (await one<{ matchup_id: number }>(env, 'SELECT matchup_id FROM matchup_anchors WHERE id=?', id))?.matchup_id ?? null
-    : await resolveMatchup(env, id);
-  if (found === null) throw new HttpError(404, 'Moderation target not found');
-  return found;
+  if (matchup === null) throw new HttpError(404, 'Matchup not found');
+  return matchup;
 }
 async function mutationIdentity(req: Request, env: AuthEnv) {
   const identity = await authenticated(req, env);
@@ -131,74 +100,48 @@ async function mutate(env: AuthEnv, identity: Identity, category: Category, chec
   }
 }
 
-async function listClips(req: Request, env: AuthEnv, favorites = false) {
-  const url = new URL(req.url), { limit, after } = pagination(url, favorites ? [] : ['source', 'vod_id', 'detection_id']);
-  const clauses = ["m.status='visible'", 'c.id>?'], args: unknown[] = [after];
-  // A merged Matchup is listed once: through the lowest of its anchors that satisfies the same filters.
-  const same: string[] = [], sameArgs: unknown[] = [];
-  let identity: Identity | undefined;
-  if (favorites) {
-    identity = await authenticated(req, env);
-    clauses.push('EXISTS(SELECT 1 FROM matchup_favorites f WHERE f.matchup_id=c.matchup_id AND f.user_id=?)');
-    args.push(identity.userId);
-  }
-  if (url.searchParams.has('source')) { const value = source(url.searchParams.get('source')); clauses.push('v.source=?'); args.push(value); same.push('v2.source=?'); sameArgs.push(value); }
-  if (url.searchParams.has('vod_id')) { const value = clipId(url.searchParams.get('vod_id')); clauses.push('c.vod_id=?'); args.push(value); same.push('c2.vod_id=?'); sameArgs.push(value); }
-  if (url.searchParams.has('detection_id')) { const value = key(url.searchParams.get('detection_id')); clauses.push('c.current_detection_id=?'); args.push(value); same.push('c2.current_detection_id=?'); sameArgs.push(value); }
-  clauses.push(`NOT EXISTS(SELECT 1 FROM matchup_anchors c2 JOIN vods v2 ON v2.id=c2.vod_id WHERE c2.matchup_id=c.matchup_id AND c2.id<c.id${same.map(clause => ' AND ' + clause).join('')})`);
-  args.push(...sameArgs);
-  if (identity) { const check = identityCheck(identity); clauses.push(check.sql); args.push(...check.args); }
-  const result = await rows<ClipRow>(env, `SELECT ${clipFields} ${clipFrom} WHERE ${clauses.join(' AND ')} ORDER BY c.id LIMIT ?`, ...args, limit + 1);
-  const paged = page(result, limit, row => row.id);
-  return Response.json({ ...paged, items: paged.items.map(publicClip) });
+/** The caller's favorites: public Matchups only, each once, keyed by canonical Matchup ID. */
+async function listFavorites(req: Request, env: AuthEnv) {
+  const { limit, after } = pagination(new URL(req.url)), identity = await authenticated(req, env), check = identityCheck(identity);
+  const result = await rows<{ matchup_id: number }>(env, `SELECT DISTINCT f.matchup_id FROM matchup_favorites f
+    WHERE f.user_id=? AND f.matchup_id>? AND EXISTS(SELECT 1 FROM public_sources s WHERE s.matchup_id=f.matchup_id) AND ${check.sql}
+    ORDER BY f.matchup_id LIMIT ?`, identity.userId, after, ...check.args, limit + 1);
+  return Response.json(page(result, limit, row => row.matchup_id));
 }
-async function materialize(req: Request, env: AuthEnv) {
-  const identity = await mutationIdentity(req, env), data = await input(req, ['detection_id']), id = key(data.detection_id);
-  await mutate(env, identity, 'reaction', [
-    { sql: 'EXISTS(SELECT 1 FROM video_detections WHERE detection_id=?)', args: [id] },
-    { sql: "NOT EXISTS(SELECT 1 FROM matchup_anchors c JOIN matchups m ON m.id=c.matchup_id JOIN detections d ON d.vod_id=c.vod_id AND d.frame_time_seconds=c.anchor_seconds WHERE d.id=? AND m.status='hidden')", args: [id] },
-  ], [statement(env, `INSERT INTO matchup_anchors(vod_id,anchor_seconds,current_detection_id)
-    SELECT vod_id,frame_time_seconds,detection_id FROM video_detections WHERE detection_id=?
-    ON CONFLICT(vod_id,anchor_seconds) DO UPDATE SET current_detection_id=excluded.current_detection_id`, id)]);
-  const row = await one<ClipRow>(env, `SELECT ${clipFields} ${clipFrom} WHERE c.current_detection_id=? AND m.status='visible'`, id);
-  if (!row) throw new HttpError(409, 'Detection changed; refresh before retrying');
-  return Response.json(publicClip(row));
+async function myMatchup(req: Request, env: AuthEnv, requested: number) {
+  const identity = await authenticated(req, env), check = identityCheck(identity), id = await canonicalOr404(env, requested);
+  const result = await one<{ liked: number; favorite: number }>(env, `SELECT
+    EXISTS(SELECT 1 FROM matchup_likes WHERE matchup_id=m.id AND user_id=?) AS liked,
+    EXISTS(SELECT 1 FROM matchup_favorites WHERE matchup_id=m.id AND user_id=?) AS favorite
+    FROM matchups m WHERE m.id=? AND m.status='visible' AND ${check.sql}`, identity.userId, identity.userId, id, ...check.args);
+  if (!result) throw new HttpError(404, 'Matchup not found');
+  return Response.json({ matchup_id: id, liked: Boolean(result.liked), favorite: Boolean(result.favorite) });
 }
-async function myClip(req: Request, env: AuthEnv, id: number) {
-  const identity = await authenticated(req, env), check = identityCheck(identity);
-  const result = await one<{ liked: number; favorite: number; matchup_id: number }>(env, `SELECT
-    EXISTS(SELECT 1 FROM matchup_likes WHERE matchup_id=c.matchup_id AND user_id=?) AS liked,
-    EXISTS(SELECT 1 FROM matchup_favorites WHERE matchup_id=c.matchup_id AND user_id=?) AS favorite,c.matchup_id
-    FROM matchup_anchors c JOIN matchups m ON m.id=c.matchup_id WHERE c.id=? AND m.status='visible' AND ${check.sql}`, identity.userId, identity.userId, id, ...check.args);
-  if (!result) throw new HttpError(404, 'Clip not found');
-  return Response.json({ matchup_id: result.matchup_id, liked: Boolean(result.liked), favorite: Boolean(result.favorite) });
-}
-async function reaction(req: Request, env: AuthEnv, id: number, favorite: boolean) {
-  const identity = await mutationIdentity(req, env), enabled = req.method === 'PUT';
+async function reaction(req: Request, env: AuthEnv, requested: number, favorite: boolean) {
+  const identity = await mutationIdentity(req, env), enabled = req.method === 'PUT', id = await canonicalOr404(env, requested);
   // No caller-provided user IDs or booleans: the authenticated caller owns this desired state.
   if ((await readBytes(req, 16)).length) throw new HttpError(400, 'Reaction requests have no body');
   const table = favorite ? 'matchup_favorites' : 'matchup_likes';
   await mutate(env, identity, 'reaction', enabled ? [visibleCheck(id)] : [], [statement(env,
-    enabled ? `INSERT OR IGNORE INTO ${table}(matchup_id,origin_id,user_id) SELECT matchup_id,matchup_id,? FROM matchup_anchors WHERE id=?`
-      : `DELETE FROM ${table} WHERE user_id=? AND matchup_id=(SELECT matchup_id FROM matchup_anchors WHERE id=?)`, identity.userId, id)]);
+    enabled ? `INSERT OR IGNORE INTO ${table}(matchup_id,origin_id,user_id) VALUES(?1,?1,?2)` : `DELETE FROM ${table} WHERE matchup_id=?1 AND user_id=?2`, id, identity.userId)]);
   return Response.json(favorite ? { favorite: enabled } : { liked: enabled });
 }
-async function comments(req: Request, env: AuthEnv, id: number) {
+async function comments(req: Request, env: AuthEnv, requested: number) {
   if (req.method === 'GET') {
-    const { limit, after } = pagination(new URL(req.url));
-    await visibleClip(env, id);
+    const { limit, after } = pagination(new URL(req.url)), id = await canonicalOr404(env, requested);
+    await requireVisible(env, id);
     const result = await rows<CommentRow>(env, `SELECT ${commentFields} ${commentFrom}
-      WHERE c.matchup_id=(SELECT matchup_id FROM matchup_anchors WHERE id=?) AND c.sequence>? AND c.status='visible' AND p.status='visible' AND u.status='active'
+      WHERE c.matchup_id=? AND c.sequence>? AND c.status='visible' AND p.status='visible' AND u.status='active'
       ORDER BY c.sequence LIMIT ?`, id, after, limit + 1);
     const paged = page(result, limit, row => row.sequence);
     return Response.json({ ...paged, items: paged.items.map(publicComment) });
   }
-  const identity = await mutationIdentity(req, env), data = await input(req, ['id', 'body']);
+  const identity = await mutationIdentity(req, env), data = await input(req, ['id', 'body']), id = await canonicalOr404(env, requested);
   const commentId = key(data.id), body = text(data.body, 'Comment', 2000), hash = await digest(body);
-  const duplicate = { sql: 'NOT EXISTS(SELECT 1 FROM matchup_comments WHERE id=? AND (author_id!=? OR matchup_id!=(SELECT matchup_id FROM matchup_anchors WHERE id=?) OR original_body_hash!=?))',
+  const duplicate = { sql: 'NOT EXISTS(SELECT 1 FROM matchup_comments WHERE id=? AND (author_id!=? OR matchup_id!=? OR original_body_hash!=?))',
     args: [commentId, identity.userId, id, hash] };
   await mutate(env, identity, 'comment', [visibleCheck(id), duplicate], [statement(env,
-    'INSERT OR IGNORE INTO matchup_comments(id,matchup_id,origin_id,author_id,body,original_body_hash) SELECT ?,matchup_id,matchup_id,?,?,? FROM matchup_anchors WHERE id=?', commentId, identity.userId, body, hash, id)]);
+    'INSERT OR IGNORE INTO matchup_comments(id,matchup_id,origin_id,author_id,body,original_body_hash) VALUES(?1,?2,?2,?3,?4,?5)', commentId, id, identity.userId, body, hash)]);
   const result = await one<CommentRow>(env, `SELECT ${commentFields} ${commentFrom} WHERE c.id=? AND c.author_id=?`, commentId, identity.userId);
   if (!result) throw new HttpError(409, 'Comment changed; refresh before retrying');
   // A retry after edit/delete acknowledges the original request without restoring old text.
@@ -229,12 +172,11 @@ async function editComment(req: Request, env: AuthEnv, id: string) {
   return Response.json({ id, version: version + 1, status: deleting ? 'deleted' : 'visible' });
 }
 async function report(req: Request, env: AuthEnv) {
-  const identity = await mutationIdentity(req, env), data = await input(req, ['id', 'clip_id', 'matchup_id', 'comment_id', 'reason']);
-  requireValue([data.clip_id, data.matchup_id, data.comment_id].filter(value => value !== undefined).length === 1, 'Report exactly one clip, Matchup or comment');
+  const identity = await mutationIdentity(req, env), data = await input(req, ['id', 'matchup_id', 'comment_id', 'reason']);
+  requireValue([data.matchup_id, data.comment_id].filter(value => value !== undefined).length === 1, 'Report exactly one Matchup or comment');
   const id = key(data.id), comment = data.comment_id === undefined ? null : key(data.comment_id), reason = text(data.reason, 'Reason', 1000);
   let matchup: number | null = null;
-  if (data.clip_id !== undefined) matchup = (await one<{ matchup_id: number }>(env, 'SELECT matchup_id FROM matchup_anchors WHERE id=?', clipId(data.clip_id)))?.matchup_id ?? 0;
-  else if (data.matchup_id !== undefined) matchup = await resolveMatchup(env, clipId(data.matchup_id)) ?? 0;
+  if (data.matchup_id !== undefined) matchup = await resolveMatchup(env, matchupId(data.matchup_id)) ?? 0;
   const target = matchup !== null ? { sql: "EXISTS(SELECT 1 FROM matchups WHERE id=? AND status='visible')", args: [matchup] } : {
     sql: `EXISTS(SELECT 1 FROM matchup_comments c JOIN matchups p ON p.id=c.matchup_id JOIN app_users u ON u.id=c.author_id
       WHERE c.id=? AND c.status='visible' AND p.status='visible' AND u.status='active')`, args: [comment],
@@ -257,19 +199,19 @@ async function moderate(req: Request, env: AuthEnv, url: URL) {
     const status = url.searchParams.get('status') || 'open';
     requireValue(!reports || ['open', 'resolved', 'dismissed'].includes(status), 'Invalid report status');
     const result = await rows<{ sequence: number }>(env, reports
-      ? 'SELECT sequence,id,reporter_id,origin_id AS clip_id,matchup_id,comment_id,reason,status,created_at,updated_at FROM social_reports WHERE sequence>? AND status=? ORDER BY sequence LIMIT ?'
+      ? 'SELECT sequence,id,reporter_id,origin_id,matchup_id,comment_id,reason,status,created_at,updated_at FROM social_reports WHERE sequence>? AND status=? ORDER BY sequence LIMIT ?'
       : 'SELECT * FROM social_moderation_audit WHERE sequence>? ORDER BY sequence LIMIT ?', after, ...(reports ? [status] : []), limit + 1);
     return Response.json(page(result, limit, row => row.sequence));
   }
-  const route = url.pathname.match(/^\/api\/admin\/social\/(clips|matchups|comments|users|reports)\/([^/]+)$/);
+  const route = url.pathname.match(/^\/api\/admin\/social\/(matchups|comments|users|reports)\/([^/]+)$/);
   if (!route || req.method !== 'PUT') throw new HttpError(404, 'Moderation endpoint not found');
   const data = await input(req, ['request_id', 'status', 'reason']);
   const requestId = key(data.request_id), reason = text(data.reason, 'Reason', 1000), kind = route[1];
-  const matchupKind = kind === 'clips' || kind === 'matchups';
-  const targetId = matchupKind ? String(await moderationMatchup(env, kind, clipId(route[2]))) : key(route[2]);
+  const matchupKind = kind === 'matchups';
+  const targetId = matchupKind ? String(await resolveMatchup(env, matchupId(route[2])) ?? 0) : key(route[2]);
   const statuses = kind === 'users' ? ['active', 'suspended'] : kind === 'reports' ? ['resolved', 'dismissed'] : ['visible', 'hidden'];
   requireValue(typeof data.status === 'string' && statuses.includes(data.status), 'Invalid moderation status');
-  const table = ({ clips: 'matchups', matchups: 'matchups', comments: 'matchup_comments', users: 'app_users', reports: 'social_reports' } as const)[kind as 'clips' | 'matchups' | 'comments' | 'users' | 'reports'];
+  const table = ({ matchups: 'matchups', comments: 'matchup_comments', users: 'app_users', reports: 'social_reports' } as const)[kind as 'matchups' | 'comments' | 'users' | 'reports'];
   const type = matchupKind ? 'matchup' : kind.slice(0, -1), action = data.status;
   const existing = await one(env, 'SELECT target_type,target_id,action,reason FROM social_moderation_audit WHERE request_id=?', requestId);
   if (existing) {
@@ -301,21 +243,16 @@ export async function socialRoute(req: Request, env: AuthEnv): Promise<Response>
     if (req.url.length > 4096) throw new HttpError(414, 'Request URL too long');
     let result: Response;
     if (path.startsWith('/api/admin/social/')) result = await moderate(req, env, url);
-    else if (path === '/api/v1/clips' && req.method === 'GET') result = await listClips(req, env);
-    else if (path === '/api/v1/clips' && req.method === 'POST') result = await materialize(req, env);
-    else if (path === '/api/v1/me/favorites' && req.method === 'GET') result = await listClips(req, env, true);
+    else if (path === '/api/v1/me/favorites' && req.method === 'GET') result = await listFavorites(req, env);
     else if (path === '/api/v1/reports' && req.method === 'POST') result = await report(req, env);
     else {
       const comment = path.match(/^\/api\/v1\/comments\/([^/]+)$/);
-      const clip = path.match(/^\/api\/v1\/clips\/([^/]+)(?:\/(me|like|favorite|heart|comments))?$/);
       const matchup = path.match(/^\/api\/v1\/matchups\/([^/]+)\/(me|like|favorite|heart|comments)$/);
       if (comment && req.method === 'GET') result = await readComment(env, key(comment[1]));
       else if (comment && ['PATCH', 'DELETE'].includes(req.method)) result = await editComment(req, env, key(comment[1]));
-      else if (clip || matchup) {
-        const route = (clip || matchup)!, action = route[2];
-        const id = clip ? clipId(route[1]) : await anchorOfMatchup(env, clipId(route[1]));
-        if (!action && req.method === 'GET') result = Response.json(publicClip(await visibleClip(env, id)));
-        else if (action === 'me' && req.method === 'GET') result = await myClip(req, env, id);
+      else if (matchup) {
+        const action = matchup[2], id = matchupId(matchup[1]);
+        if (action === 'me' && req.method === 'GET') result = await myMatchup(req, env, id);
         else if (['like', 'favorite', 'heart'].includes(action) && ['PUT', 'DELETE'].includes(req.method))
           result = await reaction(req, env, id, action !== 'like');
         else if (action === 'comments' && ['GET', 'POST'].includes(req.method)) result = await comments(req, env, id);

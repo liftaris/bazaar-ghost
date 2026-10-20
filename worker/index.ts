@@ -15,8 +15,6 @@ import {
 } from "./http";
 import { claim, dispatch, plan, updateChunk, vodDetails } from "./processing";
 import { clearChunk, publish, upload } from "./detections";
-import { publicCache } from "./cache";
-import { publicRead, rpc } from "./public-api";
 import { retryVod, setProfile, setStreamer } from "./admin";
 import { streamersAdminRoute } from "./streamers";
 import { sessionsAdminRoute } from "./sessions";
@@ -158,21 +156,6 @@ async function route(req: Request, env: Env): Promise<Response> {
     return new Response(req.method === "HEAD" ? null : object.body, {
       headers,
     });
-  }
-  if (path.startsWith("/rest/v1/rpc/") && req.method === "POST") {
-    const data = await body(req);
-    return publicCache(
-      req,
-      env,
-      async () =>
-        Response.json(await rpc(env, path.slice("/rest/v1/rpc/".length), data)),
-      JSON.stringify(data),
-    );
-  }
-  if (path.startsWith("/rest/v1/") && req.method === "GET") {
-    return publicCache(req, env, () =>
-      publicRead(req, env, path.slice("/rest/v1/".length)),
-    );
   }
   if (path === "/functions/v1/ghost-bot" && req.method === "POST")
     return discord(req, env);

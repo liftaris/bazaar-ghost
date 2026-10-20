@@ -239,26 +239,8 @@ it("keeps failed siblings separate from completed work", async () => {
     ))!.n,
   ).toBe(1);
 });
-it("provides safe public reads, exact counts and disallows private table access", async () => {
-  const response = await SELF.fetch(
-    "http://local/rest/v1/vod_stats?select=source_id,title&or=(title.ilike.%Example%,source_id.ilike.%123%)&order=published_at.desc&limit=10",
-  );
-  expect(response.status).toBe(200);
-  expect(response.headers.get("content-range")).toBe("0-0/1");
-  expect(await response.json()).toEqual([
-    { source_id: "123", title: "Example VOD" },
-  ]);
-  expect(
-    (await SELF.fetch("http://local/rest/v1/notification_subscriptions"))
-      .status,
-  ).toBe(404);
-  expect(
-    (
-      await SELF.fetch(
-        "http://local/rest/v1/streamers?select=eventsub_subscription_id",
-      )
-    ).status,
-  ).toBe(400);
+it("rejects unauthenticated private routes and the removed PostgREST compatibility surface", async () => {
+  expect((await SELF.fetch("http://local/rest/v1/streamers")).status).toBe(401);
   expect((await SELF.fetch("http://local/api/processor/chunks")).status).toBe(
     401,
   );
@@ -369,10 +351,7 @@ it("searches with a zero threshold, filters confidence, and returns stable pagin
   expect(page).toHaveLength(1);
   expect(page[0].total_count).toBe(2);
   expect(await search(env, { vod_source_id_filter: "999" })).toEqual([]);
-  const low = await SELF.fetch(
-    "http://local/rest/v1/streamer_detection_stats?select=login&avg_confidence=lt.0.1",
-  );
-  expect(await low.json()).toEqual([]);
+  expect((await (await SELF.fetch("http://local/api/v1/streamers/quality")).json<any>()).items).toEqual([]);
 });
 it("concurrent GitHub dispatches respect the global chunk limit", async () => {
   await statement(
@@ -501,16 +480,6 @@ it("a replaced claim cannot overwrite screenshots from the new runner", async ()
       )
     ).status,
   ).toBe(409);
-});
-it("bounds unauthenticated request bodies before parsing or caching", async () => {
-  const response = await SELF.fetch(
-    "http://local/rest/v1/rpc/get_global_stats",
-    {
-      method: "POST",
-      body: "x".repeat(2_000_001),
-    },
-  );
-  expect(response.status).toBe(413);
 });
 it("a delayed GitHub attempt cannot claim or fail a newer dispatch", async () => {
   const [chunk] = await planned();

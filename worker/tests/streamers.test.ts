@@ -24,7 +24,7 @@ it('seeds a Twitch Channel, identity with the Twitch ID and legacy-link ownershi
     .toEqual([{ channel_id: channel.id, streamer_id: 4242, method: 'legacy-link', actor: 'trigger:streamers', ended_at: null }]);
   await env.DB.exec("INSERT INTO vods(streamer_id,source_id,duration_seconds,bazaar_chapters) VALUES(4242,'v1',60,'[0,60]')");
   expect((await one(env, "SELECT platform_account_id FROM vods WHERE source_id='v1'"))!.platform_account_id).toBe(channel.id);
-  expect((await one(env, "SELECT creator_id FROM public_videos WHERE source_id='v1'"))!.creator_id).toBe('twitch:4242');
+  expect((await one(env, "SELECT channel_streamer_id FROM public_recordings WHERE source_id='v1'"))!.channel_streamer_id).toBe(4242);
 });
 
 it('mirrors streamer settings and names onto the Twitch Channel', async () => {
@@ -118,9 +118,9 @@ it('serves admin routes and the additive public v1 endpoints', async () => {
   expect((await admin(`/api/admin/streamers/${created.id}`, 'PATCH', { display_name: 'Renamed Route' })).status).toBe(200);
   expect((await admin(`/api/admin/streamers/${created.id}/channels`, 'POST', { channel_id: channel.id, actor: 'op' })).status).toBe(200);
   const list = await (await SELF.fetch('http://local/api/v1/streamers')).json() as any;
-  expect(list.items).toEqual([{ id: created.id, displayName: 'Renamed Route', avatarUrl: null,
-    channels: [{ id: channel.id, platform: 'bilibili', sourceId: '12345', displayName: 'Bili', login: null, avatarUrl: null }] }]);
-  expect((await (await SELF.fetch(`http://local/api/v1/streamers/${created.id}`)).json() as any).displayName).toBe('Renamed Route');
+  expect(list.items).toEqual([]); // the public list only has Streamers with public Matchups
+  expect(await (await SELF.fetch(`http://local/api/v1/streamers/${created.id}`)).json() as any).toEqual({ id: created.id, displayName: 'Renamed Route', avatarUrl: null,
+    channels: [{ id: channel.id, platform: 'bilibili', sourceId: '12345', displayName: 'Bili', login: null, avatarUrl: null, streamerId: created.id }] });
   expect((await SELF.fetch('http://local/api/v1/streamers/999')).status).toBe(404);
   expect((await admin(`/api/admin/streamers/${created.id}/channels/${channel.id}`, 'DELETE')).status).toBe(200);
   expect((await (await SELF.fetch(`http://local/api/v1/streamers/${created.id}`)).json() as any).channels).toEqual([]);

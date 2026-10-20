@@ -53,9 +53,10 @@ def main():
         processor = SFDEProcessor({'chunk_id': plan['chunk_uuids'][0], 'test_mode': True})
         result = processor.process_vod_chunk()
         assert result['status'] == 'completed' and result['frames_processed'] == 6, result
-        found = api('/rest/v1/rpc/fuzzy_search_detections', {'vod_source_id_filter': str(1000000000 + i)})
+        recording = api(f'/api/v1/recordings/lookup?platform=twitch&sourceId={1000000000 + i}')
+        found = api(f"/api/v1/recordings/{recording['id']}/detections")['items']
         assert len(found) == 1 and found[0]['username'] == fixture['username'] and found[0]['rank'] == fixture['original_rank'], found
-        with urlopen('http://127.0.0.1:8787' + found[0]['storage_path']) as response:
+        with urlopen('http://127.0.0.1:8787' + found[0]['screenshotUrl']) as response:
             assert response.read(2) == b'\xff\xd8'
         results.append({'vod_id': i, 'frames': result['frames_processed'], 'username': found[0]['username'], 'rank': found[0]['rank'], 'screenshot': 'verified'})
     print('LOCAL_OCR_SMOKE=' + json.dumps(results))

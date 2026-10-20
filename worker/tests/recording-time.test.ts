@@ -22,7 +22,7 @@ it('never invents a recording time for non-Twitch videos: current templates and 
   expect(await one(env, 'SELECT recorded_timestamp FROM video_detections')).toEqual({ recorded_timestamp: null });
   const response = await nativeRoute(new Request('http://local/api/v1/matchups/1'), env);
   expect(response.status).toBe(200);
-  expect(((await response.json()) as any).matchup.recordedAt).toBeNull();
+  expect(((await response.json()) as any).recordedAt).toBeNull();
 });
 
 it('sets recorded_at from the publish time on the Twitch path, on insert and on update', async () => {

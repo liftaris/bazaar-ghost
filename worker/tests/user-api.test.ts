@@ -6,7 +6,7 @@ import { authEnv, cookies, login, mockProviders, ORIGIN, request } from './auth-
 
 afterEach(() => vi.unstubAllGlobals());
 
-it('routes disabled auth and public clips without requesting machine credentials', async () => {
+it('routes disabled auth and public search without requesting machine credentials', async () => {
   const disabled = { ...authEnv(), AUTH_ENABLED: 'false' };
   const providers = await worker.fetch(request('/providers'), disabled);
   expect(providers.status).toBe(200);
@@ -15,14 +15,14 @@ it('routes disabled auth and public clips without requesting machine credentials
   const me = await worker.fetch(new Request(ORIGIN + '/api/v1/me'), disabled);
   expect(me.status).toBe(503);
   expect(me.headers.get('Cache-Control')).toBe('no-store');
-  const clips = await worker.fetch(new Request(ORIGIN + '/api/v1/clips'), disabled);
-  expect(clips.status).toBe(200);
-  expect(await clips.json()).toEqual({ items: [], next_after: null });
+  const search = await worker.fetch(new Request(ORIGIN + '/api/v1/search'), disabled);
+  expect(search.status).toBe(200);
+  expect(await search.json()).toEqual({ items: [], nextCursor: null });
 });
 
 it('only permits credentialed browser requests from an exact trusted origin', async () => {
   for (const origin of [ORIGIN, 'https://evil.example', 'https://auth-validation.example.org.evil.example', 'null']) {
-    const response = await worker.fetch(new Request(ORIGIN + '/api/v1/clips/1/like', {
+    const response = await worker.fetch(new Request(ORIGIN + '/api/v1/matchups/1/like', {
       method: 'OPTIONS', headers: { Origin: origin, 'Access-Control-Request-Method': 'PUT',
         'Access-Control-Request-Headers': 'x-csrf-token' },
     }), authEnv());
@@ -63,7 +63,7 @@ it('preserves OAuth cookies through the Worker and exposes only safe authenticat
 it('requires a user session for social writes and the admin credential for moderation', async () => {
   mockProviders();
   const { cookie, identity } = await login();
-  const machine = await worker.fetch(new Request(ORIGIN + '/api/v1/clips/1/like', {
+  const machine = await worker.fetch(new Request(ORIGIN + '/api/v1/matchups/1/like', {
     method: 'PUT', headers: { Authorization: `Bearer ${env.ADMIN_KEY}`, Origin: ORIGIN },
   }), authEnv());
   expect(machine.status).toBe(401);

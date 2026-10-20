@@ -1,10 +1,8 @@
-import { env } from "cloudflare:test";
+import { env, SELF } from "cloudflare:test";
 import { beforeEach, expect, it, vi } from "vitest";
-import { appearanceSearch, videoSearch } from "../appearances";
 import { linkDetections } from "./link-fixture";
 import { publicCache } from "../cache";
 import { one, rows, statement } from "../http";
-import { publicRead, rpc } from "../public-api";
 import { publicImageVisible, publicRevision } from "../visibility";
 import worker from "../index";
 
@@ -28,34 +26,27 @@ beforeEach(async () => {
   twitch = await detect(1, 12); youtube = await detect(2, 12);
 });
 
-it("applies clip visibility to old and new search, details and public aggregate counts", async () => {
+it("applies Matchup visibility to search views, public Matchups and aggregate counts", async () => {
   expect((await rows(env, "SELECT * FROM detection_search"))).toHaveLength(1);
-  expect(await videoSearch(env, {})).toHaveLength(2);
+  expect(await rows(env, "SELECT matchup_id FROM public_matchups")).toHaveLength(2);
   await hide(twitch);
   expect(await rows(env, "SELECT * FROM detection_search")).toEqual([]);
-  expect((await videoSearch(env, {})).map(row => row.detection_id)).toEqual([youtube]);
-  expect(await rpc(env, "fuzzy_search_detections", {})).toEqual([]);
-  expect(await rpc(env, "get_global_stats", {})).toEqual({ matchups: 0, streamers: 0, vods: 0 });
-  expect(await rpc(env, "get_top_streamers_with_recent_detections", {})).toEqual([]);
-  for (const view of ["detection_search", "video_detections"]) {
-    const response = await publicRead(new Request(`http://local/rest/v1/${view}?detection_id=eq.${twitch}`), env, view);
-    expect(await response.json()).toEqual([]); expect(response.headers.get("Content-Range")).toBe("*/0");
-  }
-  // Processing counts describe the raw OCR work and do not disclose hidden usernames.
-  expect((await one(env, "SELECT total_detections FROM vod_stats WHERE id=1"))!.total_detections).toBe(1);
+  expect((await rows(env, "SELECT detection_id FROM public_matchups")).map(row => row.detection_id)).toEqual([youtube]);
+  expect((await rows(env, "SELECT detection_id FROM public_sources")).map(row => row.detection_id)).toEqual([youtube]);
+  expect(await rows(env, "SELECT detection_id FROM video_detections WHERE detection_id=?", twitch)).toEqual([]);
   expect(await rows(env, "SELECT id FROM detections")).toHaveLength(2);
 });
-it("filters reviewed groups before matching, counting and paginating appearances", async () => {
+it("hides every Source of a linked Matchup together and restores it as one", async () => {
+  const search = async (q = "") => (await (await SELF.fetch(`http://local/api/v1/search${q}`)).json<any>()).items;
   const group = await linkDetections(env, [twitch, youtube], "Manually reviewed the same opponent and surrounding game frames");
-  expect((await appearanceSearch(env, {}))[0].appearances).toHaveLength(2);
-  const result = await appearanceSearch(env, { result_limit: 1, source_filter: "twitch" });
-  expect(result).toHaveLength(1); expect(result[0].matchup_id).toBe(group.matchup_id);
-  expect(result[0].total_count).toBe(1); expect(result[0].appearances).toHaveLength(2);
-  // Hiding is per Matchup: it hides every Source of a merged Matchup.
+  let items = await search();
+  expect(items).toHaveLength(1); expect(String(items[0].id)).toBe(group.matchup_id); expect(items[0].sources).toHaveLength(2);
+  expect(await search("?platform=twitch&limit=1")).toHaveLength(1);
   await hide(twitch);
-  expect(await appearanceSearch(env, { source_filter: "twitch" })).toEqual([]);
-  expect(await appearanceSearch(env, {})).toEqual([]);
-  await hide(youtube, "visible"); expect((await appearanceSearch(env, {}))[0].appearances).toHaveLength(2);
+  expect(await search("?platform=twitch")).toEqual([]);
+  expect(await search()).toEqual([]);
+  await hide(youtube, "visible"); items = await search();
+  expect(items).toHaveLength(1); expect(items[0].sources).toHaveLength(2);
 });
 it("does not unhide an anchor when OCR replaces its detection UUID", async () => {
   await hide(twitch);
@@ -87,8 +78,8 @@ it("hides all publications at an anchor even if the current pointer refers to on
   }
 });
 it("changes the cache key immediately after a moderation transaction and restores independently", async () => {
-  const request = new Request(`https://${crypto.randomUUID()}.example.org/rest/v1/video_detections`);
-  const load = vi.fn(async () => Response.json(await videoSearch(env, {})));
+  const request = new Request(`https://${crypto.randomUUID()}.example.org/api/v1/search`);
+  const load = vi.fn(async () => Response.json(await rows(env, "SELECT detection_id FROM public_matchups")));
   const hosted = { ...env, ENVIRONMENT: "validation" };
   const first = await publicCache(request, hosted, load);
   expect(first.headers.get("Cache-Control")).toBe("public,max-age=0,must-revalidate"); expect(await first.json()).toHaveLength(2);

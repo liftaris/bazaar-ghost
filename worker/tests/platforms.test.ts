@@ -3,7 +3,6 @@ import { beforeEach,afterEach,expect,it,vi } from 'vitest';
 import { upsertAccount,saveVideo,enqueueJob,claimJob,finishJob } from '../platforms';
 import { one,rows,statement } from '../http';
 import { plan,claim,owned,dispatch } from '../processing';
-import { appearanceSearch } from '../appearances';
 import { linkDetections,unlinkDetection } from './link-fixture';
 import { publish,upload } from '../detections';
 import { dispatchBranch } from '../platform-ingestion-dispatch';
@@ -40,7 +39,6 @@ it('keeps the Twitch player contract free of non-Twitch identities and exposes p
  const v=await catalog('bilibili'),d=await detect(v.id);
  expect(d.path).toContain('/detections/bilibili/BV1234567890:123/');
  expect(await rows(env,'SELECT * FROM detection_search')).toEqual([]);
- expect(await rows(env,'SELECT * FROM vod_embed_info')).toEqual([]);
  const publicRow=(await one(env,'SELECT * FROM video_detections'))!;
  expect(publicRow.source_part_id).toBe('123');const urls=recordingUrls(publicRow);expect(urls.video_url).toContain('?p=2&t=12');expect(urls.embed_url).toContain('cid=123');expect(publicRow.recorded_timestamp).toBeNull();expect(publicRow.igd).toBe(9);
  expect(await rows(env,'SELECT * FROM notification_outbox')).toEqual([]);
@@ -77,19 +75,20 @@ it('requires catalog credentials and never exposes private platform job/subscrip
  for(const path of ['/api/catalog/jobs/claim','/api/catalog/accounts/upsert']) {
   const r=await SELF.fetch('http://local'+path,{method:'POST',headers:{Authorization:`Bearer ${env.PROCESSOR_KEY}`,'Content-Type':'application/json'},body:'{}'});expect(r.status).toBe(401);
  }
- for(const table of ['platform_ingestion_jobs','youtube_websub_subscriptions','youtube_websub_deliveries','matchup_overrides'])expect((await SELF.fetch(`http://local/rest/v1/${table}`)).status).toBe(404);
+ for(const table of ['platform_ingestion_jobs','youtube_websub_subscriptions','youtube_websub_deliveries','matchup_overrides'])expect((await SELF.fetch(`http://local/rest/v1/${table}`)).status).toBe(401);
 });
 it('groups reviewed appearances before pagination and retains every surviving platform copy',async()=>{
+ const search=async(q='')=>(await(await SELF.fetch('http://local/api/v1/search'+q)).json() as any).items;
  const a=await catalog(),b=await catalog('bilibili'),da=await detect(a.id),db=await detect(b.id);
  const group=await linkDetections(env,[da.id,db.id],'Reviewed identical opponent frame and surrounding game sequence');
- const result=await appearanceSearch(env,{source_filter:'youtube',result_limit:1});
- expect(result.length).toBe(1);expect(result[0].total_count).toBe(1);expect(result[0].appearances.length).toBe(2);expect(result[0].matchup_id).toBe(group.matchup_id);
+ const result=await search('?platform=youtube&limit=1');
+ expect(result.length).toBe(1);expect(result[0].sources.length).toBe(2);expect(String(result[0].id)).toBe(group.matchup_id);
  await statement(env,"UPDATE vods SET availability='unavailable' WHERE id=?",a.id).run();
- const remaining=await appearanceSearch(env,{});expect(remaining[0].appearances.length).toBe(1);expect(remaining[0].appearances[0].source).toBe('bilibili');
+ const remaining=await search();expect(remaining.length).toBe(1);expect(remaining[0].sources.map((s:any)=>[s.platform,s.available])).toEqual([['bilibili',true],['youtube',false]]);
  await unlinkDetection(env,db.id,'Reversing reviewed test linkage for audit');
  expect((await rows(env,"SELECT action FROM matchup_overrides WHERE revoked_at IS NULL")).map(r=>r.action)).toEqual(['unlink']);
  expect((await rows(env,"SELECT 1 FROM matchup_overrides WHERE action='link' AND revoked_at IS NOT NULL")).length).toBe(1);
- expect((await appearanceSearch(env,{})).map(r=>r.appearances.length)).toEqual([1]);
+ expect((await search()).map((r:any)=>r.sources.length)).toEqual([1]);
 });
 it('dispatches validation jobs only from the validation branch and rejects unrecognized environments',async()=>{
  expect(dispatchBranch('validation')).toBe('migration/cloudflare');expect(()=>dispatchBranch('test')).toThrow();

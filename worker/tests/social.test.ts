@@ -31,8 +31,9 @@ async function addDetection(seconds: number, name = 'Opponent') {
     VALUES(?,'00000000-0000-4000-8000-000000000001',1,?,'opponent',0.95,?,'/detections/current.jpg',12)`, id, name, seconds).run();
   return id;
 }
+const likes = async (id = clip) => (await one<{ n: number }>(env, "SELECT count(DISTINCT l.user_id) AS n FROM matchup_likes l JOIN app_users u ON u.id=l.user_id WHERE l.matchup_id=? AND u.status='active'", id))!.n;
 async function createComment(user = alice, text = 'Good game', id = crypto.randomUUID()) {
-  const response = await api(`/api/v1/clips/${clip}/comments`, 'POST', { id, body: text }, user);
+  const response = await api(`/api/v1/matchups/${clip}/comments`, 'POST', { id, body: text }, user);
   expect(response.status, await response.clone().text()).toBe(200);
   return id;
 }
@@ -51,46 +52,47 @@ beforeEach(async () => {
   alice = await seedUser('Alice'); bob = await seedUser('Bob');
 });
 
-it('serves safe public clip metadata without requiring authentication or exposing bookmarks', async () => {
-  expect((await api(`/api/v1/clips/${clip}/favorite`, 'PUT', undefined, alice)).status).toBe(200);
-  const response = await api(`/api/v1/clips/${clip}`), data = await response.json<Record<string, unknown>>();
-  expect(response.status).toBe(200); expect(response.headers.get('Cache-Control')).toBe('no-store');
-  expect(data).toMatchObject({ id: clip, anchor_seconds: 12, like_count: 0, detection: { id: detection, igd: 12 } });
-  expect(JSON.stringify(data)).not.toMatch(/favorite|heart|Alice|private-|@private|session|token/);
+it('keeps bookmarks private to the caller and rejects anonymous or malformed requests', async () => {
+  expect((await api(`/api/v1/matchups/${clip}/favorite`, 'PUT', undefined, alice)).status).toBe(200);
+  const mine = await api(`/api/v1/matchups/${clip}/me`, 'GET', undefined, alice);
+  expect(mine.headers.get('Cache-Control')).toBe('no-store');
+  expect(JSON.stringify(await mine.json())).not.toMatch(/Alice|private-|@private|session|token/);
   expect((await api('/api/v1/me/favorites')).status).toBe(401);
-  expect((await api('/api/v1/clips?limit=1000')).status).toBe(400);
+  expect((await api('/api/v1/me/favorites?limit=1000', 'GET', undefined, alice)).status).toBe(400);
+  expect((await api(`/api/v1/matchups/${clip}/me`)).status).toBe(401);
 });
 
 it('keeps likes as unique desired state and heart/favorite as one private bookmark', async () => {
-  const path = `/api/v1/clips/${clip}`;
+  const path = `/api/v1/matchups/${clip}`;
   expect((await api(`${path}/like`, 'PUT', undefined, alice)).status).toBe(200);
   expect((await api(`${path}/like`, 'PUT', undefined, alice)).status).toBe(200);
   expect((await api(`${path}/like`, 'PUT', undefined, bob)).status).toBe(200);
-  expect(await (await api(path)).json()).toMatchObject({ like_count: 2 });
+  expect(await likes()).toBe(2);
   await api(`${path}/heart`, 'PUT', undefined, alice);
   await api(`${path}/favorite`, 'PUT', undefined, alice);
   expect(await one(env, 'SELECT count(*) AS n FROM matchup_favorites')).toEqual({ n: 1 });
   expect(await (await api(`${path}/me`, 'GET', undefined, alice)).json()).toEqual({ matchup_id: clip, liked: true, favorite: true });
   expect(await (await api(`${path}/me`, 'GET', undefined, bob)).json()).toEqual({ matchup_id: clip, liked: true, favorite: false });
   expect(await (await api('/api/v1/me/favorites', 'GET', undefined, bob)).json()).toMatchObject({ items: [] });
-  expect(await (await api('/api/v1/me/favorites', 'GET', undefined, alice)).json()).toMatchObject({ items: [{ id: clip }] });
+  expect(await (await api('/api/v1/me/favorites', 'GET', undefined, alice)).json()).toEqual({ items: [{ matchup_id: clip }], next_after: null });
   await api(`${path}/like`, 'DELETE', undefined, alice); await api(`${path}/like`, 'DELETE', undefined, alice);
   await api(`${path}/heart`, 'DELETE', undefined, alice);
-  expect(await (await api(path)).json()).toMatchObject({ like_count: 1 });
+  expect(await likes()).toBe(1);
   expect(await one(env, 'SELECT count(*) AS n FROM matchup_favorites')).toEqual({ n: 0 });
 });
 
 it('preserves social state across OCR deletion and reconnects only an exact anchor', async () => {
   const comment = await createComment();
-  await api(`/api/v1/clips/${clip}/like`, 'PUT', undefined, alice);
-  await api(`/api/v1/clips/${clip}/favorite`, 'PUT', undefined, bob);
+  await api(`/api/v1/matchups/${clip}/like`, 'PUT', undefined, alice);
+  await api(`/api/v1/matchups/${clip}/favorite`, 'PUT', undefined, bob);
   await statement(env, 'DELETE FROM detections WHERE id=?', detection).run();
-  expect(await (await api(`/api/v1/clips/${clip}`)).json()).toMatchObject({ id: clip, detection: null, like_count: 1 });
+  expect(await likes()).toBe(1);
   const adjacent = await addDetection(14);
   expect(await one(env, 'SELECT current_detection_id FROM matchup_anchors WHERE id=?', clip)).toEqual({ current_detection_id: null });
   await expect(statement(env, 'UPDATE matchup_anchors SET current_detection_id=? WHERE id=?', adjacent, clip).run()).rejects.toThrow('exact anchor');
   const replacement = await addDetection(12, 'Corrected OCR');
-  expect(await (await api(`/api/v1/clips/${clip}`)).json()).toMatchObject({ id: clip, detection: { id: replacement, username: 'Corrected OCR' }, like_count: 1 });
+  expect(await one(env, 'SELECT current_detection_id FROM matchup_anchors WHERE id=?', clip)).toEqual({ current_detection_id: replacement });
+  expect(await likes()).toBe(1);
   expect(await one(env, 'SELECT id FROM matchup_comments WHERE id=?', comment)).toEqual({ id: comment });
   expect(await one(env, 'SELECT count(*) AS n FROM matchup_favorites WHERE matchup_id=?', clip)).toEqual({ n: 1 });
 });
@@ -101,9 +103,9 @@ it('normalizes Unicode, accepts full-length emoji and rejects controls, empty te
   expect(body).toEqual({ body: 'Café\n<script>literal text</script>' });
   await createComment(bob, '😀'.repeat(2000));
   for (const text of ['', '  ', '\u200d', '\u200d \u200d', '\u0301', 'a\u0000b', 'a\u202Eb', 'a\ud800b', '😀'.repeat(2001)])
-    expect((await api(`/api/v1/clips/${clip}/comments`, 'POST', { id: crypto.randomUUID(), body: text }, alice)).status).toBe(400);
-  expect((await api(`/api/v1/clips/${clip}/comments`, 'POST', { id: crypto.randomUUID(), body: 'Text', author_id: bob.id }, alice)).status).toBe(400);
-  const response = await api(`/api/v1/clips/${clip}/comments`);
+    expect((await api(`/api/v1/matchups/${clip}/comments`, 'POST', { id: crypto.randomUUID(), body: text }, alice)).status).toBe(400);
+  expect((await api(`/api/v1/matchups/${clip}/comments`, 'POST', { id: crypto.randomUUID(), body: 'Text', author_id: bob.id }, alice)).status).toBe(400);
+  const response = await api(`/api/v1/matchups/${clip}/comments`);
   const serialized = await response.text();
   expect(serialized).not.toMatch(/private-|@private|original_body_hash|emailVerified|session|token|reporter/);
   expect(serialized).toContain('Alice');
@@ -111,11 +113,11 @@ it('normalizes Unicode, accepts full-length emoji and rejects controls, empty te
 
 it('deduplicates simultaneous comment creation and rejects client UUID payload or owner reuse', async () => {
   const id = crypto.randomUUID();
-  const results = await Promise.all([alice, alice].map(user => api(`/api/v1/clips/${clip}/comments`, 'POST', { id, body: 'Same text' }, user)));
+  const results = await Promise.all([alice, alice].map(user => api(`/api/v1/matchups/${clip}/comments`, 'POST', { id, body: 'Same text' }, user)));
   expect(results.map(response => response.status)).toEqual([200, 200]);
   expect(await one(env, 'SELECT count(*) AS n FROM matchup_comments WHERE id=?', id)).toEqual({ n: 1 });
-  expect((await api(`/api/v1/clips/${clip}/comments`, 'POST', { id, body: 'Different text' }, alice)).status).toBe(409);
-  expect((await api(`/api/v1/clips/${clip}/comments`, 'POST', { id, body: 'Same text' }, bob)).status).toBe(409);
+  expect((await api(`/api/v1/matchups/${clip}/comments`, 'POST', { id, body: 'Different text' }, alice)).status).toBe(409);
+  expect((await api(`/api/v1/matchups/${clip}/comments`, 'POST', { id, body: 'Same text' }, bob)).status).toBe(409);
 });
 
 it('enforces comment ownership and version CAS without reviving edits or deleted comments on retries', async () => {
@@ -124,22 +126,22 @@ it('enforces comment ownership and version CAS without reviving edits or deleted
   expect((await api(`/api/v1/comments/${id}`, 'DELETE', { version: 1 }, bob)).status).toBe(404);
   const concurrent = await Promise.all(['Edit one', 'Edit two'].map(body => api(`/api/v1/comments/${id}`, 'PATCH', { version: 1, body }, alice)));
   expect(concurrent.map(response => response.status).sort()).toEqual([200, 409]);
-  expect((await api(`/api/v1/clips/${clip}/comments`, 'POST', { id, body: 'Good game' }, alice)).status).toBe(200);
+  expect((await api(`/api/v1/matchups/${clip}/comments`, 'POST', { id, body: 'Good game' }, alice)).status).toBe(200);
   expect(await one(env, 'SELECT version,body FROM matchup_comments WHERE id=?', id)).toMatchObject({ version: 2, body: expect.stringMatching(/^Edit /) });
   const deletion = await Promise.all([1, 2].map(() => api(`/api/v1/comments/${id}`, 'DELETE', { version: 2 }, alice)));
   expect(deletion.map(response => response.status)).toEqual([200, 200]);
   expect((await api(`/api/v1/comments/${id}`, 'DELETE', { version: 2 }, alice)).status).toBe(200);
-  expect((await api(`/api/v1/clips/${clip}/comments`, 'POST', { id, body: 'Good game' }, alice)).status).toBe(200);
+  expect((await api(`/api/v1/matchups/${clip}/comments`, 'POST', { id, body: 'Good game' }, alice)).status).toBe(200);
   expect(await one(env, 'SELECT version,body,status FROM matchup_comments WHERE id=?', id)).toEqual({ version: 3, body: null, status: 'deleted' });
-  expect(await (await api(`/api/v1/clips/${clip}/comments`)).json()).toMatchObject({ items: [] });
+  expect(await (await api(`/api/v1/matchups/${clip}/comments`)).json()).toMatchObject({ items: [] });
   expect((await moderation('comments', id, 'visible')).status).toBe(404);
 });
 
 it('requires trusted Origin and matching CSRF even with a valid signed user session', async () => {
   const invalidHeaders: Record<string, string>[] = [{ Origin: 'https://attacker.invalid' }, { Origin: '' }, { 'X-CSRF-Token': '' }, { 'X-CSRF-Token': bob.csrf }];
   for (const headers of invalidHeaders)
-    expect((await api(`/api/v1/clips/${clip}/like`, 'PUT', undefined, alice, { headers })).status).toBe(403);
-  expect((await api(`/api/v1/clips/${clip}/like`, 'PUT')).status).toBe(401);
+    expect((await api(`/api/v1/matchups/${clip}/like`, 'PUT', undefined, alice, { headers })).status).toBe(403);
+  expect((await api(`/api/v1/matchups/${clip}/like`, 'PUT')).status).toBe(401);
   expect(await one(env, 'SELECT count(*) AS n FROM matchup_likes')).toEqual({ n: 0 });
 });
 
@@ -157,7 +159,7 @@ it('fences a session revoked after authentication but before the D1 write transa
     const value = Reflect.get(target, prop, target);
     return typeof value === 'function' ? value.bind(target) : value;
   } });
-  const response = await api(`/api/v1/clips/${clip}/like`, 'PUT', undefined, alice, { environment: { ...socialEnv, DB: database } });
+  const response = await api(`/api/v1/matchups/${clip}/like`, 'PUT', undefined, alice, { environment: { ...socialEnv, DB: database } });
   expect(response.status).toBe(409);
   expect(await one(env, 'SELECT count(*) AS n FROM matchup_likes')).toEqual({ n: 0 });
   expect(await one(env, 'SELECT count(*) AS n FROM social_rate_limits')).toEqual({ n: 0 });
@@ -165,33 +167,29 @@ it('fences a session revoked after authentication but before the D1 write transa
 
 it('limits mutation throughput transactionally and bounds counter storage per user', async () => {
   await statement(env, "INSERT INTO social_rate_limits(user_id,category,window_start,count) VALUES(?,'reaction',CAST(unixepoch()/60 AS INTEGER),120)", alice.id).run();
-  expect((await api(`/api/v1/clips/${clip}/like`, 'PUT', undefined, alice)).status).toBe(429);
+  expect((await api(`/api/v1/matchups/${clip}/like`, 'PUT', undefined, alice)).status).toBe(429);
   expect(await one(env, 'SELECT count(*) AS n FROM matchup_likes')).toEqual({ n: 0 });
   await statement(env, 'UPDATE social_rate_limits SET window_start=window_start-1 WHERE user_id=?', alice.id).run();
-  expect((await api(`/api/v1/clips/${clip}/like`, 'PUT', undefined, alice)).status).toBe(200);
+  expect((await api(`/api/v1/matchups/${clip}/like`, 'PUT', undefined, alice)).status).toBe(200);
   expect(await rows(env, 'SELECT count FROM social_rate_limits WHERE user_id=?', alice.id)).toEqual([{ count: 1 }]);
 });
 
-it('paginates clips, comments and private favorites without exposing hidden rows', async () => {
-  for (const time of [20, 30]) await addDetection(time);
-  const list = await (await api('/api/v1/clips?limit=2')).json<{ items: { id: number }[]; next_after: number }>();
-  const next = await (await api(`/api/v1/clips?limit=2&after=${list.next_after}`)).json<{ items: { id: number }[] }>();
-  expect(list.items).toHaveLength(2); expect(next.items).toHaveLength(1);
-  for (const item of [...list.items, ...next.items]) await api(`/api/v1/clips/${item.id}/favorite`, 'PUT', undefined, alice);
+it('paginates comments and private favorites without exposing hidden rows', async () => {
+  const extra: number[] = [];
+  for (const time of [20, 30]) extra.push((await one<{ id: number }>(env, 'SELECT id FROM matchup_anchors WHERE current_detection_id=?', await addDetection(time)))!.id);
+  for (const id of [clip, ...extra]) await api(`/api/v1/matchups/${id}/favorite`, 'PUT', undefined, alice);
   const first = await (await api('/api/v1/me/favorites?limit=2', 'GET', undefined, alice)).json<{ next_after: number; items: unknown[] }>();
   expect(first.items).toHaveLength(2);
   expect(await (await api(`/api/v1/me/favorites?after=${first.next_after}`, 'GET', undefined, alice)).json()).toMatchObject({ items: [expect.anything()] });
   await createComment(); await createComment(bob, 'Second');
-  const comments = await (await api(`/api/v1/clips/${clip}/comments?limit=1`)).json<{ items: unknown[]; next_after: number }>();
+  const comments = await (await api(`/api/v1/matchups/${clip}/comments?limit=1`)).json<{ items: unknown[]; next_after: number }>();
   expect(comments.items).toHaveLength(1);
-  expect(await (await api(`/api/v1/clips/${clip}/comments?after=${comments.next_after}`)).json()).toMatchObject({ items: [expect.anything()] });
-  expect((await moderation('clips', clip, 'hidden')).status).toBe(200);
-  expect((await api(`/api/v1/clips/${clip}`)).status).toBe(404);
-  expect((await api(`/api/v1/clips/${clip}/comments`)).status).toBe(404);
-  expect((await api(`/api/v1/clips/${clip}/like`, 'PUT', undefined, bob)).status).toBe(409);
-  expect((await api('/api/v1/clips', 'POST', { detection_id: detection }, alice)).status).toBe(409);
-  const favorites = await (await api('/api/v1/me/favorites', 'GET', undefined, alice)).json<{ items: { id: number }[] }>();
-  expect(favorites.items.map(item => item.id)).not.toContain(clip);
+  expect(await (await api(`/api/v1/matchups/${clip}/comments?after=${comments.next_after}`)).json()).toMatchObject({ items: [expect.anything()] });
+  expect((await moderation('matchups', clip, 'hidden')).status).toBe(200);
+  expect((await api(`/api/v1/matchups/${clip}/comments`)).status).toBe(404);
+  expect((await api(`/api/v1/matchups/${clip}/like`, 'PUT', undefined, bob)).status).toBe(409);
+  const favorites = await (await api('/api/v1/me/favorites', 'GET', undefined, alice)).json<{ items: { matchup_id: number }[] }>();
+  expect(favorites.items.map(item => item.matchup_id)).toEqual(extra);
 });
 
 it('separates admin moderation from cookies, hides comments and records retry-safe decisions', async () => {
@@ -200,7 +198,7 @@ it('separates admin moderation from cookies, hides comments and records retry-sa
   expect((await api(`/api/v1/comments/${id}`)).status).toBe(200);
   expect((await moderation('comments', id, 'hidden', requestId)).status).toBe(200);
   expect((await api(`/api/v1/comments/${id}`)).status).toBe(404);
-  expect(await (await api(`/api/v1/clips/${clip}/comments`)).json()).toMatchObject({ items: [] });
+  expect(await (await api(`/api/v1/matchups/${clip}/comments`)).json()).toMatchObject({ items: [] });
   expect((await api(`/api/v1/comments/${id}`, 'PATCH', { version: 2, body: 'Evade moderation' }, alice)).status).toBe(409);
   expect((await moderation('comments', id, 'visible')).status).toBe(200);
   expect((await moderation('comments', id, 'hidden', requestId)).status).toBe(200);
@@ -225,33 +223,33 @@ it('queues private reports with idempotency, audited resolution and no public re
   expect(await (await api('/api/admin/social/reports', 'GET', undefined, undefined, { admin: true })).json()).toMatchObject({ items: [{ id, reporter_id: bob.id }] });
   expect((await moderation('reports', id, 'resolved')).status).toBe(200);
   expect(await (await api('/api/admin/social/reports', 'GET', undefined, undefined, { admin: true })).json()).toMatchObject({ items: [] });
-  expect(await (await api(`/api/v1/clips/${clip}/comments`)).text()).not.toContain('Please review this');
+  expect(await (await api(`/api/v1/matchups/${clip}/comments`)).text()).not.toContain('Please review this');
 });
 
 it('suspends users with immediate session revocation and restores visibility without reviving sessions', async () => {
-  const id = await createComment(); await api(`/api/v1/clips/${clip}/like`, 'PUT', undefined, alice);
+  const id = await createComment(); await api(`/api/v1/matchups/${clip}/like`, 'PUT', undefined, alice);
   expect((await moderation('users', alice.id, 'suspended')).status).toBe(200);
   expect(await one(env, 'SELECT count(*) AS n FROM user_sessions WHERE userId=?', alice.id)).toEqual({ n: 0 });
-  expect((await api(`/api/v1/clips/${clip}/like`, 'PUT', undefined, alice)).status).toBe(401);
-  expect(await (await api(`/api/v1/clips/${clip}/comments`)).json()).toMatchObject({ items: [] });
-  expect(await (await api(`/api/v1/clips/${clip}`)).json()).toMatchObject({ like_count: 0 });
+  expect((await api(`/api/v1/matchups/${clip}/like`, 'PUT', undefined, alice)).status).toBe(401);
+  expect(await (await api(`/api/v1/matchups/${clip}/comments`)).json()).toMatchObject({ items: [] });
+  expect(await likes()).toBe(0);
   expect((await moderation('users', alice.id, 'active')).status).toBe(200);
-  expect(await (await api(`/api/v1/clips/${clip}/comments`)).json()).toMatchObject({ items: [{ id }] });
-  expect((await api(`/api/v1/clips/${clip}/me`, 'GET', undefined, alice)).status).toBe(401);
+  expect(await (await api(`/api/v1/matchups/${clip}/comments`)).json()).toMatchObject({ items: [{ id }] });
+  expect((await api(`/api/v1/matchups/${clip}/me`, 'GET', undefined, alice)).status).toBe(401);
 });
 
 it('deleting one account cascades only its social data and leaves shared clips and other comments', async () => {
   const aliceComment = await createComment(), bobComment = await createComment(bob, 'Other user comment');
-  await api(`/api/v1/clips/${clip}/like`, 'PUT', undefined, alice);
-  await api(`/api/v1/clips/${clip}/like`, 'PUT', undefined, bob);
-  await api(`/api/v1/clips/${clip}/favorite`, 'PUT', undefined, alice);
-  await api('/api/v1/reports', 'POST', { id: crypto.randomUUID(), clip_id: clip, reason: 'Review' }, alice);
+  await api(`/api/v1/matchups/${clip}/like`, 'PUT', undefined, alice);
+  await api(`/api/v1/matchups/${clip}/like`, 'PUT', undefined, bob);
+  await api(`/api/v1/matchups/${clip}/favorite`, 'PUT', undefined, alice);
+  await api('/api/v1/reports', 'POST', { id: crypto.randomUUID(), matchup_id: clip, reason: 'Review' }, alice);
   await statement(env, 'DELETE FROM app_users WHERE id=?', alice.id).run();
   expect(await one(env, 'SELECT id FROM matchup_comments WHERE id=?', aliceComment)).toBeNull();
   expect(await one(env, 'SELECT id FROM matchup_comments WHERE id=?', bobComment)).toEqual({ id: bobComment });
   expect(await one(env, 'SELECT count(*) AS n FROM matchup_favorites')).toEqual({ n: 0 });
   expect(await one(env, 'SELECT count(*) AS n FROM social_reports')).toEqual({ n: 0 });
-  expect(await (await api(`/api/v1/clips/${clip}`)).json()).toMatchObject({ id: clip, like_count: 1 });
+  expect(await likes()).toBe(1);
 });
 
 it('fences clip moderation that races an authenticated comment write', async () => {
@@ -268,7 +266,7 @@ it('fences clip moderation that races an authenticated comment write', async () 
     const value = Reflect.get(target, prop, target);
     return typeof value === 'function' ? value.bind(target) : value;
   } });
-  const response = await api(`/api/v1/clips/${clip}/comments`, 'POST', { id: crypto.randomUUID(), body: 'Racing comment' }, alice,
+  const response = await api(`/api/v1/matchups/${clip}/comments`, 'POST', { id: crypto.randomUUID(), body: 'Racing comment' }, alice,
     { environment: { ...socialEnv, DB: database } });
   expect(response.status).toBe(409);
   expect(await one(env, 'SELECT count(*) AS n FROM matchup_comments')).toEqual({ n: 0 });
@@ -277,16 +275,16 @@ it('fences clip moderation that races an authenticated comment write', async () 
 
 it('keeps concurrent moderation retries from duplicating audit or overwriting a later decision', async () => {
   const id = crypto.randomUUID();
-  const responses = await Promise.all([moderation('clips', clip, 'hidden', id), moderation('clips', clip, 'hidden', id)]);
+  const responses = await Promise.all([moderation('matchups', clip, 'hidden', id), moderation('matchups', clip, 'hidden', id)]);
   expect(responses.map(response => response.status)).toEqual([200, 200]);
   expect(await one(env, 'SELECT count(*) AS n FROM social_moderation_audit WHERE request_id=?', id)).toEqual({ n: 1 });
-  await moderation('clips', clip, 'visible');
-  await moderation('clips', clip, 'hidden', id);
+  await moderation('matchups', clip, 'visible');
+  await moderation('matchups', clip, 'hidden', id);
   expect(await one(env, 'SELECT status FROM matchups WHERE id=?', clip)).toEqual({ status: 'visible' });
 });
 
 it('preserves a hidden anchor through replacement and refuses low-confidence attachment', async () => {
-  await moderation('clips', clip, 'hidden');
+  await moderation('matchups', clip, 'hidden');
   await statement(env, 'DELETE FROM detections WHERE id=?', detection).run();
   const replacement = await addDetection(12);
   expect(await one(env, 'SELECT m.status,a.current_detection_id FROM matchup_anchors a JOIN matchups m ON m.id=a.matchup_id WHERE a.id=?', clip)).toEqual({ status: 'hidden', current_detection_id: replacement });
@@ -300,8 +298,8 @@ it('preserves a hidden anchor through replacement and refuses low-confidence att
 it('keeps a shared clip through the real processor claim, screenshot clear, upload and publish retry', async () => {
   const chunk = '00000000-0000-4000-8000-000000000001';
   const comment = await createComment();
-  await api(`/api/v1/clips/${clip}/like`, 'PUT', undefined, alice);
-  await api(`/api/v1/clips/${clip}/favorite`, 'PUT', undefined, bob);
+  await api(`/api/v1/matchups/${clip}/like`, 'PUT', undefined, alice);
+  await api(`/api/v1/matchups/${clip}/favorite`, 'PUT', undefined, bob);
   await statement(env, 'UPDATE vods SET ready_for_processing=1 WHERE id=1').run();
   await env.DETECTIONS.put('current.jpg', new Uint8Array([255, 216, 255, 217]));
   const lease = await claim(env, chunk);
@@ -317,37 +315,40 @@ it('keeps a shared clip through the real processor claim, screenshot clear, uplo
     username: 'New OCR reading', confidence: 0.96, rank: 'gold', igd: 13, ...image }])).toEqual({ published: 1 });
   expect(await one(env, 'SELECT id,current_detection_id FROM matchup_anchors WHERE id=?', clip)).toEqual({ id: clip, current_detection_id: replacement });
   expect(await one(env, 'SELECT id FROM matchup_comments WHERE id=?', comment)).toEqual({ id: comment });
-  expect(await (await api(`/api/v1/clips/${clip}/me`, 'GET', undefined, bob)).json()).toMatchObject({ favorite: true });
-  expect(await (await api(`/api/v1/clips/${clip}`)).json()).toMatchObject({ id: clip, like_count: 1, detection: { id: replacement, igd: 13, screenshot: image.storage_path } });
+  expect(await (await api(`/api/v1/matchups/${clip}/me`, 'GET', undefined, bob)).json()).toMatchObject({ favorite: true });
+  expect(await one(env, 'SELECT igd,storage_path FROM detections WHERE id=?', replacement)).toEqual({ igd: 13, storage_path: image.storage_path });
 });
 
-it('serves the same social records through /matchups aliases and adds matchup_id beside clip ids', async () => {
+it('addresses social records by canonical Matchup ID', async () => {
   expect(await one(env, 'SELECT id,status,merged_into,origin FROM matchups WHERE id=?', clip)).toEqual({ id: clip, status: 'visible', merged_into: null, origin: 'auto' });
   expect(await one(env, 'SELECT matchup_id FROM matchup_anchors WHERE id=?', clip)).toEqual({ matchup_id: clip });
   expect((await api(`/api/v1/matchups/${clip}/like`, 'PUT', undefined, alice)).status).toBe(200);
   expect((await api(`/api/v1/matchups/${clip}/favorite`, 'PUT', undefined, bob)).status).toBe(200);
-  expect(await (await api(`/api/v1/clips/${clip}`)).json()).toMatchObject({ id: clip, matchup_id: clip, like_count: 1 });
+  expect(await likes()).toBe(1);
   expect(await (await api(`/api/v1/matchups/${clip}/me`, 'GET', undefined, bob)).json()).toEqual({ matchup_id: clip, liked: false, favorite: true });
   const id = crypto.randomUUID();
   expect((await api(`/api/v1/matchups/${clip}/comments`, 'POST', { id, body: 'Via matchup' }, alice)).status).toBe(200);
   expect(await one(env, 'SELECT matchup_id,origin_id FROM matchup_comments WHERE id=?', id)).toEqual({ matchup_id: clip, origin_id: clip });
-  expect(await (await api(`/api/v1/clips/${clip}/comments`)).json()).toMatchObject({ items: [{ id, clip_id: clip, matchup_id: clip }] });
+  expect(await (await api(`/api/v1/matchups/${clip}/comments`)).json()).toMatchObject({ items: [{ id, matchup_id: clip }] });
   const report = crypto.randomUUID();
   expect((await api('/api/v1/reports', 'POST', { id: report, matchup_id: clip, reason: 'Check this' }, bob)).status).toBe(200);
-  expect((await api('/api/v1/reports', 'POST', { id: crypto.randomUUID(), clip_id: clip, reason: 'Check this' }, bob)).status).toBe(200);
+  expect((await api('/api/v1/reports', 'POST', { id: crypto.randomUUID(), matchup_id: clip, reason: 'Check this' }, bob)).status).toBe(200);
   expect(await one(env, 'SELECT count(*) AS n FROM social_reports')).toEqual({ n: 1 });
-  expect(await (await api('/api/admin/social/reports', 'GET', undefined, undefined, { admin: true })).json()).toMatchObject({ items: [{ id: report, clip_id: clip, matchup_id: clip }] });
-  expect((await api('/api/v1/reports', 'POST', { id: crypto.randomUUID(), clip_id: clip, matchup_id: clip, reason: 'Both' }, alice)).status).toBe(400);
+  expect(await (await api('/api/admin/social/reports', 'GET', undefined, undefined, { admin: true })).json()).toMatchObject({ items: [{ id: report, origin_id: clip, matchup_id: clip }] });
+  expect((await api('/api/v1/reports', 'POST', { id: crypto.randomUUID(), clip_id: clip, reason: 'Old field' }, alice)).status).toBe(400);
+  expect((await api('/api/v1/reports', 'POST', { id: crypto.randomUUID(), matchup_id: clip, comment_id: id, reason: 'Both' }, alice)).status).toBe(400);
   expect((await api('/api/v1/matchups/999999/like', 'PUT', undefined, alice)).status).toBe(404);
+  for (const path of ['/api/v1/clips', `/api/v1/clips/${clip}`, `/api/v1/clips/${clip}/like`]) expect((await api(path, 'PUT', undefined, alice)).status, path).toBe(404);
 });
 
-it('moderates a Matchup through the clips alias and the matchups route with matchup audit rows', async () => {
+it('moderates a Matchup through the matchups route with matchup audit rows', async () => {
   expect((await moderation('matchups', clip, 'hidden')).status).toBe(200);
-  expect((await api(`/api/v1/clips/${clip}`)).status).toBe(404);
+  expect((await api(`/api/v1/matchups/${clip}/comments`)).status).toBe(404);
   expect((await api(`/api/v1/matchups/${clip}/like`, 'PUT', undefined, alice)).status).toBe(409);
-  expect((await moderation('clips', clip, 'visible')).status).toBe(200);
-  expect((await api(`/api/v1/clips/${clip}`)).status).toBe(200);
-  expect((await moderation('clips', 999999, 'hidden')).status).toBe(404);
+  expect((await moderation('matchups', clip, 'visible')).status).toBe(200);
+  expect((await api(`/api/v1/matchups/${clip}/comments`)).status).toBe(200);
+  expect((await moderation('matchups', 999999, 'hidden')).status).toBe(404);
+  expect((await moderation('clips', clip, 'hidden')).status).toBe(404);
   expect(await rows(env, 'SELECT target_type,target_id,action FROM social_moderation_audit ORDER BY sequence')).toEqual([
     { target_type: 'matchup', target_id: String(clip), action: 'hidden' }, { target_type: 'matchup', target_id: String(clip), action: 'visible' }]);
 });
@@ -359,6 +360,6 @@ it('follows merged_into for /matchups routes and hides every anchor of a hidden 
   expect((await api(`/api/v1/matchups/${second}/like`, 'PUT', undefined, alice)).status).toBe(200);
   expect(await one(env, 'SELECT matchup_id,origin_id FROM matchup_likes')).toEqual({ matchup_id: clip, origin_id: clip });
   expect((await moderation('matchups', second, 'hidden')).status).toBe(200);
-  expect(await rows(env, 'SELECT detection_id FROM video_detections WHERE vod_id=1')).toEqual([]);
-  expect((await api(`/api/v1/clips/${second}`)).status).toBe(404);
+  expect(await rows(env, 'SELECT detection_id FROM public_sources WHERE vod_id=1')).toEqual([]);
+  expect((await api(`/api/v1/matchups/${second}/comments`)).status).toBe(404);
 });
