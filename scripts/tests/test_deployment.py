@@ -102,6 +102,14 @@ class DeploymentTests(unittest.TestCase):
             with self.subTest(url=url), self.assertRaises(ValueError):
                 self.validate()
 
+    def test_rejects_untrusted_cors_origins(self):
+        original = copy.deepcopy(self.configs['validation'])
+        for origins in ['https://a.example,http://localhost:3000', 'https://a.example/', 'https://a.example/path']:
+            self.configs['validation'] = copy.deepcopy(original)
+            self.configs['validation']['vars']['CORS_ORIGINS'] = origins
+            with self.subTest(origins=origins), self.assertRaisesRegex(ValueError, 'Trusted origins'):
+                self.validate()
+
     def test_detects_queue_collision_from_the_other_configuration(self):
         self.configs['production']['queue']['deadLetterQueue'] = 'bazaarghost-validation-dlq'
         with self.assertRaisesRegex(ValueError, 'must not share a queue'):

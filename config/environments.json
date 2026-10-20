@@ -114,7 +114,7 @@
       "PUBLIC_SITE_URL": "https://bazaarghost-frontend-validation.kaio-8df.workers.dev",
       "OUTBOUND_ENABLED": "true",
       "AUTH_ENABLED": "true",
-      "CORS_ORIGINS": "https://bazaarghost-validation.kaio-8df.workers.dev,https://bazaarghost.kaio-8df.workers.dev,https://bazaarghost.stream,https://www.bazaarghost.stream,http://localhost:3000"
+      "CORS_ORIGINS": "https://bazaarghost-validation.kaio-8df.workers.dev,https://bazaarghost-frontend-validation.kaio-8df.workers.dev,https://bazaarghost.kaio-8df.workers.dev,https://bazaarghost.stream,https://www.bazaarghost.stream"
     },
     "database": {
       "id": "4159adb1-b0af-4a3e-9a0c-755dfe5d822c",

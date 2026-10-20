@@ -47,6 +47,10 @@ def validate(target, root=ROOT, ref=None):
     site_url = urlsplit(config['vars']['PUBLIC_SITE_URL'])
     if 'REPLACE_ME' in site_url.geturl() or site_url.scheme != 'https' or not site_url.hostname or site_url.path not in ('', '/'):
         raise ValueError('Set the frontend HTTPS origin used in notification links')
+    for origin in filter(None, (o.strip() for o in config['vars']['CORS_ORIGINS'].split(','))):
+        parts = urlsplit(origin)
+        if parts.scheme != 'https' or f'{parts.scheme}://{parts.netloc}' != origin or parts.username or parts.password:
+            raise ValueError(f'Trusted origins must be HTTPS origins outside local development: {origin}')
     database = config['database']
     if database['name'] != f'bazaarghost-{target}':
         raise ValueError('Database name must match the target environment')
