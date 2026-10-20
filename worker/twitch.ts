@@ -283,11 +283,12 @@ export class Twitch {
       if (!dryRun) {
         await statement(
           this.env,
-          `INSERT INTO vods(streamer_id,source_id,title,duration_seconds,published_at,bazaar_chapters,ready_for_processing,last_availability_check) VALUES(?,?,?,?,?,?,1,?) ON CONFLICT(source,source_id) DO UPDATE SET title=excluded.title,duration_seconds=excluded.duration_seconds,published_at=excluded.published_at,bazaar_chapters=excluded.bazaar_chapters,ready_for_processing=1,availability='available',unavailable_since=NULL,last_availability_check=excluded.last_availability_check,updated_at=?`,
+          `INSERT INTO vods(streamer_id,source_id,title,duration_seconds,published_at,recorded_at,bazaar_chapters,ready_for_processing,last_availability_check) VALUES(?,?,?,?,?,?,?,1,?) ON CONFLICT(source,source_id) DO UPDATE SET title=excluded.title,duration_seconds=excluded.duration_seconds,published_at=excluded.published_at,recorded_at=excluded.recorded_at,bazaar_chapters=excluded.bazaar_chapters,ready_for_processing=1,availability='available',unavailable_since=NULL,last_availability_check=excluded.last_availability_check,updated_at=?`,
           id,
           v.id,
           v.title,
           v.lengthSeconds,
+          new Date(v.publishedAt).toISOString(),
           new Date(v.publishedAt).toISOString(),
           JSON.stringify(ranges),
           now(),

@@ -98,6 +98,9 @@ def prepare_row(table, record):
         if 'sfde_profile_id' in row:
             raise ValueError('Both legacy and current profile references exist')
         row['sfde_profile_id'] = row.pop('sfot_profile_id')
+    if table == 'vods' and row.get('source', 'twitch') == 'twitch' and row.get('recorded_at') is None:
+        # Twitch publish time is the stream start; the target schema has no per-platform fallback.
+        row['recorded_at'] = row.get('published_at')
     if table == 'chunks':
         if row.get('status') in ('processing', 'queued'):
             raise ValueError('Snapshot contains active chunks. Pause and drain processing before export.')

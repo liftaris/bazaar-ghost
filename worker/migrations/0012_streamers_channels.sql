@@ -86,9 +86,12 @@ CREATE TRIGGER search_streamer_identity_update AFTER UPDATE OF display_name,avat
   UPDATE public_cache_state SET revision=revision+1 WHERE id=1;
 END;
 
+UPDATE vods SET recorded_at=published_at WHERE source='twitch' AND recorded_at IS NULL;
+
 -- Twitch settings stay authoritative in `streamers`; the Channel row mirrors them.
 DROP VIEW public_matchups;
 DROP VIEW public_videos;
+DROP VIEW video_detections;
 DROP VIEW vod_processing_context;
 CREATE VIEW vod_processing_context AS SELECT v.*,
  CASE WHEN a.source='twitch' AND a.source_id=cast(s.id AS TEXT) THEN s.processing_enabled
@@ -96,8 +99,17 @@ CREATE VIEW vod_processing_context AS SELECT v.*,
  coalesce(v.sfde_profile_id,CASE WHEN a.source='twitch' AND a.source_id=cast(s.id AS TEXT) THEN s.sfde_profile_id ELSE a.sfde_profile_id END,s.sfde_profile_id,1) AS effective_profile_id,
  coalesce(a.display_name,s.display_name,s.login) AS creator_name,
  CASE WHEN v.template_version='old' THEN 1 WHEN v.template_version='current' THEN 0
- ELSE coalesce(coalesce(v.recorded_at,v.published_at)<'2025-08-12T00:00:00.000Z',0) END AS old_templates
+ ELSE coalesce(v.recorded_at<'2025-08-12T00:00:00.000Z',0) END AS old_templates
  FROM vods v LEFT JOIN platform_accounts a ON a.id=v.platform_account_id LEFT JOIN streamers s ON s.id=v.streamer_id;
+-- Recording time is never invented from a publish time (0011 regressed this for non-Twitch videos).
+CREATE VIEW video_detections AS SELECT d.id AS detection_id,d.username,d.confidence,d.rank,d.frame_time_seconds,
+ d.storage_path,d.no_right_edge,d.truncated,d.igd,d.created_at AS indexed_at,
+ v.id AS vod_id,v.source,v.source_id,coalesce(v.source_video_id,v.source_id) AS source_video_id,v.source_part_id,v.source_part_index,v.title,v.published_at,v.recorded_at,
+ v.platform_account_id,v.streamer_id,coalesce(a.display_name,s.display_name,s.login) AS creator_name,
+ strftime('%Y-%m-%dT%H:%M:%fZ',v.recorded_at,'+'||d.frame_time_seconds||' seconds') AS recorded_timestamp
+ FROM detections d JOIN vods v ON v.id=d.vod_id LEFT JOIN platform_accounts a ON a.id=v.platform_account_id
+ LEFT JOIN streamers s ON s.id=v.streamer_id WHERE v.availability='available' AND d.confidence>0.7
+ AND NOT EXISTS(SELECT 1 FROM clips c WHERE c.vod_id=d.vod_id AND c.anchor_seconds=d.frame_time_seconds AND c.status='hidden');
 CREATE VIEW public_videos AS SELECT v.*,
   coalesce(a.legacy_creator_id,CASE WHEN v.source='twitch' THEN 'twitch:'||s.id ELSE v.source||':'||a.id END) AS creator_id,
   CASE WHEN v.source='twitch' THEN cast(s.id AS TEXT) ELSE a.source_id END AS creator_source_id,

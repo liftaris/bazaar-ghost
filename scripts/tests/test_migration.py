@@ -78,7 +78,7 @@ class MultiplatformMigrationTests(unittest.TestCase):
                 {'id': 'account-bilibili', 'source': 'bilibili', 'source_id': '123', 'display_name': 'Bilibili creator', 'processing_enabled': False, 'archive_cursor': 4},
             ],
             'vods': [
-                {'id': 1, 'streamer_id': 1, 'source': 'twitch', 'source_id': '12345678901', 'duration_seconds': 12, 'bazaar_chapters': [0, 12], 'status': 'completed'},
+                {'id': 1, 'streamer_id': 1, 'source': 'twitch', 'source_id': '12345678901', 'duration_seconds': 12, 'bazaar_chapters': [0, 12], 'status': 'completed', 'published_at': '2025-01-02T03:04:05Z'},
                 {'id': 2, 'source': 'youtube', 'source_id': '12345678901', 'platform_account_id': 'account-youtube', 'duration_seconds': 12, 'bazaar_chapters': [0, 12], 'status': 'completed', 'recorded_at': '2025-08-12T03:00:00+05:00', 'published_at': '2026-09-01T08:00:00-07:00'},
                 {'id': 3, 'source': 'bilibili', 'source_id': 'BV1234567890:111', 'source_video_id': 'BV1234567890', 'source_part_id': '111', 'source_part_index': 2, 'platform_account_id': 'account-bilibili', 'duration_seconds': 12, 'bazaar_chapters': [0, 12], 'status': 'completed'},
                 {'id': 4, 'source': 'bilibili', 'source_id': 'BV1234567890:222', 'source_video_id': 'BV1234567890', 'source_part_id': '222', 'source_part_index': 1, 'platform_account_id': 'account-bilibili', 'duration_seconds': 12, 'bazaar_chapters': [0, 12], 'status': 'completed'},
@@ -102,6 +102,9 @@ class MultiplatformMigrationTests(unittest.TestCase):
         self.assertEqual(restored.execute('SELECT id,source,source_id FROM vods ORDER BY id').fetchall(), [
             (1, 'twitch', '12345678901'), (2, 'youtube', '12345678901'), (3, 'bilibili', 'BV1234567890:111'), (4, 'bilibili', 'BV1234567890:222')])
         self.assertEqual(restored.execute("SELECT source_id,legacy_creator_id FROM platform_accounts WHERE source='twitch'").fetchall(), [('1', 'twitch:1')])
+        self.assertEqual(restored.execute('SELECT recorded_at,published_at FROM vods WHERE id=1').fetchone(), ('2025-01-02T03:04:05.000Z',) * 2)
+        self.assertEqual(restored.execute('SELECT old_templates FROM vod_processing_context WHERE id=1').fetchone()[0], 1)
+        self.assertIsNone(restored.execute('SELECT recorded_at FROM vods WHERE id=3').fetchone()[0])
         self.assertEqual(restored.execute('SELECT platform_account_id IS NOT NULL FROM vods WHERE id=1').fetchone()[0], 1)
         self.assertEqual(restored.execute('SELECT count(*) FROM streamer_identities WHERE id=1').fetchone()[0], 1)
         self.assertEqual(restored.execute('SELECT a.source,o.streamer_id,o.method,o.actor FROM channel_ownership o JOIN platform_accounts a ON a.id=o.channel_id ORDER BY a.source').fetchall(), [
