@@ -140,19 +140,22 @@ export async function notify(env: Env, matchup: number) {
   if (env.ENVIRONMENT !== "production") return settle(env, matchup);
   const sources = await rows<Source>(
     env,
-    `SELECT d.username,d.username_lower,coalesce(si.display_name,pa.display_name,pa.login) AS display
-     FROM matchup_anchors a JOIN detections d ON d.id=a.current_detection_id JOIN vods v ON v.id=a.vod_id
-     JOIN matchups m ON m.id=a.matchup_id
-     LEFT JOIN platform_accounts pa ON pa.id=v.platform_account_id
-     LEFT JOIN sessions s ON s.id=coalesce(m.session_id,v.session_id)
-     LEFT JOIN streamer_identities si ON si.id=s.streamer_id
-     WHERE a.matchup_id=? ORDER BY a.id`,
+    `SELECT ps.username,ps.username_lower,coalesce(pa.display_name,pa.login) AS display
+     FROM public_sources ps JOIN public_matchups pm ON pm.matchup_id=ps.matchup_id
+     LEFT JOIN platform_accounts pa ON pa.id=ps.channel_id
+     WHERE ps.matchup_id=? ORDER BY ps.detection_id=pm.detection_id DESC,ps.anchor_id`,
+    matchup,
+  );
+  const owner = await one<{ display_name: string }>(
+    env,
+    `SELECT si.display_name FROM matchup_streamers ms JOIN streamer_identities si ON si.id=ms.streamer_id
+     WHERE ms.matchup_id=? ORDER BY ms.streamer_id LIMIT 1`,
     matchup,
   );
   if (!sources.length) return settle(env, matchup, "no_source");
   // Another delivery path only starts once outbound calls are allowed; until then the row stays pending.
   if (env.OUTBOUND_ENABLED !== "true") return;
-  const streamer = sources.find((s) => s.display)?.display ?? "Unknown streamer",
+  const streamer = owner?.display_name ?? sources.find((s) => s.display)?.display ?? "Unknown streamer",
     opponents = [...new Set(sources.map((s) => s.username))];
   const destinations = await destinationsFor(env, [
     ...new Set(sources.map((s) => s.username_lower)),
