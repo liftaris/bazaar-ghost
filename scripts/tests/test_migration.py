@@ -124,9 +124,9 @@ class MultiplatformMigrationTests(unittest.TestCase):
         manifest = json.loads((self.destination / 'manifest.json').read_text())
         self.assertEqual(manifest['schema_version'], 3)
         self.assertEqual(manifest['source_schema_version'], 3)
-        self.assertEqual(manifest['target_schema_version'], 7)
+        self.assertEqual(manifest['target_schema_version'], 11)
         self.assertEqual(len(manifest['migrations']), 3)
-        self.assertEqual(len(manifest['target_migrations']), 7)
+        self.assertEqual(len(manifest['target_migrations']), 11)
         self.assertEqual(manifest['target_counts']['platform_ingestion_dispatch'], 0)
         self.assertNotIn('platform_ingestion_dispatch', manifest['input_counts'])
         self.assertNotIn('platform_ingestion_dispatch', manifest['output_counts'])
@@ -278,7 +278,7 @@ class MultiplatformMigrationTests(unittest.TestCase):
         self.addCleanup(target.close)
         conversion.apply_schema(target, 6)
         before = target.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").fetchall()
-        with self.assertRaisesRegex(sqlite3.OperationalError, 'platform_ingestion_dispatch'):
+        with self.assertRaisesRegex(sqlite3.OperationalError, 'no such table'):
             target.executescript((self.destination / 'import.sql').read_text())
         self.assertEqual(target.execute('SELECT count(*) FROM vods').fetchone()[0], 0)
         self.assertEqual(target.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").fetchall(), before)

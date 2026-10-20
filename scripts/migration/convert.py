@@ -216,8 +216,11 @@ def convert(source, destination):
             target_tables = [row[0] for row in target.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
             with private_open(destination / 'import.sql') as output:
-                nonempty = ' OR '.join(f'EXISTS(SELECT 1 FROM {table})' for table in target_tables if table != 'public_cache_state')
-                singleton = '(SELECT count(*) FROM public_cache_state)=1 AND EXISTS(SELECT 1 FROM public_cache_state WHERE id=1 AND revision=0)'
+                # platform_settings is seeded deployment configuration, never source data.
+                seeded = ('public_cache_state', 'public_search_state', 'platform_settings')
+                nonempty = ' OR '.join(f'EXISTS(SELECT 1 FROM {table})' for table in target_tables if table not in seeded)
+                singleton = ' AND '.join(f'(SELECT count(*) FROM {table})=1 AND EXISTS(SELECT 1 FROM {table} WHERE id=1 AND revision=0)'
+                                         for table in ('public_cache_state', 'public_search_state'))
                 output.write(f"INSERT INTO mutation_checks(id,ok) VALUES('snapshot-import-empty',NOT({nonempty}) AND {singleton});\n")
                 output.write("DELETE FROM mutation_checks WHERE id='snapshot-import-empty';\n")
                 # Only the old application's triggers are suspended. New clip/auth/cache
@@ -230,8 +233,10 @@ def convert(source, destination):
                     names = ','.join(f'"{column}"' for column in columns)
                     for values in db.execute(f'SELECT {quoted} FROM {table}'):
                         output.write(f'INSERT INTO {table}({names}) VALUES({",".join(values)});\n')
-                for _, sql in triggers:
-                    output.write(sql + ';\n')
+                for name, snapshot_sql in triggers:
+                    # The target's own definition wins: later migrations replace application triggers.
+                    row = target.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?", (name,)).fetchone()
+                    output.write((row[0] if row else snapshot_sql) + ';\n')
             target.executescript((destination / 'import.sql').read_text())
             if target.execute('PRAGMA foreign_key_check').fetchall():
                 raise ValueError('Generated import violates target foreign keys')
