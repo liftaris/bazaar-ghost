@@ -1,6 +1,11 @@
 import { external, HttpError, one, requireValue, statement, uuid } from './http';
-import { dispatchBranch } from './sources';
 import { platformEnabled } from './platform-settings';
+
+export function dispatchBranch(environment: string) {
+  const branches: Record<string, string> = { dev: 'dev', production: 'main', validation: 'migration/cloudflare' };
+  requireValue(Object.hasOwn(branches, environment), 'Dispatch requires dev, production or validation environment');
+  return branches[environment];
+}
 
 const CLOCK = "strftime('%Y-%m-%dT%H:%M:%fZ','now')";
 export const INGESTION_RUNNING_MINUTES = 40; // Workflow timeout is 35 minutes.

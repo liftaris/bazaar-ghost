@@ -49,8 +49,8 @@ beforeEach(async () => {
     ...tables.map((table) => env.DB.prepare(`DELETE FROM ${table}`)),
     // Every known platform starts fully enabled; tests switch off what they cover.
     env.DB.prepare("DELETE FROM platform_settings"),
-    env.DB.prepare(`INSERT INTO platform_settings(source,ingestion_enabled,discovery_enabled,processing_enabled)
-      VALUES('twitch',1,1,1),('youtube',1,1,1),('bilibili',1,1,1)`),
+    env.DB.prepare(`INSERT INTO platform_settings(source,ingestion_enabled,discovery_enabled,processing_enabled,notifications_enabled)
+      VALUES('twitch',1,1,1,1),('youtube',1,1,1,0),('bilibili',1,1,1,0)`),
   ]);
   for (const bucket of [env.DETECTIONS, env.LOGS]) {
     const page = await bucket.list();

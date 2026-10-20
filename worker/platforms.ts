@@ -1,6 +1,6 @@
 import { atomic } from './atomic';
 import { body, decodeRow, HttpError, integer, now, one, requireValue, rows, statement, uuid } from './http';
-import { accountIdentity, source, videoIdentity } from './sources';
+import { accountIdentity, ingestionPlatforms, listPlatforms, platform as platformEntry, requireIngestion, submissionIdentity, videoIdentity } from './platform-registry';
 import { dispatch, normalizeRanges, pendingVideos, plan, recover } from './processing';
 import { renewSubscription } from './youtube-websub';
 import { CLAIMABLE_INGESTION, finishIngestionRunner, runnerOwnership, startIngestionRunner } from './platform-ingestion-dispatch';
@@ -40,13 +40,11 @@ function accountLinkStatements(env:Env,id:string,input:Input) {
 }
 export async function accounts(env: Env, params: URLSearchParams) {
   if (params.has('id')) return rows(env, 'SELECT * FROM platform_accounts WHERE id=?', uuid(params.get('id'))).then(r=>r.map(decoded));
-  const platform = source(params.get('source'));
-  requireValue(platform !== 'twitch','Twitch uses the streamer catalog');
+  const platform = requireIngestion(params.get('source'),'Twitch uses the streamer catalog').id;
   return rows(env, 'SELECT * FROM platform_accounts WHERE source=? AND source_id=?',platform,accountIdentity(platform,params.get('source_id'))).then(r=>r.map(decoded));
 }
 export async function upsertAccount(env: Env, input: Input) {
-  const platform=source(input.source);
-  requireValue(platform !== 'twitch','Twitch uses the streamer catalog');
+  const platform=requireIngestion(input.source,'Twitch uses the streamer catalog').id;
   const identity=accountIdentity(platform,input.source_id), name=text(input.display_name,'display name');
   requireValue(input.processing_enabled == null || typeof input.processing_enabled === 'boolean','Invalid enablement');
   requireValue(input.preserve_disabled == null || typeof input.preserve_disabled === 'boolean','Invalid preserve_disabled');
@@ -103,7 +101,7 @@ export async function updateVideoProfile(env:Env,id:number,input:Input) {
   requireValue(Object.hasOwn(input,'sfde_profile_id'),'Provide a video profile ID or null to clear it');
   const accountId=uuid(input.account_id),profileId=input.sfde_profile_id===null?null:integer(input.sfde_profile_id,'profile ID',1);
   const checks=[
-    {sql:"SELECT EXISTS(SELECT 1 FROM vods WHERE id=? AND platform_account_id=? AND source IN('youtube','bilibili'))",args:[id,accountId]},
+    {sql:`SELECT EXISTS(SELECT 1 FROM vods WHERE id=? AND platform_account_id=? AND source IN(${ingestionPlatforms().map(()=>'?').join(',')}))`,args:[id,accountId,...ingestionPlatforms().map(entry=>entry.id)]},
     {sql:`SELECT NOT EXISTS(SELECT 1 FROM vod_processing_context v JOIN platform_accounts a ON a.id=v.platform_account_id
       JOIN chunks c ON c.vod_id=v.id WHERE v.id=? AND v.effective_profile_id<>coalesce(?,a.sfde_profile_id)
       AND c.status IN('queued','processing'))`,args:[id,profileId]},
@@ -116,8 +114,7 @@ export async function saveVideo(env: Env,input: Input) {
   const video=input.video;
   requireValue(video && typeof video==='object' && !Array.isArray(video),'Expected video');
   requireValue(!Object.hasOwn(video,'sfde_profile_id'),'Use the manual video-profile endpoint to change operator settings');
-  const platform=source(video.source);
-  requireValue(platform!=='twitch','Twitch uses its chapter catalog');
+  const platform=requireIngestion(video.source,'Twitch uses its chapter catalog').id;
   const identity=videoIdentity(platform,video.source_id), account=await one(env,'SELECT * FROM platform_accounts WHERE id=? AND source=?',uuid(input.account_id),platform);
   if(!account) throw new HttpError(404,'Platform account not found');
   const duration=integer(video.duration_seconds,'duration',1,604800), title=text(video.title,'title',1000);
@@ -129,12 +126,13 @@ export async function saveVideo(env: Env,input: Input) {
   const chapters=JSON.stringify(normalizeRanges(video.bazaar_chapters,duration).flat());
   requireValue(chapters!=='[]','Empty gameplay ranges');
   const recorded=date(video.recorded_at),published=date(video.published_at),template=video.template_version??'auto';
-  const [bv,cid]=platform==='bilibili'?identity.split(':'):[null,null];
-  const part=platform==='bilibili'?integer(video.source_part_index,'part index',1,10000):null;
-  if(platform==='bilibili') requireValue(video.source_video_id===bv && video.source_part_id===cid,'Bilibili part identity mismatch');
+  const parted=platformEntry(platform).recording.parts;
+  const [bv,cid]=parted?identity.split(':'):[null,null];
+  const part=parted?integer(video.source_part_index,'part index',1,10000):null;
+  if(parted) requireValue(video.source_video_id===bv && video.source_part_id===cid,'Part identity mismatch');
   const checks=jobChecks(input, `AND j.source=? AND j.kind='video' AND j.source_id=? AND j.account_id=?
     AND EXISTS(SELECT 1 FROM platform_accounts a WHERE a.id=j.account_id AND a.source=j.source AND a.processing_enabled=1)`,
-    [platform,platform==='bilibili'?bv:identity,account.id]);
+    [platform,parted?bv:identity,account.id]);
   // Check timeline/ownership in the same transaction as metadata mutation and competing planners.
   checks.push({sql:`SELECT NOT EXISTS(SELECT 1 FROM vods v WHERE v.source=? AND v.source_id=? AND (
     v.platform_account_id<>? OR (EXISTS(SELECT 1 FROM chunks WHERE vod_id=v.id) AND (v.duration_seconds<>? OR (? AND v.bazaar_chapters<>?) OR (? IS NOT NULL AND v.recorded_at IS NOT ?) OR (?<>'auto' AND v.template_version<>?)))))`,
@@ -151,13 +149,12 @@ export async function saveVideo(env: Env,input: Input) {
   return decoded(saved);
 }
 function jobIdentity(input: Input) {
-  const platform=source(input.source); requireValue(platform!=='twitch','Invalid ingestion source');
+  const platform=requireIngestion(input.source,'Invalid ingestion source').id;
   requireValue(['account','video','discovery'].includes(input.kind),'Invalid ingestion kind');
   const identity=text(input.source_id,'ingestion identity',100);
   if(input.kind==='account') accountIdentity(platform,identity);
   else if(input.kind==='discovery') requireValue(identity==='bazaar','Invalid discovery identity');
-  else if(platform==='youtube') videoIdentity(platform,identity);
-  else requireValue(/^BV[A-Za-z0-9]{10}$/.test(identity),'Expected Bilibili submission ID');
+  else submissionIdentity(platform,identity);
   if(input.account_id!=null) uuid(input.account_id);
   requireValue(input.kind!=='account'||input.account_id,'Account job requires account');
   requireValue(input.wake==null||typeof input.wake==='boolean','Invalid wake');
@@ -238,9 +235,10 @@ export async function catalogRoute(req:Request,env:Env) {
     result=true;
   } else if(path==='/subscriptions/renew') {
     const accountId=uuid(data.account_id);
+    const push=listPlatforms().filter(entry=>entry.adapters.push==='websub').map(entry=>entry.id);
     result=await renewSubscription(env,accountId,jobChecks(data,
-      `AND j.source='youtube' AND j.kind='account' AND j.account_id=? AND EXISTS(
-        SELECT 1 FROM platform_accounts a WHERE a.id=j.account_id AND a.processing_enabled=1)`, [accountId]));
+      `AND j.source IN(${push.map(()=>'?').join(',')}) AND j.kind='account' AND j.account_id=? AND EXISTS(
+        SELECT 1 FROM platform_accounts a WHERE a.id=j.account_id AND a.processing_enabled=1)`, [...push,accountId]));
   } else if(path==='/dispatch') {
     requireValue(data.expected_environment===env.ENVIRONMENT,'Environment mismatch');
     requireValue(data.dry_run==null||typeof data.dry_run==='boolean','Invalid dry_run');

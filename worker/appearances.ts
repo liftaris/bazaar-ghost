@@ -1,8 +1,9 @@
 import { atomic } from './atomic';
 import { decodeRow, integer, now, one, requireValue, rows, statement, uuid } from './http';
-import { source } from './sources';
+import { recordingUrls, source } from './platform-registry';
 
 type Input=Record<string,any>;
+const withUrls=<T extends Record<string,any>>(row:T):T&ReturnType<typeof recordingUrls>=>({...row,...recordingUrls(row)});
 function filters(input:Input) {
   const clauses:string[]=[],args:unknown[]=[];
   if(input.search_query!=null) {
@@ -17,7 +18,7 @@ function filters(input:Input) {
 }
 export async function videoSearch(env:Env,input:Input) {
   const {where,args,limit,offset}=filters(input);
-  return (await rows(env,`SELECT * FROM video_detections ${where} ORDER BY indexed_at DESC,detection_id LIMIT ? OFFSET ?`,...args,limit,offset)).map(decodeRow);
+  return (await rows(env,`SELECT * FROM video_detections ${where} ORDER BY indexed_at DESC,detection_id LIMIT ? OFFSET ?`,...args,limit,offset)).map(decodeRow).map(withUrls);
 }
 export async function appearanceSearch(env:Env,input:Input) {
   const {where,args,limit,offset}=filters(input);
@@ -27,7 +28,7 @@ export async function appearanceSearch(env:Env,input:Input) {
     'detection_id','username','confidence','rank','frame_time_seconds','storage_path',
     'no_right_edge','truncated','igd','indexed_at','vod_id','source','source_id',
     'source_video_id','source_part_id','source_part_index','title','published_at',
-    'recorded_at','platform_account_id','streamer_id','creator_name','video_url','embed_url','recorded_timestamp',
+    'recorded_at','platform_account_id','streamer_id','creator_name','recorded_timestamp',
   ];
   const jsonObject = fields.map(field => `'${field}',${field}`).join(',');
   // One SQL statement provides one snapshot for group selection and all of its copies.
@@ -40,7 +41,7 @@ export async function appearanceSearch(env:Env,input:Input) {
         (SELECT * FROM visible WHERE group_id=selected.group_id ORDER BY confidence DESC,detection_id)) AS copies
     FROM selected ORDER BY selected.latest DESC,selected.group_id`,...args,limit,offset);
   return groups.map(group=>{
-    const appearances = (JSON.parse(group.copies) as Record<string,unknown>[]).map(decodeRow);
+    const appearances = (JSON.parse(group.copies) as Record<string,unknown>[]).map(decodeRow).map(withUrls);
     return {matchup_id:group.group_id,username:appearances[0].username,appearances,total_count:group.total_count};
   });
 }

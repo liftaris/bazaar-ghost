@@ -14,6 +14,26 @@ export interface Creator {
   login: string | null;
   avatarUrl: string | null;
 }
+/** What a platform's player and catalog support; clients gate UI on these instead of platform names. */
+export interface PlatformCapabilities {
+  seek: boolean;
+  timeEvents: boolean;
+  mute: boolean;
+  fullscreen: boolean;
+  swap: boolean;
+  clips: boolean;
+  createClip: boolean;
+  clipParentRange: boolean;
+  qualitySelectable: boolean;
+}
+/** A registered platform. `Platform` above stays a closed union for v1 only. */
+export interface PlatformDefinition {
+  id: string;
+  name: string;
+  mark: string;
+  capabilities: PlatformCapabilities;
+  embed: { kind: string; requires: string[] };
+}
 /** Public OCR quality summary used by the existing help page. */
 export interface CreatorQuality {
   login: string;
@@ -98,6 +118,7 @@ export interface PublicRoutes {
   "/videos": Page<Video>;
   "/videos/resolve": Video;
   "/stats": Stats;
+  "/platforms": Page<PlatformDefinition>;
   [path: `/videos/${number}/playback`]: Playback;
   [path: `/videos/${number}/timeline`]: Page<TimelineMarker>;
   [path: `/matchups/${number}`]: MatchupDetail;

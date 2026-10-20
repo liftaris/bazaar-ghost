@@ -10,7 +10,8 @@ import {
   decodeRow,
   external,
 } from "./http";
-import { dispatchBranch, source, videoIdentity } from "./sources";
+import { source, videoIdentity, ingestionPlatforms } from "./platform-registry";
+import { dispatchBranch } from "./platform-ingestion-dispatch";
 import { atomic } from "./atomic";
 import { automaticVideoPredicate } from "./automatic-processing";
 import { expectedProfile, profileCheck } from "./profiles";
@@ -179,7 +180,7 @@ export async function pendingVideos(env: Env, limit = 3, platformsOnly = false) 
     WHERE v.processing_enabled=1 AND v.ready_for_processing=1 AND v.availability='available'
     AND v.status IN('pending','partial','failed') AND json_array_length(v.bazaar_chapters)>0
     AND ${automaticVideoPredicate}
-    ${platformsOnly ? "AND v.source IN('youtube','bilibili')" : ''}
+    ${platformsOnly ? `AND v.source IN(${ingestionPlatforms().map(entry => `'${entry.id}'`).join(',')})` : ''}
     AND (NOT EXISTS(SELECT 1 FROM chunks WHERE vod_id=v.id) OR EXISTS(
       SELECT 1 FROM chunks WHERE vod_id=v.id AND status='pending' AND (scheduled_for IS NULL OR scheduled_for<=?)))
     ORDER BY coalesce((SELECT max(priority) FROM chunks WHERE vod_id=v.id AND status='pending'

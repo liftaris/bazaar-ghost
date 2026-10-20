@@ -3,7 +3,7 @@ import { XMLParser, XMLValidator } from "fast-xml-parser";
 import { atomic } from "./atomic";
 import { external, HttpError, now, one, readBytes, statement, uuid } from "./http";
 import { enqueueStatement } from "./platforms";
-import { accountIdentity } from "./sources";
+import { accountIdentity } from "./platform-registry";
 
 const ATOM = "http://www.w3.org/2005/Atom";
 const YOUTUBE = "http://www.youtube.com/xml/schemas/2015";

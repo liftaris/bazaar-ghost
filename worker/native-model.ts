@@ -1,3 +1,4 @@
+import { embedUrl, watchUrl } from "./platform-registry";
 import type {
   Creator,
   Matchup,
@@ -101,22 +102,13 @@ export function matchup(row: MatchupRow): Matchup {
 }
 /** Platform-specific playback information; Twitch requires the browser's parent domain. */
 export function player(row: VideoRow) {
-  let watchUrl: string, embedUrl: string | null;
-  if (row.source === "twitch") {
-    watchUrl = `https://www.twitch.tv/videos/${row.source_id}`;
-    embedUrl = null;
-  } else if (row.source === "youtube") {
-    watchUrl = `https://www.youtube.com/watch?v=${row.source_id}`;
-    embedUrl = `https://www.youtube.com/embed/${row.source_id}`;
-  } else {
-    watchUrl = `https://www.bilibili.com/video/${row.source_video_id}/?p=${row.source_part_index}`;
-    embedUrl = `https://player.bilibili.com/player.html?bvid=${row.source_video_id}&cid=${row.source_part_id}&p=${row.source_part_index}`;
-  }
+  const recording = { sourceId: row.source_id, videoId: row.source_video_id, partId: row.source_part_id, partIndex: row.source_part_index };
+  const watch = watchUrl(row.source, recording), embed = embedUrl(row.source, recording);
   return {
     platform: row.source,
     sourceId: row.source_id,
-    watchUrl,
-    embedUrl,
+    watchUrl: watch,
+    embedUrl: embed,
     available: row.availability === "available",
   };
 }

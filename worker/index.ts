@@ -29,7 +29,7 @@ import {
 } from "./jobs";
 import { catalogRoute } from "./platforms";
 import { youtubeWebhook } from "./youtube-websub";
-import { source, videoIdentity } from "./sources";
+import { source, videoIdentity } from "./platform-registry";
 import { linkAppearances, unlinkAppearance } from "./appearances";
 import { authRoute, authenticated } from "./auth";
 import { socialRoute } from "./social";

@@ -2,7 +2,7 @@ import { atomic } from './atomic';
 import { authenticated, identityCheck, requireCsrf, type AuthEnv, type Identity } from './auth';
 import { digest, only, privateResponse } from './auth/security';
 import { authorized, HttpError, integer, one, readBytes, requireValue, rows, statement, uuid } from './http';
-import { source } from './sources';
+import { recordingUrls, source } from './platform-registry';
 
 type Check = { sql: string; args: unknown[] };
 type Category = 'reaction' | 'comment' | 'report';
@@ -10,7 +10,8 @@ interface ClipRow {
   id: number; vod_id: number; anchor_seconds: number; created_at: string;
   source: string; source_id: string; title: string | null; availability: string;
   detection_id: string | null; username: string | null; confidence: number | null;
-  rank: string | null; igd: number | null; storage_path: string | null; video_url: string | null;
+  rank: string | null; igd: number | null; storage_path: string | null;
+  frame_time_seconds: number | null; source_video_id: string | null; source_part_id: string | null; source_part_index: number | null;
   like_count: number;
 }
 interface CommentRow {
@@ -19,7 +20,7 @@ interface CommentRow {
   created_at: string; updated_at: string;
 }
 const clipFields = `c.id,c.vod_id,c.anchor_seconds,c.created_at,v.source,v.source_id,v.title,v.availability,
-  d.detection_id,d.username,d.confidence,d.rank,d.igd,d.storage_path,d.video_url,
+  d.detection_id,d.username,d.confidence,d.rank,d.igd,d.storage_path,d.frame_time_seconds,d.source_video_id,d.source_part_id,d.source_part_index,
   (SELECT count(*) FROM clip_likes l JOIN app_users u ON u.id=l.user_id WHERE l.clip_id=c.id AND u.status='active') AS like_count`;
 const clipFrom = `FROM clips c JOIN vods v ON v.id=c.vod_id
   LEFT JOIN video_detections d ON d.detection_id=c.current_detection_id`;
@@ -68,7 +69,7 @@ function publicClip(row: ClipRow) {
   return { id: row.id, vod_id: row.vod_id, anchor_seconds: row.anchor_seconds, created_at: row.created_at,
     source: row.source, source_id: row.source_id, title: row.title, availability: row.availability,
     detection: row.detection_id ? { id: row.detection_id, username: row.username, confidence: row.confidence,
-      rank: row.rank, igd: row.igd, screenshot: row.storage_path, video_url: row.video_url } : null,
+      rank: row.rank, igd: row.igd, screenshot: row.storage_path, video_url: recordingUrls(row).video_url } : null,
     like_count: row.like_count };
 }
 function publicComment(row: CommentRow) {

@@ -1,6 +1,7 @@
 import { decodeRow, HttpError, integer, one, requireValue, rows } from "./http";
 import { search } from "./search";
 import { videoSearch, appearanceSearch } from "./appearances";
+import { recordingUrls } from "./platform-registry";
 
 // Deliberately bounded compatibility for this application's read-only PostgREST contracts.
 const views = new Set([
@@ -19,13 +20,19 @@ export async function publicRead(req: Request, env: Env, view: string) {
   const allowed = new Set<string>(
     columns.map((c) => c.name).filter((n) => !privateColumns.has(n)),
   );
+  // video_detections URLs are built from the platform registry, not stored in the view.
+  const derived = view === "video_detections" ? ["video_url", "embed_url"] : [];
   const check = (field: string) => {
     requireValue(allowed.has(field), "Unknown column");
     return `"${field}"`;
   };
   const params = new URL(req.url).searchParams;
   const selected = params.get("select") || "*";
-  const projection = (selected === "*" ? [...allowed] : selected.split(","))
+  const wanted = selected === "*" ? [...allowed, ...derived] : selected.split(",");
+  const urlFields = ["frame_time_seconds", "source", "source_id", "source_video_id", "source_part_id", "source_part_index"];
+  const stored = wanted.filter((field) => !derived.includes(field));
+  const needsUrls = stored.length !== wanted.length;
+  const projection = [...stored, ...(needsUrls ? urlFields.filter((field) => !stored.includes(field)) : [])]
     .map(check)
     .join(",");
   const clauses: string[] = [],
@@ -105,7 +112,13 @@ export async function publicRead(req: Request, env: Env, view: string) {
       limit,
       offset,
     )
-  ).map(decodeRow);
+  ).map(decodeRow).map((row) => {
+    if (!needsUrls) return row;
+    const urls: Record<string, unknown> = recordingUrls(row);
+    const shaped: Record<string, unknown> = {};
+    for (const field of wanted) shaped[field] = derived.includes(field) ? urls[field] : row[field];
+    return shaped;
+  });
   const count = (await one(
     env,
     `SELECT count(*) AS n FROM ${view}${where}`,

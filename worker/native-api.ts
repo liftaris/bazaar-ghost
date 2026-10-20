@@ -18,6 +18,7 @@ import {
 import { trigrams } from "./search";
 import { missingChunks, normalizeRanges } from "./processing";
 import { publicCache } from "./cache";
+import { listPlatforms } from "./platform-registry";
 
 const prefix = "/api/v1";
 const idValue = (value: string) => {
@@ -47,7 +48,7 @@ function filters(url: URL, alias: string) {
     account = url.searchParams.get("creatorId");
   if (source) {
     requireValue(
-      ["twitch", "youtube", "bilibili"].includes(source),
+      listPlatforms().some((entry) => entry.id === source),
       "Invalid source",
     );
     clauses.push(`${alias}.source=?`);
@@ -55,7 +56,7 @@ function filters(url: URL, alias: string) {
   }
   if (account) {
     requireValue(
-      /^(twitch:[1-9]\d*|(?:youtube|bilibili):[0-9a-f-]{36})$/.test(account),
+      new RegExp(`^(twitch:[1-9]\\d*|(?:${listPlatforms().map((entry) => entry.id).join("|")}):[0-9a-f-]{36})$`).test(account),
       "Invalid creator ID",
     );
     clauses.push(`${alias}.creator_id=?`);
@@ -308,7 +309,7 @@ async function detail(env: Env, url: URL, id: number): Promise<MatchupDetail> {
 }
 /** Recognize only explicit public contracts; social/auth routes keep their private behavior. */
 export function nativePath(path: string) {
-  return /^\/api\/v1\/(search|creators(?:\/(?:resolve|quality))?|videos(?:\/resolve|\/[1-9]\d*\/(?:playback|timeline))?|matchups\/[1-9]\d*|stats)$/.test(
+  return /^\/api\/v1\/(search|creators(?:\/(?:resolve|quality))?|videos(?:\/resolve|\/[1-9]\d*\/(?:playback|timeline))?|matchups\/[1-9]\d*|stats|platforms)$/.test(
     path,
   );
 }
@@ -323,7 +324,13 @@ async function nativeLoad(req: Request, env: Env): Promise<Response> {
     path = url.pathname.slice(prefix.length);
   let result: unknown;
   if (path === "/search") result = await search(env, url);
-  else if (path === "/creators") result = await creators(env, url);
+  else if (path === "/platforms") {
+    parameters(url, []);
+    result = {
+      items: listPlatforms().map(({ id, name, mark, capabilities, embed }) => ({ id, name, mark, capabilities, embed })),
+      nextCursor: null,
+    };
+  } else if (path === "/creators") result = await creators(env, url);
   else if (path === "/videos") result = await videos(env, url);
   else if (path === "/videos/resolve") {
     parameters(url, ["source", "sourceId"]);
@@ -402,8 +409,8 @@ async function nativeLoad(req: Request, env: Env): Promise<Response> {
  * Never cache session state, errors, or a response spanning a correction.
  */
 export async function nativeRoute(req: Request, env: Env): Promise<Response> {
-  if (req.method !== "GET") return nativeLoad(req, env);
   const url = new URL(req.url);
+  if (req.method !== "GET" || url.pathname === `${prefix}/platforms`) return nativeLoad(req, env);
   const state = await boundary(env, url);
   const cacheUrl = new URL(url);
   cacheUrl.searchParams.set(

@@ -5,7 +5,8 @@ import { one,rows,statement } from '../http';
 import { plan,claim,owned,dispatch } from '../processing';
 import { linkAppearances,unlinkAppearance,appearanceSearch } from '../appearances';
 import { publish,upload } from '../detections';
-import { dispatchBranch } from '../sources';
+import { dispatchBranch } from '../platform-ingestion-dispatch';
+import { recordingUrls } from '../platform-registry';
 
 beforeEach(async()=>{
  vi.stubGlobal('fetch',vi.fn(()=>{throw new Error('Unexpected external request');}));
@@ -40,7 +41,7 @@ it('keeps the Twitch player contract free of non-Twitch identities and exposes p
  expect(await rows(env,'SELECT * FROM detection_search')).toEqual([]);
  expect(await rows(env,'SELECT * FROM vod_embed_info')).toEqual([]);
  const publicRow=(await one(env,'SELECT * FROM video_detections'))!;
- expect(publicRow.source_part_id).toBe('123');expect(publicRow.video_url).toContain('?p=2&t=12');expect(publicRow.embed_url).toContain('cid=123');expect(publicRow.recorded_timestamp).toBeNull();expect(publicRow.igd).toBe(9);
+ expect(publicRow.source_part_id).toBe('123');const urls=recordingUrls(publicRow);expect(urls.video_url).toContain('?p=2&t=12');expect(urls.embed_url).toContain('cid=123');expect(publicRow.recorded_timestamp).toBe('2026-09-07T10:00:12.000Z');expect(publicRow.igd).toBe(9);
  expect(await rows(env,'SELECT * FROM notification_outbox')).toEqual([]);
  const image=await SELF.fetch(`http://local${d.path}`);expect(image.status).toBe(200);
 });

@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "platforms": [
+    {
+      "id": "twitch",
+      "name": "Twitch",
+      "mark": "twitch",
+      "recording": {
+        "idPattern": "^[1-9][0-9]{0,24}$",
+        "submissionPattern": "^[1-9][0-9]{0,24}$",
+        "parts": false,
+        "urlPatterns": ["^https?://(?:www\\.|m\\.)?twitch\\.tv/videos/(?<id>[1-9][0-9]{0,24})(?:[/?#].*)?$"],
+        "watchUrl": "https://www.twitch.tv/videos/{id}",
+        "watchUrlAt": "https://www.twitch.tv/videos/{id}?t={t}s",
+        "embedUrl": null,
+        "embedUrlAt": null,
+        "resolveUrl": "https://www.twitch.tv/videos/{id}",
+        "resolveUrlAt": "https://www.twitch.tv/videos/{id}?t={t}s",
+        "timestampFormat": "hms"
+      },
+      "channel": {
+        "idPattern": "^[1-9][0-9]{0,24}$",
+        "urlPatterns": ["^https?://(?:www\\.|m\\.)?twitch\\.tv/(?<login>[A-Za-z0-9_]{1,25})/?(?:[?#].*)?$"],
+        "profileUrl": "https://www.twitch.tv/{login}"
+      },
+      "clip": {
+        "idPattern": null,
+        "urlPatterns": [],
+        "watchUrl": null,
+        "embedUrl": null
+      },
+      "capabilities": {
+        "seek": true,
+        "timeEvents": true,
+        "mute": true,
+        "fullscreen": true,
+        "swap": true,
+        "clips": true,
+        "createClip": false,
+        "clipParentRange": true,
+        "qualitySelectable": true
+      },
+      "embed": { "kind": "twitch-player", "requires": ["parent"] },
+      "adapters": { "catalog": "twitch", "ingestion": null, "discovery": null, "media": "streamlink", "push": null }
+    },
+    {
+      "id": "youtube",
+      "name": "YouTube",
+      "mark": "youtube",
+      "recording": {
+        "idPattern": "^[A-Za-z0-9_-]{11}$",
+        "submissionPattern": "^[A-Za-z0-9_-]{11}$",
+        "parts": false,
+        "urlPatterns": [
+          "^https?://(?:www\\.|m\\.)?youtube\\.com/watch\\?(?:[^#]*&)?v=(?<id>[A-Za-z0-9_-]{11})(?:[&#].*)?$",
+          "^https?://youtu\\.be/(?<id>[A-Za-z0-9_-]{11})(?:[/?#].*)?$",
+          "^https?://(?:www\\.|m\\.)?youtube\\.com/(?:live|shorts|embed)/(?<id>[A-Za-z0-9_-]{11})(?:[/?#].*)?$"
+        ],
+        "watchUrl": "https://www.youtube.com/watch?v={id}",
+        "watchUrlAt": "https://www.youtube.com/watch?v={id}&t={t}s",
+        "embedUrl": "https://www.youtube.com/embed/{id}",
+        "embedUrlAt": "https://www.youtube.com/embed/{id}?start={t}",
+        "resolveUrl": "https://www.youtube.com/watch?v={id}",
+        "resolveUrlAt": "https://www.youtube.com/watch?v={id}&t={t}s",
+        "timestampFormat": "seconds"
+      },
+      "channel": {
+        "idPattern": "^UC[A-Za-z0-9_-]{22}$",
+        "urlPatterns": ["^https?://(?:www\\.|m\\.)?youtube\\.com/channel/(?<id>UC[A-Za-z0-9_-]{22})(?:[/?#].*)?$"],
+        "profileUrl": "https://www.youtube.com/channel/{id}"
+      },
+      "clip": {
+        "idPattern": null,
+        "urlPatterns": [],
+        "watchUrl": null,
+        "embedUrl": null
+      },
+      "capabilities": {
+        "seek": true,
+        "timeEvents": true,
+        "mute": true,
+        "fullscreen": true,
+        "swap": true,
+        "clips": false,
+        "createClip": false,
+        "clipParentRange": false,
+        "qualitySelectable": false
+      },
+      "embed": { "kind": "iframe", "requires": [] },
+      "adapters": { "catalog": "youtube", "ingestion": "youtube", "discovery": "youtube", "media": "streamlink", "push": "websub" }
+    },
+    {
+      "id": "bilibili",
+      "name": "Bilibili",
+      "mark": "bilibili",
+      "recording": {
+        "idPattern": "^BV[A-Za-z0-9]{10}:[1-9][0-9]{0,24}$",
+        "submissionPattern": "^BV[A-Za-z0-9]{10}$",
+        "parts": true,
+        "urlPatterns": ["^https?://(?:www\\.)?bilibili\\.com/video/(?<videoId>BV[A-Za-z0-9]{10})/?(?:\\?(?:[^#]*&)?p=(?<partIndex>[1-9][0-9]*))?(?:[&#].*)?$"],
+        "watchUrl": "https://www.bilibili.com/video/{videoId}/?p={partIndex}",
+        "watchUrlAt": "https://www.bilibili.com/video/{videoId}/?p={partIndex}&t={t}",
+        "embedUrl": "https://player.bilibili.com/player.html?bvid={videoId}&cid={partId}&p={partIndex}",
+        "embedUrlAt": "https://player.bilibili.com/player.html?bvid={videoId}&cid={partId}&t={t}",
+        "resolveUrl": "https://www.bilibili.com/video/{videoId}/?cid={partId}",
+        "resolveUrlAt": "https://www.bilibili.com/video/{videoId}/?cid={partId}&t={t}",
+        "timestampFormat": "seconds"
+      },
+      "channel": {
+        "idPattern": "^[1-9][0-9]{0,24}$",
+        "urlPatterns": ["^https?://space\\.bilibili\\.com/(?<id>[1-9][0-9]{0,24})(?:[/?#].*)?$"],
+        "profileUrl": "https://space.bilibili.com/{id}"
+      },
+      "clip": {
+        "idPattern": null,
+        "urlPatterns": [],
+        "watchUrl": null,
+        "embedUrl": null
+      },
+      "capabilities": {
+        "seek": true,
+        "timeEvents": false,
+        "mute": false,
+        "fullscreen": true,
+        "swap": true,
+        "clips": false,
+        "createClip": false,
+        "clipParentRange": false,
+        "qualitySelectable": false
+      },
+      "embed": { "kind": "iframe", "requires": [] },
+      "adapters": { "catalog": "bilibili", "ingestion": "bilibili", "discovery": "bilibili", "media": "streamlink", "push": null }
+    }
+  ]
+}

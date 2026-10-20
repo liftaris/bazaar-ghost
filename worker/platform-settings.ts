@@ -1,5 +1,5 @@
 import { now, one, requireValue, rows, statement } from "./http";
-import { source, sources, type Source } from "./sources";
+import { listPlatforms, source, type Source } from "./platform-registry";
 
 export const PLATFORM_SETTINGS = ["ingestion_enabled", "discovery_enabled", "processing_enabled"] as const;
 export type PlatformSetting = typeof PLATFORM_SETTINGS[number];
@@ -16,7 +16,7 @@ export async function isPlatformEnabled(env: Env, platform: Source, setting: Pla
 /** Every known platform, including ones without a row (reported as fully off). */
 export async function platformSettings(env: Env) {
   const saved = new Map((await rows(env, "SELECT * FROM platform_settings")).map(row => [row.source, row]));
-  const known = new Set<string>([...sources, ...saved.keys()]);
+  const known = new Set<string>([...listPlatforms().map(entry => entry.id), ...saved.keys()]);
   return [...known].sort().map(name => {
     const row = saved.get(name);
     return {

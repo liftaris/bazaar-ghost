@@ -1,0 +1,38 @@
+{
+  "videoIdentity": {
+    "twitch": { "valid": ["1", "2863728070"], "invalid": ["0", "abc", "", "12a", "BV1234567890:123"] },
+    "youtube": { "valid": ["abcdefghijk", "0C6bxQsDj-s"], "invalid": ["short", "abcdefghijkl", "abc defghijk", ""] },
+    "bilibili": { "valid": ["BV1234567890:123"], "invalid": ["BV1234567890", "BV1234567890:0", "av123:1", "123"] }
+  },
+  "accountIdentity": {
+    "twitch": { "valid": ["12345"], "invalid": ["0", "login"] },
+    "youtube": { "valid": ["UCabcdefghijklmnopqrstuv"], "invalid": ["abcdefghijklmnopqrstuvwx", "UCshort"] },
+    "bilibili": { "valid": ["12345"], "invalid": ["0", "BV1234567890"] }
+  },
+  "urls": [
+    { "platform": "twitch", "values": { "id": "123" },
+      "watchUrl": "https://www.twitch.tv/videos/123", "watchUrlAt": "https://www.twitch.tv/videos/123?t=12s",
+      "embedUrl": null, "embedUrlAt": null,
+      "resolveUrl": "https://www.twitch.tv/videos/123", "resolveUrlAt": "https://www.twitch.tv/videos/123?t=12s" },
+    { "platform": "youtube", "values": { "id": "abcdefghijk" },
+      "watchUrl": "https://www.youtube.com/watch?v=abcdefghijk", "watchUrlAt": "https://www.youtube.com/watch?v=abcdefghijk&t=12s",
+      "embedUrl": "https://www.youtube.com/embed/abcdefghijk", "embedUrlAt": "https://www.youtube.com/embed/abcdefghijk?start=12",
+      "resolveUrl": "https://www.youtube.com/watch?v=abcdefghijk", "resolveUrlAt": "https://www.youtube.com/watch?v=abcdefghijk&t=12s" },
+    { "platform": "bilibili", "values": { "id": "BV1234567890:123", "videoId": "BV1234567890", "partId": "123", "partIndex": 2 },
+      "watchUrl": "https://www.bilibili.com/video/BV1234567890/?p=2", "watchUrlAt": "https://www.bilibili.com/video/BV1234567890/?p=2&t=12",
+      "embedUrl": "https://player.bilibili.com/player.html?bvid=BV1234567890&cid=123&p=2",
+      "embedUrlAt": "https://player.bilibili.com/player.html?bvid=BV1234567890&cid=123&t=12",
+      "resolveUrl": "https://www.bilibili.com/video/BV1234567890/?cid=123", "resolveUrlAt": "https://www.bilibili.com/video/BV1234567890/?cid=123&t=12" }
+  ],
+  "parse": [
+    { "url": "https://www.twitch.tv/videos/123?t=1h", "expect": { "platform": "twitch", "kind": "recording", "groups": { "id": "123" } } },
+    { "url": "https://www.twitch.tv/somestreamer", "expect": { "platform": "twitch", "kind": "channel", "groups": { "login": "somestreamer" } } },
+    { "url": "https://youtu.be/abcdefghijk", "expect": { "platform": "youtube", "kind": "recording", "groups": { "id": "abcdefghijk" } } },
+    { "url": "https://www.youtube.com/watch?v=abcdefghijk&t=5s", "expect": { "platform": "youtube", "kind": "recording", "groups": { "id": "abcdefghijk" } } },
+    { "url": "https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv", "expect": { "platform": "youtube", "kind": "channel", "groups": { "id": "UCabcdefghijklmnopqrstuv" } } },
+    { "url": "https://www.bilibili.com/video/BV1234567890/?p=2", "expect": { "platform": "bilibili", "kind": "recording", "groups": { "videoId": "BV1234567890", "partIndex": "2" } } },
+    { "url": "https://www.bilibili.com/video/BV1234567890", "expect": { "platform": "bilibili", "kind": "recording", "groups": { "videoId": "BV1234567890" } } },
+    { "url": "https://space.bilibili.com/12345/video", "expect": { "platform": "bilibili", "kind": "channel", "groups": { "id": "12345" } } },
+    { "url": "https://example.com/watch?v=abcdefghijk", "expect": null }
+  ]
+}
