@@ -41,11 +41,12 @@ beforeEach(async () => {
     statement(env, "INSERT INTO sfde_profiles(id,profile_name,crop_region) VALUES(1,'test','[0,0,1,1]')"),
     statement(env, "INSERT INTO streamers(id,login,display_name) VALUES(1,'example','Example')"),
     statement(env, "INSERT INTO platform_accounts(id,source,source_id,display_name,login) VALUES(?,'youtube',?,'Example YT','exampleyt'),(?,'youtube',?,'Reuploader','reup'),(?,'bilibili','12345','Example BB',NULL)", CH.yt1, UC("a"), CH.yt2, UC("b"), CH.bb1),
-    statement(env, "UPDATE platform_accounts SET reupload_of=1 WHERE id=?", CH.yt2),
   ]);
   for (const id of [1, 2]) await vod({ id, source: "twitch" });
 });
 
+/** The provisional Streamer that owns the reuploader Channel. */
+const reuploader = async () => (await one(env, "SELECT id FROM streamer_identities WHERE provisional_channel_id=?", CH.yt2))!.id as number;
 let counter = 100;
 interface VodOptions {
   id?: number;
@@ -210,7 +211,8 @@ it("filters by Streamer across Channels and reuploads attributed through the Ses
   expect(await names("streamerId=1")).toEqual(["Bilifight", "Reuploadfight", "Twitchfight", "Youtubefight"]);
   expect(await names(`streamerId=${other.id}`)).toEqual([]);
   const reuploaded = (await get<Page<MatchupResult>>("/search?q=reuploadfight")).items[0];
-  expect(reuploaded.sources[0]).toMatchObject({ isReupload: true, channel: { id: CH.yt2, streamerId: null } });
+  // Reuploaders are their own (provisional) Streamers; the Session still attributes the Matchup to Streamer 1.
+  expect(reuploaded.sources[0]).toMatchObject({ isReupload: true, channel: { id: CH.yt2, streamerId: await reuploader() } });
   expect(reuploaded.streamer?.id).toBe(1);
 });
 it("filters by Channel, Recording and registry-validated platform, including a platform added without code changes", async () => {
@@ -358,7 +360,7 @@ it("returns platform-neutral Recordings, lookups and player capabilities for a Y
   await evidence(20, "Opponent", yt);
   const playback = await get<Playback>(`/recordings/${yt}/playback`);
   expect(playback.player).toMatchObject({ platform: "youtube", embedUrl: expect.stringContaining("/embed/"), available: true });
-  expect(playback.recording).toMatchObject({ id: yt, platform: "youtube", channel: { id: CH.yt2, displayName: "Reuploader", login: "reup", streamerId: null }, matchupCount: 1 });
+  expect(playback.recording).toMatchObject({ id: yt, platform: "youtube", channel: { id: CH.yt2, displayName: "Reuploader", login: "reup", streamerId: await reuploader() }, matchupCount: 1 });
   const found = (await get<Page<MatchupResult>>("/search?platform=youtube")).items;
   expect(playback.timeline.items[0].id).toBe(found[0].id);
   const detections = await get<Page<Evidence>>(`/recordings/${yt}/detections`);
@@ -462,7 +464,7 @@ it("lists Sessions as lean cards: searchable, filterable, newest first, pageable
     platforms: ["twitch", "youtube"],
     defaultRecording: { id: 1, platform: "twitch" },
   });
-  expect(list.items[1]).toMatchObject({ streamer: null, channel: { id: CH.yt2, streamerId: null }, title: "Unrelated stream", platforms: ["youtube"] });
+  expect(list.items[1]).toMatchObject({ streamer: { id: await reuploader(), displayName: "Reuploader" }, channel: { id: CH.yt2, streamerId: await reuploader() }, title: "Unrelated stream", platforms: ["youtube"] });
   const ids = async (query: string) => (await get<Page<SessionCard>>(`/sessions?${query}`)).items.map((s) => s.id);
   expect(await ids("streamerId=1")).toEqual([home, await sessionOf(2)]);
   expect(await ids("streamerId=999")).toEqual([]);

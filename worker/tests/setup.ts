@@ -53,7 +53,6 @@ beforeEach(async () => {
   ];
   await env.DB.batch([
     env.DB.prepare("UPDATE streamer_identities SET provisional_channel_id=NULL"),
-    env.DB.prepare("UPDATE platform_accounts SET reupload_of=NULL"),
     ...tables.map((table) => env.DB.prepare(`DELETE FROM ${table}`)),
     // Every known platform starts fully enabled; tests switch off what they cover.
     env.DB.prepare("DELETE FROM platform_settings"),

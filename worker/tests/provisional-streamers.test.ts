@@ -75,29 +75,6 @@ it('merges a provisional Streamer into the real one, moving Channels and Session
   expect((await admin('/api/admin/streamers/4242/merge', 'POST', { into: prov })).status).toBe(409);
 });
 
-it('marks a Channel as a reupload: retires its provisional Streamer and makes its Recordings reuploads', async () => {
-  await env.DB.exec("INSERT INTO streamers(id,login,display_name) VALUES(4242,'nl_kripp','nl_Kripp')");
-  await video(1, BB2);
-  const prov = (await owner(BB2))!.streamer_id;
-  expect((await admin('/api/admin/streamers/4242/reuploads', 'POST', { channel_id: BB1 })).status).toBe(200);
-  expect(await one(env, 'SELECT reupload_of FROM platform_accounts WHERE id=?', BB1)).toEqual({ reupload_of: 4242 });
-  expect((await admin('/api/admin/streamers/4242/reuploads', 'POST', { channel_id: BB2 })).status).toBe(200);
-  expect(await owner(BB2)).toBeNull();
-  expect(await one(env, 'SELECT 1 FROM streamer_identities WHERE id=?', prov)).toBeNull();
-  expect((await one(env, 'SELECT streamer_id FROM sessions WHERE id=(SELECT session_id FROM vods WHERE id=1)'))!.streamer_id).toBeNull();
-  await video(2, BB2);
-  expect(await owner(BB2)).toBeNull();
-  await env.DB.exec("UPDATE sessions SET streamer_id=4242 WHERE id=(SELECT session_id FROM vods WHERE id=1)");
-  await detect(1);
-  expect(await rows(env, 'SELECT is_reupload FROM public_sources WHERE vod_id=1')).toEqual([{ is_reupload: 1 }]);
-});
-
-it('refuses to treat a Twitch-owned Channel as a reupload without unlinking it first', async () => {
-  await env.DB.exec("INSERT INTO streamers(id,login,display_name) VALUES(4242,'nl_kripp','nl_Kripp'),(4343,'other','Other')");
-  const channel = (await one(env, "SELECT id FROM platform_accounts WHERE source_id='4343'"))!.id;
-  expect((await admin('/api/admin/streamers/4242/reuploads', 'POST', { channel_id: channel })).status).toBe(409);
-});
-
 it('lets a Session of a provisional Streamer merge into a real Streamer\'s Session without choosing', async () => {
   await env.DB.exec("INSERT INTO streamers(id,login,display_name) VALUES(4242,'nl_kripp','nl_Kripp'); INSERT INTO vods(id,streamer_id,source_id,duration_seconds,bazaar_chapters) VALUES(1,4242,'t1',60,'[0,60]')");
   await video(2, YT1);
