@@ -97,6 +97,13 @@ export function embedUrl(id: Source, recording: RecordingRef, at?: number | null
   const template = hasAt(at) ? r.embedUrlAt : r.embedUrl;
   return template ? fill(template, values(recording, at)) : null;
 }
+/** A Channel's public profile URL; null when the platform template needs a value the Channel lacks (e.g. a Twitch login). */
+export function channelUrl(id: Source, channel: { sourceId: string; login: string | null }): string | null {
+  const template = platform(id).channel.profileUrl;
+  const needed = { id: channel.sourceId, login: channel.login };
+  for (const [, key] of template.matchAll(/\{(\w+)\}/g)) if (!needed[key as keyof typeof needed]) return null;
+  return fill(template, needed);
+}
 export type ParsedUrl = { platform: string; kind: "recording" | "channel"; groups: Record<string, string> };
 /** Identify a public recording or channel URL against every registered platform. */
 export function parseUrl(url: string): ParsedUrl | null {

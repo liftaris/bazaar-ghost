@@ -120,7 +120,7 @@ it('serves admin routes and the additive public v1 endpoints', async () => {
   const list = await (await SELF.fetch('http://local/api/v1/streamers')).json() as any;
   expect(list.items).toEqual([]); // the public list only has Streamers with public Matchups
   expect(await (await SELF.fetch(`http://local/api/v1/streamers/${created.id}`)).json() as any).toEqual({ id: created.id, displayName: 'Renamed Route', avatarUrl: null,
-    channels: [{ id: channel.id, platform: 'bilibili', sourceId: '12345', displayName: 'Bili', login: null, avatarUrl: null, streamerId: created.id }] });
+    channels: [{ id: channel.id, platform: 'bilibili', sourceId: '12345', displayName: 'Bili', login: null, avatarUrl: null, url: 'https://space.bilibili.com/12345', streamerId: created.id }] });
   expect((await SELF.fetch('http://local/api/v1/streamers/999')).status).toBe(404);
   expect((await admin(`/api/admin/streamers/${created.id}/channels/${channel.id}`, 'DELETE')).status).toBe(200);
   expect((await (await SELF.fetch(`http://local/api/v1/streamers/${created.id}`)).json() as any).channels).toEqual([]);

@@ -232,10 +232,24 @@ async function lookupChannel(env: Env, url: URL) {
   }
   if (!found.length) throw new HttpError(404, "Channel not found");
   if (found.length > 1) throw new HttpError(409, "Ambiguous channel; use its ID");
-  const owner = found[0].channel_streamer_id
-    ? await one<StreamerRefRow>(env, "SELECT id,display_name,avatar_url FROM streamer_identities WHERE id=?", found[0].channel_streamer_id)
+  return channelWithOwner(env, found[0], id);
+}
+async function channelWithOwner(env: Env, row: Parameters<typeof channel>[0], platformId: string) {
+  const owner = row.channel_streamer_id
+    ? await one<StreamerRefRow>(env, "SELECT id,display_name,avatar_url FROM streamer_identities WHERE id=?", row.channel_streamer_id)
     : null;
-  return { channel: channel(found[0], id), streamer: owner ? streamerRef(owner) : null };
+  return { channel: channel(row, platformId), streamer: owner ? streamerRef(owner) : null };
+}
+async function channelDetail(env: Env, url: URL, id: string) {
+  parameters(url, []);
+  const found = await one<Parameters<typeof channel>[0] & { platform: string }>(
+    env,
+    `SELECT a.id AS channel_id,a.source AS platform,a.source_id AS channel_source_id,a.display_name AS channel_name,a.login AS channel_login,a.avatar_url AS channel_avatar,
+    o.streamer_id AS channel_streamer_id FROM platform_accounts a LEFT JOIN channel_ownership o ON o.channel_id=a.id AND o.ended_at IS NULL WHERE a.id=?`,
+    id,
+  );
+  if (!found) throw new HttpError(404, "Channel not found");
+  return channelWithOwner(env, found, found.platform);
 }
 async function streamers(env: Env, url: URL) {
   const limit = parameters(url, ["q", "cursor", "limit"]),
@@ -326,39 +340,91 @@ async function sessionDetail(env: Env, url: URL, requested: string): Promise<Ses
     if (next.merged_into === null) break;
     id = next.merged_into;
   }
-  const session = await one<{ id: string; title: string | null; streamer_id: number | null }>(env, "SELECT id,title,streamer_id FROM sessions WHERE id=? AND merged_into IS NULL", id);
+  const [session] = await sessionsOf(env, [id]);
   if (!session) throw new HttpError(404, "Session not found");
-  const owner = session.streamer_id
-    ? await one<StreamerRefRow>(env, "SELECT id,display_name,avatar_url FROM streamer_identities WHERE id=?", session.streamer_id)
-    : null;
-  const segments = await rows<{ vod_id: number; rec_start: number; rec_end: number | null; offset_seconds: number }>(
-    env,
-    "SELECT vod_id,rec_start,rec_end,offset_seconds FROM recording_alignments WHERE session_id=? AND revoked_at IS NULL ORDER BY vod_id,rec_start",
-    id,
-  );
-  const ids = [...new Set(segments.map((s) => s.vod_id))];
-  const found = ids.length
-    ? await rows<RecordingRow>(env, `SELECT r.*,${recordingCount} FROM public_recordings r WHERE r.id IN(SELECT value FROM json_each(?)) ORDER BY r.id`, JSON.stringify(ids))
+  return id !== requested ? { ...session, redirectedFrom: requested } : session;
+}
+/** Sessions (canonical only) with their Recordings, segments and Matchup counts, in the order given. */
+async function sessionsOf(env: Env, ids: string[]): Promise<Session[]> {
+  if (!ids.length) return [];
+  const json = JSON.stringify(ids);
+  const [found, segments, counts] = await Promise.all([
+    rows<{ id: string; title: string | null; streamer_id: number | null; owner_name: string | null; owner_avatar: string | null }>(
+      env,
+      `SELECT s.id,s.title,s.streamer_id,i.display_name AS owner_name,i.avatar_url AS owner_avatar FROM sessions s
+      LEFT JOIN streamer_identities i ON i.id=s.streamer_id WHERE s.merged_into IS NULL AND s.id IN(SELECT value FROM json_each(?))`,
+      json,
+    ),
+    rows<{ session_id: string; vod_id: number; rec_start: number; rec_end: number | null; offset_seconds: number }>(
+      env,
+      `SELECT session_id,vod_id,rec_start,rec_end,offset_seconds FROM recording_alignments
+      WHERE session_id IN(SELECT value FROM json_each(?)) AND revoked_at IS NULL ORDER BY vod_id,rec_start`,
+      json,
+    ),
+    rows<{ session_id: string; n: number }>(
+      env,
+      "SELECT session_id,count(*) AS n FROM public_matchups WHERE session_id IN(SELECT value FROM json_each(?)) GROUP BY session_id",
+      json,
+    ),
+  ]);
+  const vodIds = [...new Set(segments.map((s) => s.vod_id))];
+  const recordingRows = vodIds.length
+    ? await rows<RecordingRow>(env, `SELECT r.*,${recordingCount} FROM public_recordings r WHERE r.id IN(SELECT value FROM json_each(?)) ORDER BY r.id`, JSON.stringify(vodIds))
     : [];
-  const count = (await one<{ n: number }>(env, "SELECT count(*) AS n FROM public_matchups WHERE session_id=?", id))!.n;
-  return {
-    id,
-    title: session.title,
-    streamer: owner ? streamerRef(owner) : null,
-    recordings: found.map((row) => ({
-      recording: recording(row),
-      segments: segments
-        .filter((s) => s.vod_id === row.id)
-        .map((s) => ({ recStart: s.rec_start, recEnd: s.rec_end, offsetSeconds: s.offset_seconds })),
-    })),
-    matchupCount: count,
-    ...(id !== requested ? { redirectedFrom: requested } : {}),
-  };
+  const byId = new Map(found.map((row) => [row.id, row]));
+  return ids.flatMap((id) => {
+    const row = byId.get(id);
+    if (!row) return [];
+    const own = segments.filter((s) => s.session_id === id);
+    const members = new Set(own.map((s) => s.vod_id));
+    return {
+      id,
+      title: row.title,
+      streamer: row.streamer_id ? streamerRef({ id: row.streamer_id, display_name: row.owner_name!, avatar_url: row.owner_avatar }) : null,
+      recordings: recordingRows
+        .filter((r) => members.has(r.id))
+        .map((r) => ({
+          recording: recording(r),
+          segments: own.filter((s) => s.vod_id === r.id).map((s) => ({ recStart: s.rec_start, recEnd: s.rec_end, offsetSeconds: s.offset_seconds })),
+        })),
+      matchupCount: counts.find((c) => c.session_id === id)?.n ?? 0,
+    };
+  });
+}
+/** A Streamer's Sessions, newest first by latest Recording time (recorded, else published; Sessions without Recordings last), then ID.
+ * Listed when the Session has a public Matchup or an available Recording. A Session is the Streamer's when it names them
+ * or any of its Recordings was published by a Channel they actively own (reuploads included, as in /recordings?streamerId). */
+async function sessions(env: Env, url: URL): Promise<Page<Session>> {
+  const limit = parameters(url, ["streamerId", "limit", "cursor"]),
+    state = await boundary(env, url);
+  const streamerId = url.searchParams.get("streamerId");
+  requireValue(streamerId !== null, "streamerId required");
+  const streamer = idValue(streamerId, "streamerId");
+  const position = state.after.length ? "WHERE (latest,id)<(?5,?6)" : "";
+  const found = await rows<{ id: string; latest: string }>(
+    env,
+    `WITH mine AS (SELECT s.id,coalesce((SELECT max(coalesce(r.recorded_at,r.published_at)) FROM recording_alignments g
+        JOIN public_recordings r ON r.id=g.vod_id WHERE g.session_id=s.id AND g.revoked_at IS NULL AND r.id<=?1),'') AS latest
+      FROM sessions s WHERE s.merged_into IS NULL
+      AND (s.streamer_id=?2 OR EXISTS(SELECT 1 FROM recording_alignments g JOIN public_recordings r ON r.id=g.vod_id
+        WHERE g.session_id=s.id AND g.revoked_at IS NULL AND r.channel_streamer_id=?2 AND r.id<=?1))
+      AND (EXISTS(SELECT 1 FROM public_matchups m WHERE m.session_id=s.id AND m.matchup_id<=?3)
+        OR EXISTS(SELECT 1 FROM recording_alignments g JOIN public_recordings r ON r.id=g.vod_id
+        WHERE g.session_id=s.id AND g.revoked_at IS NULL AND r.availability='available' AND r.id<=?1)))
+    SELECT id,latest FROM mine ${position} ORDER BY latest DESC,id DESC LIMIT ?4`,
+    state.recordings,
+    streamer,
+    state.matchups,
+    limit + 1,
+    ...state.after,
+  );
+  const resultPage = await page(env, state, found, limit, (row) => [row.latest, row.id]);
+  return { ...resultPage, items: await sessionsOf(env, resultPage.items.map((row) => row.id)) };
 }
 
 /** Recognize only explicit public contracts; social/auth routes keep their private behavior. */
 export function nativePath(path: string) {
-  return /^\/api\/v1\/(search|stats|platforms|streamers(?:\/quality|\/[1-9]\d{0,15})?|recordings(?:\/lookup|\/[1-9]\d{0,15}\/(?:playback|timeline|detections))?|channels\/lookup|matchups\/[1-9]\d{0,15}|sessions\/[0-9a-f]{32})$/.test(
+  return /^\/api\/v1\/(search|stats|platforms|streamers(?:\/quality|\/[1-9]\d{0,15})?|recordings(?:\/lookup|\/[1-9]\d{0,15}\/(?:playback|timeline|detections))?|channels\/(?:lookup|[0-9a-f-]{36})|matchups\/[1-9]\d{0,15}|sessions|sessions\/[0-9a-f]{32})$/.test(
     path,
   );
 }
@@ -395,6 +461,8 @@ async function nativeLoad(req: Request, env: Env): Promise<Response> {
   } else if (path === "/recordings") output = await recordings(env, url);
   else if (path === "/recordings/lookup") output = await lookupRecording(env, url);
   else if (path === "/channels/lookup") output = await lookupChannel(env, url);
+  else if (path.startsWith("/channels/")) output = await channelDetail(env, url, path.slice("/channels/".length));
+  else if (path === "/sessions") output = await sessions(env, url);
   else if (path === "/stats") {
     parameters(url, []);
     output = await one<Stats>(

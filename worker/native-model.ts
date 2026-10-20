@@ -1,4 +1,4 @@
-import { embedUrl, watchUrl } from "./platform-registry";
+import { channelUrl, embedUrl, watchUrl } from "./platform-registry";
 import type {
   Channel,
   Evidence,
@@ -100,6 +100,7 @@ export function channel(
     displayName: row.channel_name,
     login: row.channel_login,
     avatarUrl: row.channel_avatar,
+    url: channelUrl(platform, { sourceId: row.channel_source_id, login: row.channel_login }),
     streamerId: row.channel_streamer_id,
   };
 }
@@ -114,6 +115,7 @@ export function publicStreamer(row: StreamerRefRow, channels: Array<Record<strin
       displayName: c.display_name,
       login: c.login,
       avatarUrl: c.avatar_url,
+      url: channelUrl(c.platform, { sourceId: c.source_id, login: c.login }),
       streamerId: row.id,
     })),
   };

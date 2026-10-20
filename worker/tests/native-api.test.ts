@@ -372,6 +372,36 @@ it("resolves a Channel from a platform login to its Streamer", async () => {
   expect(await status("/channels/lookup?platform=youtube&login=missing")).toBe(404);
   expect(await status("/channels/lookup?platform=youtube")).toBe(400);
 });
+it("builds Channel URLs from the registry and serves a Channel by ID", async () => {
+  expect(await get<ChannelLookup>("/channels/lookup?platform=twitch&login=example")).toMatchObject({ channel: { url: "https://www.twitch.tv/example" } });
+  expect(await get<ChannelLookup>(`/channels/${CH.yt1}`)).toMatchObject({
+    channel: { id: CH.yt1, url: `https://www.youtube.com/channel/${UC("a")}`, streamerId: null }, streamer: null,
+  });
+  expect((await get<ChannelLookup>(`/channels/${CH.bb1}`)).channel.url).toBe("https://space.bilibili.com/12345");
+  expect(await status("/channels/00000000-0000-4000-8000-0000000000ff")).toBe(404);
+  expect(await status("/channels/nope")).toBe(404);
+});
+it("lists a Streamer's Sessions newest first, including reuploads, and pages with a cursor", async () => {
+  await ownedPair();
+  await evidence(100, "Opponent", 1);
+  const reupload = await vod({ source: "youtube", account: CH.yt2, recordedAt: "2026-01-01T00:00:00Z" });
+  await moveRecording(env, reupload, await sessionOf(1), 0, how);
+  const empty = await vod({ source: "youtube", account: CH.yt2, availability: "unavailable" });
+  await statement(env, "UPDATE vods SET availability='unavailable' WHERE id=?", empty).run();
+  const list = await get<Page<Session>>("/sessions?streamerId=1");
+  const first = await sessionOf(1);
+  expect(list.items.map((s) => s.id)).toContain(first);
+  expect(new Set(list.items.map((s) => s.id)).size).toBe(list.items.length);
+  expect(list.items.find((s) => s.id === first)!.recordings.map((r) => r.recording.id)).toContain(reupload);
+  expect(await get<Session>(`/sessions/${first}`)).toEqual(list.items.find((s) => s.id === first));
+  const one = await get<Page<Session>>("/sessions?streamerId=1&limit=1");
+  expect(one.items).toHaveLength(1);
+  expect(one.nextCursor).not.toBeNull();
+  expect((await get<Page<Session>>(`/sessions?streamerId=1&limit=1&cursor=${one.nextCursor}`)).items[0].id).not.toBe(one.items[0].id);
+  expect((await get<Page<Session>>("/sessions?streamerId=999")).items).toEqual([]);
+  expect(await status("/sessions")).toBe(400);
+  expect(await status("/sessions?streamerId=abc")).toBe(400);
+});
 it("lists Streamers that have public Matchups, searchable by any Channel", async () => {
   await ownedPair();
   const yt = await vod({ source: "youtube", account: CH.yt1 });

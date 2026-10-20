@@ -20,6 +20,8 @@ export interface Channel {
   displayName: string;
   login: string | null;
   avatarUrl: string | null;
+  /** The Channel's page on its platform; null when it cannot be built from what is stored. */
+  url: string | null;
   streamerId: number | null;
 }
 /** A person with every Channel they actively own, across platforms. */
@@ -194,6 +196,7 @@ export interface PublicRoutes {
   "/recordings": Page<Recording>;
   "/recordings/lookup": Recording;
   "/channels/lookup": ChannelLookup;
+  "/sessions": Page<Session>;
   "/stats": Stats;
   "/platforms": Page<PlatformDefinition>;
   [path: `/streamers/${number}`]: Streamer;
@@ -201,5 +204,6 @@ export interface PublicRoutes {
   [path: `/recordings/${number}/timeline`]: Page<TimelineMarker>;
   [path: `/recordings/${number}/detections`]: Page<Evidence>;
   [path: `/matchups/${number}`]: MatchupDetail;
+  [path: `/channels/${string}`]: ChannelLookup;
   [path: `/sessions/${string}`]: Session;
 }
