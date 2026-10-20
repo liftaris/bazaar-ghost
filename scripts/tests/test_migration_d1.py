@@ -71,7 +71,7 @@ class FullTargetD1Tests(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             conversion.convert(source, destination)
         manifest = json.loads((destination / 'manifest.json').read_text())
-        self.assertEqual(manifest['target_schema_version'], 13)
+        self.assertEqual(manifest['target_schema_version'], 14)
         self.migrate()
         before_triggers = self.query("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name")
         for part in sorted(destination.glob('import-*.sql')):
@@ -106,6 +106,9 @@ class FullTargetD1Tests(unittest.TestCase):
         # The full-target triggers still operate on the imported anchors, Matchups and public views.
         self.assertEqual(self.query('SELECT count(*) n,sum(matchup_id=id) m FROM matchup_anchors'),[{'n':4,'m':4}])
         self.assertEqual(self.query('SELECT count(*) n FROM matchups'),[{'n':4}])
+        # Imported Recordings each got a singleton Session and Matchups carry Session time.
+        self.assertEqual(self.query("SELECT (SELECT count(*) FROM sessions) s,(SELECT count(*) FROM vods) v,(SELECT count(*) FROM recording_alignments WHERE method='singleton' AND offset_seconds=0 AND revoked_at IS NULL) a"),[{'s':counts['vods'],'v':counts['vods'],'a':counts['vods']}])
+        self.assertEqual(self.query('SELECT count(*) n FROM matchups WHERE session_id IS NULL OR session_time IS NULL'),[{'n':0}])
         self.query("UPDATE matchups SET status='hidden' WHERE id IN(SELECT matchup_id FROM matchup_anchors WHERE vod_id=1)")
         self.assertEqual(self.query('SELECT revision FROM public_cache_state'),[{'revision':1}])
         self.assertEqual(self.query('SELECT count(*) n FROM detection_search'),[{'n':0}])
