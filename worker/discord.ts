@@ -6,7 +6,7 @@ import {
   rows,
   statement,
 } from "./http";
-import { search } from "./search";
+import { search } from "./native-api";
 
 const reply = (content: string) =>
   Response.json({
@@ -159,18 +159,20 @@ export async function discord(req: Request, env: Env) {
       option("results") === "all"
         ? 10
         : Math.max(1, Math.min(10, Number(option("results") || 1)));
-    const results = await search(env, {
-      search_query: username,
-      similarity_threshold: 1,
-      result_limit: limit,
-    });
+    if (username.length > 128) return reply("Please provide a username of at most 128 characters");
+    const { items } = await search(
+      env,
+      new URL(`https://internal/api/v1/search?${new URLSearchParams({ q: username, limit: String(limit) })}`),
+    );
+    const base = env.PUBLIC_SITE_URL.replace(/\/+$/, "");
     return reply(
-      results.length
-        ? results
-            .map(
-              (r) =>
-                `**${r.streamer_display_name}** — <t:${Math.floor(Date.parse(r.actual_timestamp) / 1000)}:f> — ${r.vod_url}`,
-            )
+      items.length
+        ? items
+            .map((m) => {
+              const who = m.streamer?.displayName ?? (m.sources[0] as any)?.channel?.displayName ?? "Unknown";
+              const at = m.recordedAt ? ` — <t:${Math.floor(Date.parse(m.recordedAt) / 1000)}:f>` : "";
+              return `**${who}** vs **${m.opponent.username}**${at} — ${base}/matchups/${m.id}`;
+            })
             .join("\n")
         : `No results found for **${username}**`,
     );

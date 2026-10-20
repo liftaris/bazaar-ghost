@@ -8,7 +8,7 @@ import {
   recover,
   dispatch,
 } from "../processing";
-import { trigrams, search } from "../search";
+import { trigrams } from "../search";
 import { one, rows, statement } from "../http";
 import { clearDevStorage, handleJob } from "../jobs";
 import { Twitch } from "../twitch";
@@ -175,16 +175,9 @@ it("publishes images before idempotent detections, includes IGD and aggregates a
   expect(
     (await one(env, "SELECT count(*) AS n FROM notification_outbox_v2"))!.n,
   ).toBe(3);
-  const results = await search(env, {
-    search_query: "oponent",
-    vod_source_id_filter: "123",
-  });
+  const results = (await (await SELF.fetch("http://local/api/v1/search?q=oponent")).json<any>()).items;
   expect(results).toHaveLength(3);
-  expect(results[0].igd).toBe(9);
-  expect(results[0].total_count).toBe(3);
-  expect(
-    (await SELF.fetch(`http://local${results[0].storage_path}`)).status,
-  ).toBe(200);
+  expect(results[0].opponent.igd).toBe(9);
 });
 it("rejects missing screenshots and frames outside the claimed chunk", async () => {
   const [chunk] = await planned(),
@@ -344,15 +337,6 @@ it("searches with a zero threshold, filters confidence, and returns stable pagin
     { detections: records },
     token,
   );
-  const page = await search(env, {
-    search_query: "!!!",
-    similarity_threshold: 0,
-    result_limit: 1,
-    result_offset: 1,
-  });
-  expect(page).toHaveLength(1);
-  expect(page[0].total_count).toBe(2);
-  expect(await search(env, { vod_source_id_filter: "999" })).toEqual([]);
   expect((await (await SELF.fetch("http://local/api/v1/streamers/quality")).json<any>()).items).toEqual([]);
 });
 it("concurrent GitHub dispatches respect the global chunk limit", async () => {

@@ -95,7 +95,7 @@ async function streamersOf(env: Env, ids: number[]) {
   return new Map(found.map((row) => [row.matchup_id, streamerRef(row)]));
 }
 
-async function search(env: Env, url: URL) {
+export async function search(env: Env, url: URL) {
   const limit = parameters(url, ["q", "streamerId", "channelId", "platform", "recordingId", "limit", "cursor"]);
   const q = queryText(url),
     state = await boundary(env, url),

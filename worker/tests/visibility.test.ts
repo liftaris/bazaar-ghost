@@ -27,10 +27,8 @@ beforeEach(async () => {
 });
 
 it("applies Matchup visibility to search views, public Matchups and aggregate counts", async () => {
-  expect((await rows(env, "SELECT * FROM detection_search"))).toHaveLength(1);
   expect(await rows(env, "SELECT matchup_id FROM public_matchups")).toHaveLength(2);
   await hide(twitch);
-  expect(await rows(env, "SELECT * FROM detection_search")).toEqual([]);
   expect((await rows(env, "SELECT detection_id FROM public_matchups")).map(row => row.detection_id)).toEqual([youtube]);
   expect((await rows(env, "SELECT detection_id FROM public_sources")).map(row => row.detection_id)).toEqual([youtube]);
   expect(await rows(env, "SELECT id FROM detections")).toHaveLength(2);
@@ -53,10 +51,8 @@ it("does not unhide an anchor when OCR replaces its detection UUID", async () =>
   await statement(env, "DELETE FROM detections WHERE id=?", twitch).run();
   const replacement = await detect(1, 12, "/detections/1/new_claim_12.jpg");
   expect(await one(env, "SELECT a.id,m.status,a.current_detection_id FROM matchup_anchors a JOIN matchups m ON m.id=a.matchup_id WHERE a.id=?", clip!.id)).toEqual({ id: clip!.id, status: "hidden", current_detection_id: replacement });
-  expect(await rows(env, "SELECT * FROM detection_search")).toEqual([]);
   expect(await publicImageVisible(env, "1/new_claim_12.jpg")).toBe(false);
   await hide(replacement, "visible");
-  expect((await rows(env, "SELECT detection_id FROM detection_search"))).toEqual([{ detection_id: replacement }]);
 });
 it("hides all publications at an anchor even if the current pointer refers to only one", async () => {
   // An old/imported database can retain multiple publications at one video anchor.
@@ -67,7 +63,6 @@ it("hides all publications at an anchor even if the current pointer refers to on
     await statement(env, `INSERT INTO detections(id,chunk_id,vod_id,username,username_lower,confidence,frame_time_seconds,storage_path)
       VALUES(?,'historical',1,'Old name','opponent',0.99,12,'/detections/1/old.jpg')`, old).run();
     await hide(old);
-    expect(await rows(env,"SELECT detection_id FROM detection_search")).toEqual([]);
     expect(await publicImageVisible(env,"1/image_12.jpg")).toBe(false);
     expect(await publicImageVisible(env,"1/old.jpg")).toBe(false);
   } finally {
@@ -95,7 +90,6 @@ it("rolls back revision changes together with a failed moderation batch", async 
     statement(env,"INSERT INTO mutation_checks(id,ok) VALUES('fail-visibility',0)"),
   ])).rejects.toThrow();
   expect(await publicRevision(env)).toBe(before);
-  expect(await rows(env,"SELECT * FROM detection_search")).toHaveLength(1);
   await hide(twitch,"visible");expect(await publicRevision(env)).toBe(before);
   await hide(twitch);expect(Number(await publicRevision(env))).toBe(Number(before)+1);
 });

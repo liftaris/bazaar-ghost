@@ -37,7 +37,6 @@ it('creates independent YouTube and Bilibili timelines and claims both through n
 it('keeps the Twitch player contract free of non-Twitch identities and exposes platform links separately',async()=>{
  const v=await catalog('bilibili'),d=await detect(v.id);
  expect(d.path).toContain('/detections/bilibili/BV1234567890:123/');
- expect(await rows(env,'SELECT * FROM detection_search')).toEqual([]);
  const publicRow=(await one(env,'SELECT * FROM public_sources'))!;
  expect(publicRow.source_part_id).toBe('123');const source=((await(await SELF.fetch('http://local/api/v1/search')).json()) as any).items[0].sources[0];expect(source.watchUrl).toContain('?p=2&t=12');expect(source.embedUrl).toContain('cid=123');expect(publicRow.recorded_timestamp).toBeNull();expect(publicRow.igd).toBe(9);
  expect(await rows(env,'SELECT * FROM notification_outbox_v2')).toEqual([]);

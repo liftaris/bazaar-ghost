@@ -71,7 +71,7 @@ class FullTargetD1Tests(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             conversion.convert(source, destination)
         manifest = json.loads((destination / 'manifest.json').read_text())
-        self.assertEqual(manifest['target_schema_version'], 18)
+        self.assertEqual(manifest['target_schema_version'], 19)
         self.migrate()
         before_triggers = self.query("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name")
         for part in sorted(destination.glob('import-*.sql')):
@@ -115,7 +115,7 @@ class FullTargetD1Tests(unittest.TestCase):
         self.assertEqual(self.query('SELECT count(*) n FROM matchups WHERE session_id IS NULL OR session_time IS NULL'),[{'n':0}])
         self.query("UPDATE matchups SET status='hidden' WHERE id IN(SELECT matchup_id FROM matchup_anchors WHERE vod_id=1)")
         self.assertEqual(self.query('SELECT revision FROM public_cache_state'),[{'revision':1}])
-        self.assertEqual(self.query('SELECT count(*) n FROM detection_search'),[{'n':0}])
+        self.assertEqual(self.query("SELECT count(*) n FROM sqlite_master WHERE name='detection_search'"),[{'n':0}])
         self.assertEqual(self.query('SELECT count(*) n FROM public_sources'),[{'n':2}])  # hiding the merged Matchup hides every Source
         self.migrate(state='occupied-auth')
         self.query("INSERT INTO app_users(id,name,email,emailVerified,createdAt,updatedAt) VALUES('existing','Existing','fixture@invalid.test',0,'2026-09-07T00:00:00.000Z','2026-09-07T00:00:00.000Z')",state='occupied-auth')

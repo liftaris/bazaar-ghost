@@ -17,6 +17,7 @@ import { one, rows, statement } from "../http";
 import { trigrams } from "../search";
 import { linkDetections } from "./link-fixture";
 import { boundary } from "../native-cursor";
+import { discord } from "../discord";
 import { nativeRoute } from "../native-api";
 import { registerPlatformsForTest, type PlatformEntry } from "../platform-registry";
 import { mergeSessions, moveRecording } from "../sessions";
@@ -485,4 +486,26 @@ it("validates filters and no longer serves the removed compatibility routes", as
     expect(await status(path), path).not.toBe(200);
   expect((await SELF.fetch("https://local/rest/v1/streamers?select=login")).status).toBe(401);
   expect(await rows(env, "PRAGMA foreign_key_check")).toEqual([]);
+});
+
+it("answers the Discord /search command with the same Matchups as the public search", async () => {
+  await evidence(1, "Opponentx");
+  await evidence(2);
+  const pair = (await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"])) as CryptoKeyPair;
+  const hex = (b: ArrayBuffer) => Array.from(new Uint8Array(b), (x) => x.toString(16).padStart(2, "0")).join("");
+  const discordEnv = { ...env, DISCORD_PUBLIC_KEY: hex((await crypto.subtle.exportKey("raw", pair.publicKey)) as ArrayBuffer), PUBLIC_SITE_URL: "https://site.example/" } as Env;
+  const ask = async (username: string) => {
+    const raw = JSON.stringify({ type: 2, id: "1", user: { id: "9" }, data: { name: "search", options: [{ name: "username", value: username }, { name: "results", value: "5" }] } }),
+      timestamp = String(Math.floor(Date.now() / 1000));
+    const signature = hex(await crypto.subtle.sign("Ed25519", pair.privateKey, new TextEncoder().encode(timestamp + raw)));
+    const response = await discord(new Request("http://local/discord", { method: "POST", headers: { "X-Signature-Ed25519": signature, "X-Signature-Timestamp": timestamp }, body: raw }), discordEnv);
+    return (await response.json<any>()).data.content as string;
+  };
+  const items = (await get<Page<MatchupResult>>("/search?q=Opponent")).items;
+  const lines = (await ask("Opponent")).split("\n");
+  expect(lines).toHaveLength(2);
+  expect(lines.map((line) => line.match(/matchups\/(\d+)$/)![1])).toEqual(items.map((item) => String(item.id)));
+  expect(lines[0]).toContain("**Example** vs **Opponent**");
+  expect(lines[0]).toContain(`https://site.example/matchups/${items[0].id}`);
+  expect(await ask("zzzzzz")).toBe("No results found for **zzzzzz**");
 });
