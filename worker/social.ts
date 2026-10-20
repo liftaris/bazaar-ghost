@@ -2,6 +2,9 @@ import { atomic } from './atomic';
 import { authenticated, identityCheck, requireCsrf, type AuthEnv, type Identity } from './auth';
 import { digest, only, privateResponse } from './auth/security';
 import { authorized, HttpError, integer, one, readBytes, requireValue, rows, statement, uuid } from './http';
+import { matchupCards, parameters } from './native-api';
+import { boundary, page as cursorPage } from './native-cursor';
+import type { MatchupRow } from './native-model';
 
 type Check = { sql: string; args: unknown[] };
 type Category = 'reaction' | 'comment' | 'report';
@@ -100,13 +103,19 @@ async function mutate(env: AuthEnv, identity: Identity, category: Category, chec
   }
 }
 
-/** The caller's favorites: public Matchups only, each once, keyed by canonical Matchup ID. */
+/**
+ * The caller's saved Matchups as public cards, most recently saved first. Only public Matchups appear; a favorite row
+ * persists while its Matchup is hidden or unavailable, so the Matchup reappears when it becomes public again.
+ */
 async function listFavorites(req: Request, env: AuthEnv) {
-  const { limit, after } = pagination(new URL(req.url)), identity = await authenticated(req, env), check = identityCheck(identity);
-  const result = await rows<{ matchup_id: number }>(env, `SELECT DISTINCT f.matchup_id FROM matchup_favorites f
-    WHERE f.user_id=? AND f.matchup_id>? AND EXISTS(SELECT 1 FROM public_sources s WHERE s.matchup_id=f.matchup_id) AND ${check.sql}
-    ORDER BY f.matchup_id LIMIT ?`, identity.userId, after, ...check.args, limit + 1);
-  return Response.json(page(result, limit, row => row.matchup_id));
+  const url = new URL(req.url), limit = parameters(url, ['limit', 'cursor']), identity = await authenticated(req, env), check = identityCheck(identity);
+  const state = await boundary(env, url), position = state.after.length ? 'WHERE (saved_at,matchup_id)<(?,?)' : '';
+  const found = await rows<MatchupRow & { saved_at: string }>(env, `SELECT * FROM (
+      SELECT p.*,1.0 AS score,0 AS exact,f.saved_at FROM (SELECT matchup_id,max(created_at) AS saved_at FROM matchup_favorites WHERE user_id=? GROUP BY matchup_id) f
+      JOIN public_matchups p ON p.matchup_id=f.matchup_id WHERE ${check.sql}) ${position}
+    ORDER BY saved_at DESC,matchup_id DESC LIMIT ?`, identity.userId, ...check.args, ...state.after, limit + 1);
+  const saved = await cursorPage(env, state, found, limit, row => [row.saved_at, row.matchup_id]);
+  return Response.json({ ...saved, items: await matchupCards(env, saved.items) });
 }
 async function myMatchup(req: Request, env: AuthEnv, requested: number) {
   const identity = await authenticated(req, env), check = identityCheck(identity), id = await canonicalOr404(env, requested);

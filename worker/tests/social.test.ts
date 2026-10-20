@@ -74,7 +74,7 @@ it('keeps likes as unique desired state and heart/favorite as one private bookma
   expect(await (await api(`${path}/me`, 'GET', undefined, alice)).json()).toEqual({ matchup_id: clip, liked: true, favorite: true });
   expect(await (await api(`${path}/me`, 'GET', undefined, bob)).json()).toEqual({ matchup_id: clip, liked: true, favorite: false });
   expect(await (await api('/api/v1/me/favorites', 'GET', undefined, bob)).json()).toMatchObject({ items: [] });
-  expect(await (await api('/api/v1/me/favorites', 'GET', undefined, alice)).json()).toEqual({ items: [{ matchup_id: clip }], next_after: null });
+  expect(await (await api('/api/v1/me/favorites', 'GET', undefined, alice)).json()).toMatchObject({ items: [{ id: clip, sources: [expect.anything()], opponent: expect.anything() }], nextCursor: null });
   await api(`${path}/like`, 'DELETE', undefined, alice); await api(`${path}/like`, 'DELETE', undefined, alice);
   await api(`${path}/heart`, 'DELETE', undefined, alice);
   expect(await likes()).toBe(1);
@@ -178,9 +178,9 @@ it('paginates comments and private favorites without exposing hidden rows', asyn
   const extra: number[] = [];
   for (const time of [20, 30]) extra.push((await one<{ id: number }>(env, 'SELECT id FROM matchup_anchors WHERE current_detection_id=?', await addDetection(time)))!.id);
   for (const id of [clip, ...extra]) await api(`/api/v1/matchups/${id}/favorite`, 'PUT', undefined, alice);
-  const first = await (await api('/api/v1/me/favorites?limit=2', 'GET', undefined, alice)).json<{ next_after: number; items: unknown[] }>();
-  expect(first.items).toHaveLength(2);
-  expect(await (await api(`/api/v1/me/favorites?after=${first.next_after}`, 'GET', undefined, alice)).json()).toMatchObject({ items: [expect.anything()] });
+  const first = await (await api('/api/v1/me/favorites?limit=2', 'GET', undefined, alice)).json<{ nextCursor: string; items: { id: number }[] }>();
+  expect(first.items.map(item => item.id)).toEqual([extra[1], extra[0]]);
+  expect(await (await api(`/api/v1/me/favorites?cursor=${first.nextCursor}`, 'GET', undefined, alice)).json()).toMatchObject({ items: [{ id: clip }], nextCursor: null });
   await createComment(); await createComment(bob, 'Second');
   const comments = await (await api(`/api/v1/matchups/${clip}/comments?limit=1`)).json<{ items: unknown[]; next_after: number }>();
   expect(comments.items).toHaveLength(1);
@@ -188,8 +188,10 @@ it('paginates comments and private favorites without exposing hidden rows', asyn
   expect((await moderation('matchups', clip, 'hidden')).status).toBe(200);
   expect((await api(`/api/v1/matchups/${clip}/comments`)).status).toBe(404);
   expect((await api(`/api/v1/matchups/${clip}/like`, 'PUT', undefined, bob)).status).toBe(409);
-  const favorites = await (await api('/api/v1/me/favorites', 'GET', undefined, alice)).json<{ items: { matchup_id: number }[] }>();
-  expect(favorites.items.map(item => item.matchup_id)).toEqual(extra);
+  const favorites = await (await api('/api/v1/me/favorites', 'GET', undefined, alice)).json<{ items: { id: number }[] }>();
+  expect(favorites.items.map(item => item.id)).toEqual([extra[1], extra[0]]);
+  expect((await moderation('matchups', clip, 'visible')).status).toBe(200);
+  expect((await (await api('/api/v1/me/favorites', 'GET', undefined, alice)).json<{ items: { id: number }[] }>()).items.map(item => item.id)).toContain(clip);
 });
 
 it('separates admin moderation from cookies, hides comments and records retry-safe decisions', async () => {

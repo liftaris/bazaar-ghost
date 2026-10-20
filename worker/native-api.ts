@@ -28,7 +28,7 @@ const idValue = (value: string, label = "ID") => {
   return Number(value);
 };
 const CHANNEL_ID = /^[0-9a-f-]{36}$/;
-function parameters(url: URL, allowed: string[]) {
+export function parameters(url: URL, allowed: string[]) {
   requireValue(url.href.length <= 4096, "Request URL too long");
   for (const key of url.searchParams.keys())
     requireValue(
@@ -139,12 +139,13 @@ export async function search(env: Env, url: URL) {
     limit + 1,
   );
   const resultPage = await page(env, state, found, limit, (row) => [row.exact, row.score, row.indexed_at, row.matchup_id]);
-  const ids = resultPage.items.map((row) => row.matchup_id);
+  return { ...resultPage, items: await matchupCards(env, resultPage.items) };
+}
+/** Public Matchup cards (ordered Sources, Streamer) for already-selected rows, keeping their order. */
+export async function matchupCards(env: Env, found: MatchupRow[]) {
+  const ids = found.map((row) => row.matchup_id);
   const [sources, streamers] = await Promise.all([sourcesOf(env, ids), streamersOf(env, ids)]);
-  return {
-    ...resultPage,
-    items: resultPage.items.map((row) => result(row, sources.get(row.matchup_id) ?? [], streamers.get(row.matchup_id) ?? null)),
-  };
+  return found.map((row) => result(row, sources.get(row.matchup_id) ?? [], streamers.get(row.matchup_id) ?? null));
 }
 async function matchupDetail(env: Env, url: URL, id: number) {
   parameters(url, []);
