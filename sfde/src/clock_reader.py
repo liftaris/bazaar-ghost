@@ -1,0 +1,363 @@
+"""Single-frame clock observations using the caller's shared PaddleOCR reader.
+
+No model construction, network calls, timestamps, writes, or temporal state.
+Template scores are quality diagnostics, not calibrated probabilities. Unsupported
+layouts/animation/visibility return independently unknown fields.
+"""
+from functools import lru_cache
+import math
+from numbers import Real
+from pathlib import Path
+import re
+
+import cv2
+import numpy as np
+
+
+ASSET_DIR = Path(__file__).resolve().parent.parent / 'assets' / 'clock'
+_SCALES = (0.42, 4 / 9, 0.46, 0.48, 0.6, 0.8, 1.0, 1.2)
+_CROWN = (34, 214, 63, 242)
+_WINS = (66, 20, 176, 60)
+
+
+def _correlation(a, b):
+    a = a.astype(np.float32).ravel()
+    b = b.astype(np.float32).ravel()
+    a, b = a - a.mean(), b - b.mean()
+    denominator = float(np.linalg.norm(a) * np.linalg.norm(b))
+    return float(a @ b / denominator) if denominator else 0.0
+
+
+def _colour(image, kind):
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    if kind == 'orange':
+        return cv2.inRange(hsv, (5, 110, 90), (35, 255, 255)) > 0
+    return cv2.inRange(hsv, (0, 0, 80), (179, 90, 255)) > 0
+
+
+def _register(image, anchor, mask, scales):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    best = None
+    for scale in scales:
+        size = (round(anchor.shape[1] * scale), round(anchor.shape[0] * scale))
+        if min(size) < 8 or size[0] > gray.shape[1] or size[1] > gray.shape[0]:
+            continue
+        template = cv2.resize(anchor, size)
+        support = cv2.resize(mask, size, interpolation=cv2.INTER_NEAREST)
+        scores = cv2.matchTemplate(gray, template, cv2.TM_CCOEFF_NORMED, mask=support)
+        scores[~np.isfinite(scores)] = -1
+        _, score, _, position = cv2.minMaxLoc(scores)
+        if best is None or score > best['score']:
+            best = {'x': position[0] - 18 * scale, 'y': position[1] - 58 * scale,
+                    'scale': scale, 'score': float(score)}
+    return best
+
+
+def _canonical(image, location):
+    scale, x, y = location['scale'], location['x'], location['y']
+    transform = np.array([[1 / scale, 0, -x / scale],
+                          [0, 1 / scale, -y / scale]], dtype=np.float32)
+    return cv2.warpAffine(image, transform, (205, 275), flags=cv2.INTER_LINEAR,
+                          borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+
+
+@lru_cache(maxsize=1)
+def _assets():
+    geometry = cv2.imread(str(ASSET_DIR / 'geometry.png'))
+    if geometry is None or geometry.shape != (275, 205, 3):
+        raise ValueError('Clock geometry asset missing or malformed')
+    gray = cv2.cvtColor(geometry, cv2.COLOR_BGR2GRAY)
+    mask = np.zeros_like(gray)
+    cv2.ellipse(mask, (108, 140), (90, 86), 0, 0, 360, 255, -1)
+    cv2.ellipse(mask, (108, 140), (69, 66), 0, 0, 360, 0, -1)
+    mask[:110, 82:136] = 0
+    # Cards/tooltips can overlap the lower-right clock rim while all three
+    # targets remain visible. Register on the other fixed annulus sectors.
+    mask[160:, 150:] = 0
+    anchor, support = gray[58:227, 18:199], mask[58:227, 18:199]
+    dark = cv2.inRange(cv2.cvtColor(geometry, cv2.COLOR_BGR2HSV),
+                       (90, 65, 10), (130, 255, 100))
+    window = np.zeros_like(dark)
+    window[15:65, 60:185] = 255
+    count, components, stats, _ = cv2.connectedComponentsWithStats(dark & window)
+    ids = sorted((i for i in range(1, count) if stats[i, cv2.CC_STAT_AREA] > 30),
+                 key=lambda i: stats[i, cv2.CC_STAT_LEFT])
+    if len(ids) != 10:
+        raise ValueError('Clock asset must expose ten separate slot interiors')
+    slots = []
+    for component in ids:
+        # Remove antialiased gold borders before projecting tiny native480 cells.
+        core = cv2.erode((components == component).astype(np.uint8),
+                         np.ones((3, 3), dtype=np.uint8)) > 0
+        slots.append(core if core.sum() >= 8 else components == component)
+    crowns = {}
+    for name, file in [('whole', 'safe.png'), ('cracked', 'cracked.png')]:
+        image = cv2.imread(str(ASSET_DIR / file))
+        if image is None:
+            raise ValueError('Clock crown asset missing: ' + file)
+        location = _register(image, anchor, support, _SCALES)
+        if location is None or location['score'] < 0.72:
+            raise ValueError('Clock development template registration failed')
+        registered = _canonical(image, location)
+        x1, y1, x2, y2 = _CROWN
+        patch = registered[y1:y2, x1:x2]
+        crowns[name] = (cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY),
+                        _colour(patch, 'orange' if name == 'whole' else 'grey'))
+    return anchor, support, tuple(slots), crowns
+
+
+class ClockReader:
+    """Read one full processed BGR frame; caller owns OCR, phase and consensus.
+
+    ``profile`` accepts the existing normalized ``igd_crop_region``. Its exact
+    floor/ceil pixel crop is an OCR fallback only when it overlaps the actually
+    detected day glyph in an accepted clock layout. It cannot force visibility.
+    ``locate(frame)`` is an OCR-free convenience returning source xywh or None.
+    """
+
+    def __init__(self, reader, profile=None):
+        self.reader = reader
+        self.profile = dict(profile) if isinstance(profile, dict) else {}
+        self._anchor, self._mask, self._slots, self._crowns = _assets()
+
+    @staticmethod
+    def _valid(frame):
+        return (isinstance(frame, np.ndarray) and frame.dtype == np.uint8
+                and frame.ndim == 3 and frame.shape[2] == 3
+                and min(frame.shape[:2]) >= 8)
+
+    def _location(self, frame):
+        if not self._valid(frame):
+            return None
+        # Full processed-frame coordinates, never a per-frame lookup table.
+        search = frame[:, :max(1, frame.shape[1] // 3)]
+        ratio = frame.shape[0] / 1080
+        scales = sorted({ratio * offset for offset in (0.94, 0.97, 1, 1.03, 1.06)})
+        location = _register(search, self._anchor, self._mask, scales)
+        return location if location is not None and location['score'] >= 0.72 else None
+
+    @staticmethod
+    def _region(frame, location, box):
+        x1, y1, x2, y2 = box
+        scale = location['scale']
+        left = math.floor(location['x'] + x1 * scale)
+        top = math.floor(location['y'] + y1 * scale)
+        right = math.ceil(location['x'] + x2 * scale)
+        bottom = math.ceil(location['y'] + y2 * scale)
+        h, w = frame.shape[:2]
+        complete = 0 <= left < right <= w and 0 <= top < bottom <= h
+        left, top = max(0, min(w, left)), max(0, min(h, top))
+        right, bottom = max(left, min(w, right)), max(top, min(h, bottom))
+        return [left, top, right - left, bottom - top], complete
+
+    def locate(self, frame):
+        location = self._location(frame)
+        if location is None:
+            return None
+        return self._region(frame, location, (0, 0, 205, 275))[0]
+
+    def observe(self, frame):
+        output = {'visible': False, 'igd': None, 'wins_remaining': None,
+                  'lethal': None, 'evidence': {}, 'clock_region': None}
+        location = self._location(frame)
+        if location is None:
+            return output
+        output['visible'] = True
+        output['clock_region'] = self._region(frame, location, (0, 0, 205, 275))[0]
+        crown_region, crown_complete = self._region(frame, location, _CROWN)
+        x, y, w, h = crown_region
+        crown_readable = crown_complete and self._crown_quality(frame[y:y+h, x:x+w])
+        # Gate on original source pixels before creating any enlarged view.
+        registered = _canonical(frame, location)
+        for field, box in [('wins_remaining', _WINS), ('lethal', _CROWN)]:
+            region, complete = self._region(frame, location, box)
+            value, confidence = (None, None)
+            if complete:
+                if field == 'wins_remaining':
+                    value, confidence = self._wins(registered)
+                elif crown_readable:
+                    value, confidence = self._crown(registered)
+            output[field] = value
+            output['evidence'][field] = {
+                'region': region, 'confidence': confidence,
+                'method': ('clock_cells_colour' if field == 'wins_remaining'
+                           else 'clock_crown_shape_native_quality') + ('_unknown' if value is None else '')}
+        region = self._day_region(frame, location)
+        if region is not None:
+            x, y, w, h = region
+            value, confidence = self._ocr(frame[y:y+h, x:x+w])
+            method = 'paddle_day_glyph'
+            # Preserve the proven profile preprocessing/crop without allowing an
+            # arbitrary configured text box to masquerade as a visible clock.
+            fallback = self._profile_region(frame, region)
+            if value is None and fallback is not None:
+                x, y, w, h = fallback
+                value, confidence = self._ocr(frame[y:y+h, x:x+w])
+                region, method = fallback, 'paddle_profile_day_crop'
+            output['igd'] = value
+            output['evidence']['igd'] = {'region': region, 'confidence': confidence,
+                                         'method': method + ('_unknown' if value is None else '')}
+        else:
+            region, _ = self._region(frame, location, (82, 63, 136, 115))
+            output['evidence']['igd'] = {'region': region, 'confidence': None,
+                                         'method': 'day_medallion_not_readable'}
+        return output
+
+    def _wins(self, image):
+        b, g, r = (image[:, :, i].astype(np.int16) for i in range(3))
+        blue = (b - r > 18) & (g - r > 8) & (b >= 80)
+        value = image.max(axis=2)
+        # Empty interiors can be dark brown in compressed/native480 captures.
+        # Black occlusion is NOT an empty cell, and gold is NOT a blue interior.
+        # Mid-brightness desaturated blue (notably Bili3300) is ambiguous,
+        # not an empty cell merely because its blue chroma is weak.
+        dark = (value >= 12) & (value < 90) & ~blue
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        glare = (hsv[:, :, 1] < 55) & (hsv[:, :, 2] > 220)
+        states, confidence = [], []
+        for slot in self._slots:
+            filled, empty = float(blue[slot].mean()), float(dark[slot].mean())
+            if float(glare[slot].mean()) > 0.15:
+                return None, None
+            if filled >= 0.65:
+                states.append(True)
+                confidence.append(filled)
+            elif empty >= 0.65:
+                states.append(False)
+                confidence.append(empty)
+            else:
+                return None, None
+        if states != sorted(states, reverse=True):
+            return None, None
+        return 10 - sum(states), min(confidence)
+
+    @staticmethod
+    def _crown_quality(native):
+        # BEFORE any upscaling: require actual native-pixel texture/contrast and
+        # reject missing pixels. Sharpened/upscaled blur is not new evidence.
+        if min(native.shape[:2]) < 8:
+            return False
+        gray = cv2.cvtColor(native, cv2.COLOR_BGR2GRAY)
+        if (float(cv2.Laplacian(gray, cv2.CV_32F).var()) < 250
+                or float(gray.std()) < 15
+                or float((native.max(axis=2) < 8).mean()) > 0.12):
+            return False
+        return True
+
+    def _crown(self, image):
+        x1, y1, x2, y2 = _CROWN
+        candidates = {}
+        for name, (template, shape) in self._crowns.items():
+            best = (-1.0, 0.0, 0.0)
+            for dy in range(-3, 4):
+                for dx in range(-3, 4):
+                    patch = image[y1+dy:y2+dy, x1+dx:x2+dx]
+                    score = _correlation(cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY), template)
+                    if score > best[0]:
+                        pixels = _colour(patch, 'orange' if name == 'whole' else 'grey')
+                        dice = float(2 * (pixels & shape).sum() / max(1, pixels.sum() + shape.sum()))
+                        best = (score, dice, float(pixels.mean()))
+            candidates[name] = best
+        whole, cracked = candidates['whole'], candidates['cracked']
+        if (whole[0] >= 0.65 and whole[0] - cracked[0] >= 0.05
+                and whole[1] >= 0.55 and whole[2] >= 0.15):
+            return False, min(whole[:2])
+        # Grey alone is NEVER lethal. The colour-independent cracked template
+        # must beat the whole-crown template on the same actual pixel shape.
+        if (cracked[0] >= 0.70 and cracked[0] - whole[0] >= 0.12
+                and cracked[1] >= 0.55 and cracked[2] >= 0.12):
+            return True, min(cracked[:2])
+        return None, None
+
+    def _day_region(self, frame, location):
+        region, complete = self._region(frame, location, (82, 63, 136, 115))
+        if not complete:
+            return None
+        x, y, w, h = region
+        patch = frame[y:y+h, x:x+w]
+        hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
+        white = cv2.inRange(hsv, (0, 0, 105), (179, 115, 255))
+        contours, hierarchy = cv2.findContours(white, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+        if hierarchy is None:
+            return None
+        center = (location['x'] + 108 * location['scale'] - x,
+                  location['y'] + 91 * location['scale'] - y)
+        glyphs = []
+        for i, contour in enumerate(contours):
+            if hierarchy[0, i, 3] < 0:
+                continue
+            gx, gy, gw, gh = cv2.boundingRect(contour)
+            # Tiny shadow pinholes in the printed medallion are not glyphs;
+            # merging them into a 1's box adds the rim and clips OCR context.
+            if (gh >= max(4, 14 * location['scale'])
+                    and abs(gx + gw / 2 - center[0]) <= 16 * location['scale']
+                    and abs(gy + gh / 2 - center[1]) <= 12 * location['scale']):
+                glyphs.append((gx, gy, gx+gw, gy+gh))
+        if not glyphs:
+            return None
+        # Bound the actual dark glyph holes inside the white medallion, not a
+        # hardcoded narrow geometry window that clips 1/11 on another layout.
+        left, top = min(g[0] for g in glyphs), min(g[1] for g in glyphs)
+        right, bottom = max(g[2] for g in glyphs), max(g[3] for g in glyphs)
+        margin = max(1, round(2 * location['scale']))
+        left, top = left-margin, top-margin
+        right, bottom = right+margin, bottom+margin
+        # A printed 1 is much narrower than its white medallion. Keep genuine
+        # source-pixel side context for Paddle's text detector rather than
+        # stretching a 2px stroke or clipping it with the former fixed window.
+        if right-left < bottom-top:
+            extra = bottom-top-(right-left)
+            left -= extra // 2
+            right += extra-extra // 2
+        if left < 0 or top < 0 or right > w or bottom > h:
+            return None
+        return [x+left, y+top, right-left, bottom-top]
+
+    def _profile_region(self, frame, glyph):
+        values = self.profile.get('igd_crop_region')
+        if not isinstance(values, (list, tuple)) or len(values) != 4:
+            return None
+        if any(not isinstance(v, Real) or isinstance(v, bool) or not math.isfinite(v) for v in values):
+            return None
+        x, y, w, h = values
+        if not (0 <= x < 1 and 0 <= y < 1 and 0 < w <= 1-x and 0 < h <= 1-y):
+            return None
+        fh, fw = frame.shape[:2]
+        result = [math.floor(x*fw), math.floor(y*fh), math.ceil(w*fw), math.ceil(h*fh)]
+        rx, ry, rw, rh = result
+        gx, gy, gw, gh = glyph
+        overlap = max(0, min(rx+rw, gx+gw)-max(rx, gx)) * max(0, min(ry+rh, gy+gh)-max(ry, gy))
+        if (rx+rw > fw or ry+rh > fh
+                or rw > 3*gw or rh > 3*gh or overlap < 0.75*gw*gh):
+            return None
+        return result
+
+    def _ocr(self, patch):
+        if self.reader is None or patch.size == 0:
+            return None, None
+        h, w = patch.shape[:2]
+        scale = max(200/h, 200/w, 4.0)
+        image = cv2.resize(patch, (int(w*scale), int(h*scale)), interpolation=cv2.INTER_LINEAR)
+        _, binary = cv2.threshold(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), 65, 255, cv2.THRESH_BINARY)
+        image = cv2.copyMakeBorder(cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR),
+                                   50, 50, 50, 50, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+        try:
+            results = list(self.reader.predict(image, text_det_thresh=0.1, text_det_box_thresh=0.1))
+            if len(results) != 1:
+                return None, None
+            texts, scores = results[0].get('rec_texts', []), results[0].get('rec_scores', [])
+            if len(texts) != len(scores):
+                return None, None
+            accepted = []
+            for text, score in zip(texts, scores):
+                if (not isinstance(text, str) or not isinstance(score, Real)
+                        or isinstance(score, bool) or not math.isfinite(score)
+                        or not 0 <= score <= 1):
+                    return None, None
+                if score >= 0.9:
+                    accepted.append((text.strip(), float(score)))
+            if len(accepted) != 1 or not re.fullmatch(r'(?:[1-9]|1[0-9]|20)', accepted[0][0]):
+                return None, None
+            return int(accepted[0][0]), accepted[0][1]
+        except Exception:
+            return None, None

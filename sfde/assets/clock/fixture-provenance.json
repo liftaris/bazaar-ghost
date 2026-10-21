@@ -1,0 +1,26 @@
+{
+  "omitted_review_sheet": {
+    "file": "bili-cell-label-review.png",
+    "sha256": "f676e840ccca2be55588ae01a1a755efdd2890e448ebeaa665c70c7774e8da77",
+    "note": "Derived nearest-neighbor labelled review only; omitted after review to keep all fixtures/templates below2MB. Four original crops and frozen pixel labels retained."
+  },
+  "natural_negative": {
+    "file": "fixtures/no-clock-bili152.jpg",
+    "source_path": ".ignore/sfde-next/capture/mask-BV1AHuC6nEGn/frames/00006.000.jpg",
+    "source_id": "BV1AHuC6nEGn:40830306653",
+    "part_seconds": 152,
+    "source_dimensions": [
+      852,
+      480
+    ],
+    "truth": {
+      "visible": false,
+      "igd": null,
+      "wins_remaining": null,
+      "lethal": null
+    },
+    "sha256": "954dfc35b62f12454fc7d4563d3320e3066c7b98e4867a80519fcfb7e6a75da3",
+    "label_reference": ".ignore/sfde-next/capture/labels-verified.json#genuine-masked-ghost-intro",
+    "method": "Existing independently pixel-reviewed no-clock intro label reused, before testing the module on this fixture; source JPEG copied byte-identically."
+  }
+}

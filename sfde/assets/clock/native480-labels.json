@@ -1,0 +1,257 @@
+{
+  "method": "Direct native480 JPEG clock-pixel review of all14 day tabs, blue/dark interiors and orange whole crowns using enlarged contact sheet; agrees with proposed prior labels. Frozen before clock_reader.py creation; explicit development/regression evidence, not blind evaluation.",
+  "cases": [
+    {
+      "file": "fixtures/native480-m01.jpg",
+      "id": "m01",
+      "source_path": "/home/kaio/Dev/bazaar-ghost/test_data/2549030240/480p.mp4",
+      "nominal_seek_seconds": 820.0,
+      "source_dimensions": [
+        852,
+        480
+      ],
+      "sha256": "6b4237312a75145720322ef45a9453a4ac128e8b2c03538d57333e4134ac1f69",
+      "status": "native_pixel_reviewed_before_implementation",
+      "truth": {
+        "igd": 1,
+        "wins_earned": 0,
+        "wins_remaining": 10,
+        "lethal": false
+      }
+    },
+    {
+      "file": "fixtures/native480-m02.jpg",
+      "id": "m02",
+      "source_path": "/home/kaio/Dev/bazaar-ghost/test_data/2549030240/480p.mp4",
+      "nominal_seek_seconds": 1057.0,
+      "source_dimensions": [
+        852,
+        480
+      ],
+      "sha256": "bc051ad01a9321a3ce542391b5acc3be55ea148f16a45b1afe1cd7ea95c80cd7",
+      "status": "native_pixel_reviewed_before_implementation",
+      "truth": {
+        "igd": 2,
+        "wins_earned": 1,
+        "wins_remaining": 9,
+        "lethal": false
+      }
+    },
+    {
+      "file": "fixtures/native480-m03.jpg",
+      "id": "m03",
+      "source_path": "/home/kaio/Dev/bazaar-ghost/test_data/2549030240/480p.mp4",
+      "nominal_seek_seconds": 1246.0,
+      "source_dimensions": [
+        852,
+        480
+      ],
+      "sha256": "c3abcddcc83d843d4c978786fd8b24894f67f1960612ec22ed48e13e78b38f13",
+      "status": "native_pixel_reviewed_before_implementation",
+      "truth": {
+        "igd": 3,
+        "wins_earned": 2,
+        "wins_remaining": 8,
+        "lethal": false
+      }
+    },
+    {
+      "file": "fixtures/native480-m04.jpg",
+      "id": "m04",
+      "source_path": "/home/kaio/Dev/bazaar-ghost/test_data/2549030240/480p.mp4",
+      "nominal_seek_seconds": 1405.0,
+      "source_dimensions": [
+        852,
+        480
+      ],
+      "sha256": "e2a68724fdd426399d6cb322e02dcf26da0f81ab400f5a5b8101f1fe78739e91",
+      "status": "native_pixel_reviewed_before_implementation",
+      "truth": {
+        "igd": 4,
+        "wins_earned": 3,
+        "wins_remaining": 7,
+        "lethal": false
+      }
+    },
+    {
+      "file": "fixtures/native480-m05.jpg",
+      "id": "m05",
+      "source_path": "/home/kaio/Dev/bazaar-ghost/test_data/2549030240/480p.mp4",
+      "nominal_seek_seconds": 1630.0,
+      "source_dimensions": [
+        852,
+        480
+      ],
+      "sha256": "278104fa75c9639f0e647ddf08e25b7c6f6ec4bf73881aa24596d17135519529",
+      "status": "native_pixel_reviewed_before_implementation",
+      "truth": {
+        "igd": 5,
+        "wins_earned": 3,
+        "wins_remaining": 7,
+        "lethal": false
+      }
+    },
+    {
+      "file": "fixtures/native480-m06.jpg",
+      "id": "m06",
+      "source_path": "/home/kaio/Dev/bazaar-ghost/test_data/2549030240/480p.mp4",
+      "nominal_seek_seconds": 1851.0,
+      "source_dimensions": [
+        852,
+        480
+      ],
+      "sha256": "3a0ee2a73e86f8b9226525e40318196d0fc8ccea7c858a8c6c882e2ef630c7ff",
+      "status": "native_pixel_reviewed_before_implementation",
+      "truth": {
+        "igd": 6,
+        "wins_earned": 4,
+        "wins_remaining": 6,
+        "lethal": false
+      }
+    },
+    {
+      "file": "fixtures/native480-m08.jpg",
+      "id": "m08",
+      "source_path": "/home/kaio/Dev/bazaar-ghost/test_data/2549030240/480p.mp4",
+      "nominal_seek_seconds": 2415.0,
+      "source_dimensions": [
+        852,
+        480
+      ],
+      "sha256": "0b5757d900345c03fe6841d77fbcaafce97a1c76385b8a5685afb1e92f615870",
+      "status": "native_pixel_reviewed_before_implementation",
+      "truth": {
+        "igd": 8,
+        "wins_earned": 5,
+        "wins_remaining": 5,
+        "lethal": false
+      }
+    },
+    {
+      "file": "fixtures/native480-m09.jpg",
+      "id": "m09",
+      "source_path": "/home/kaio/Dev/bazaar-ghost/test_data/2549030240/480p.mp4",
+      "nominal_seek_seconds": 2646.0,
+      "source_dimensions": [
+        852,
+        480
+      ],
+      "sha256": "ff75e5c183ea674ce78100e67d0b208b7d39c323a332c825d5311702508ca62e",
+      "status": "native_pixel_reviewed_before_implementation",
+      "truth": {
+        "igd": 9,
+        "wins_earned": 6,
+        "wins_remaining": 4,
+        "lethal": false
+      }
+    },
+    {
+      "file": "fixtures/native480-m10.jpg",
+      "id": "m10",
+      "source_path": "/home/kaio/Dev/bazaar-ghost/test_data/2549030240/480p.mp4",
+      "nominal_seek_seconds": 2819.0,
+      "source_dimensions": [
+        852,
+        480
+      ],
+      "sha256": "0da929c0632a77e916dde471cc2523d789a86ed00ee169e1b550abc05a7341a2",
+      "status": "native_pixel_reviewed_before_implementation",
+      "truth": {
+        "igd": 10,
+        "wins_earned": 7,
+        "wins_remaining": 3,
+        "lethal": false
+      }
+    },
+    {
+      "file": "fixtures/native480-m11.jpg",
+      "id": "m11",
+      "source_path": "/home/kaio/Dev/bazaar-ghost/test_data/2549030240/480p.mp4",
+      "nominal_seek_seconds": 2989.0,
+      "source_dimensions": [
+        852,
+        480
+      ],
+      "sha256": "a5b1bae875353f69454bf391faf9b72bba47884298fc1e5d267d0ca414832e18",
+      "status": "native_pixel_reviewed_before_implementation",
+      "truth": {
+        "igd": 11,
+        "wins_earned": 8,
+        "wins_remaining": 2,
+        "lethal": false
+      }
+    },
+    {
+      "file": "fixtures/native480-m12.jpg",
+      "id": "m12",
+      "source_path": "/home/kaio/Dev/bazaar-ghost/test_data/2549030240/480p.mp4",
+      "nominal_seek_seconds": 3210.0,
+      "source_dimensions": [
+        852,
+        480
+      ],
+      "sha256": "2916b05a8540f4b5028e614449898c10765e9811889055369f08f2f61cbf4deb",
+      "status": "native_pixel_reviewed_before_implementation",
+      "truth": {
+        "igd": 12,
+        "wins_earned": 9,
+        "wins_remaining": 1,
+        "lethal": false
+      }
+    },
+    {
+      "file": "fixtures/native480-m13.jpg",
+      "id": "m13",
+      "source_path": "/home/kaio/Dev/bazaar-ghost/test_data/2549030240/480p.mp4",
+      "nominal_seek_seconds": 3414.0,
+      "source_dimensions": [
+        852,
+        480
+      ],
+      "sha256": "9b2c8d699b8e6e3048ef386d53d8009deff66e54f169353623bf2d43e5e01f0d",
+      "status": "native_pixel_reviewed_before_implementation",
+      "truth": {
+        "igd": 1,
+        "wins_earned": 0,
+        "wins_remaining": 10,
+        "lethal": false
+      }
+    },
+    {
+      "file": "fixtures/native480-m15.jpg",
+      "id": "m15",
+      "source_path": "/home/kaio/Dev/bazaar-ghost/test_data/2549030240/480p.mp4",
+      "nominal_seek_seconds": 4106.0,
+      "source_dimensions": [
+        852,
+        480
+      ],
+      "sha256": "6d4a6fab76f183ba0dfc4ec195a4fce6bcb88716e5c0213a97c8ca3432db7344",
+      "status": "native_pixel_reviewed_before_implementation",
+      "truth": {
+        "igd": 3,
+        "wins_earned": 2,
+        "wins_remaining": 8,
+        "lethal": false
+      }
+    },
+    {
+      "file": "fixtures/native480-m22.jpg",
+      "id": "m22",
+      "source_path": "/home/kaio/Dev/bazaar-ghost/test_data/2549030240/480p.mp4",
+      "nominal_seek_seconds": 5685.0,
+      "source_dimensions": [
+        852,
+        480
+      ],
+      "sha256": "08e2842831bba3a980cc6bdb96d6b2654f4e99f3c1c719eb6aff9de98df074f1",
+      "status": "native_pixel_reviewed_before_implementation",
+      "truth": {
+        "igd": 10,
+        "wins_earned": 9,
+        "wins_remaining": 1,
+        "lethal": false
+      }
+    }
+  ]
+}

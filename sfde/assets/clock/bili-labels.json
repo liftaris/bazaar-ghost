@@ -1,0 +1,93 @@
+{
+  "method": "Development labels frozen before clock_reader.py creation. Direct per-cell native-pixel review at10 geometry-only cell centers, no color-count/OCR output used. 1500 cells1-5 blue and6-10 dark;3300 cells1-8 blue and9-10 dark;3450/3520 cells1-9 blue and10 dark. Crown/day visually reviewed and agree with capture verified labels. Not blind/independent validation.",
+  "cases": [
+    {
+      "file": "safe.png",
+      "source_file": ".ignore/sfde-next/capture/verified-crops/bili-clock-1500.png",
+      "source_crop_xyxy": [
+        80,
+        185,
+        175,
+        305
+      ],
+      "source_dimensions": [
+        852,
+        480
+      ],
+      "nominal_part_seconds": 1500,
+      "truth": {
+        "igd": 7,
+        "wins_earned": 5,
+        "wins_remaining": 5,
+        "lethal": false
+      },
+      "sha256": "6abf4bc44faee9c79be359913326a684b0bf8b6da90a2d20985602983ff0c6a7"
+    },
+    {
+      "file": "cracked.png",
+      "source_file": ".ignore/sfde-next/capture/verified-crops/bili-clock-3300.png",
+      "source_crop_xyxy": [
+        80,
+        185,
+        175,
+        305
+      ],
+      "source_dimensions": [
+        852,
+        480
+      ],
+      "nominal_part_seconds": 3300,
+      "truth": {
+        "igd": 12,
+        "wins_earned": 8,
+        "wins_remaining": 2,
+        "lethal": true
+      },
+      "sha256": "16fd1e8745a34e0ad4378d80b726ddd01389ccd5c3a8f9e8a18248e75a5af2e2"
+    },
+    {
+      "file": "bili-3450.png",
+      "source_file": ".ignore/sfde-next/capture/verified-crops/bili-clock-3450.png",
+      "source_crop_xyxy": [
+        80,
+        185,
+        175,
+        305
+      ],
+      "source_dimensions": [
+        852,
+        480
+      ],
+      "nominal_part_seconds": 3450,
+      "truth": {
+        "igd": 13,
+        "wins_earned": 9,
+        "wins_remaining": 1,
+        "lethal": true
+      },
+      "sha256": "f86167e42a1b1df6ce6fba34e1a06bbd8006124fb096a7767273d373c97ca9b5"
+    },
+    {
+      "file": "bili-3520.png",
+      "source_file": ".ignore/sfde-next/capture/verified-crops/bili-clock-3520.png",
+      "source_crop_xyxy": [
+        80,
+        185,
+        175,
+        305
+      ],
+      "source_dimensions": [
+        852,
+        480
+      ],
+      "nominal_part_seconds": 3520,
+      "truth": {
+        "igd": 13,
+        "wins_earned": 9,
+        "wins_remaining": 1,
+        "lethal": true
+      },
+      "sha256": "be0ca2a7d22d490f00cbe497aedc2e7ae4bab7f340b1e8d09eca4b514ee82116"
+    }
+  ]
+}

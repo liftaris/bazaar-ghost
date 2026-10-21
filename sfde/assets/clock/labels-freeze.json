@@ -1,0 +1,42 @@
+{
+  "status": "Native14 and Bili4 labels frozen before implementation",
+  "files": {
+    "native480-labels.json": "a8126269e89e6186ac28a690bf6558ebcd48a10b3e10d7db4c1700ba6726c687",
+    "bili-labels.json": "9356cb755d99116fa70b98e61fae5172c1a0cf51be9c279ae2d236975ad5bc3b"
+  },
+  "extra_regression_labels": {
+    "shifted.png": {
+      "igd": 1,
+      "wins_remaining": 10,
+      "lethal": false,
+      "source_crop_xyxy": [
+        185,
+        440,
+        390,
+        715
+      ],
+      "source_dimensions": [
+        1920,
+        1080
+      ]
+    },
+    "glow-3234.png": {
+      "igd": 12,
+      "wins_remaining": 0,
+      "lethal": false
+    },
+    "glow-5709.png": {
+      "igd": 10,
+      "wins_remaining": 0,
+      "lethal": false
+    },
+    "safe-nine.png": {
+      "igd": 12,
+      "wins_remaining": 1,
+      "lethal": false
+    }
+  },
+  "source_capture_label_sha256": "e3b7b9445f08e11ab7b44e7392751aaac1658ce1a2f06e697c36d775b9e4a886",
+  "derived_contact_sheet_sha256": "66b652bcb43d6972021ff49031eb52351e5d0a9885ce3816c2fdb1b130795505",
+  "derived_contact_sheet_note": "Temporary enlargement montage reviewed and omitted from shipped assets to keep image budget under2MB; raw source JPEGs are retained unchanged."
+}

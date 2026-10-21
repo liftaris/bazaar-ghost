@@ -57,6 +57,7 @@ COPY --chown=sfde:sfde config.yaml .
 COPY --chown=sfde:sfde src/ ./src/
 COPY --chown=sfde:sfde streamlink_plugins/ ./streamlink_plugins/
 COPY --chown=sfde:sfde templates/ ./templates/
+COPY --chown=sfde:sfde assets/clock/geometry.png assets/clock/safe.png assets/clock/cracked.png ./assets/clock/
 # The registry lives outside this context; pass it with --build-context contracts=../contracts.
 COPY --from=contracts --chown=sfde:sfde platforms.json ./contracts/platforms.json
 ENTRYPOINT ["python", "-u", "src/sfde.py"]
@@ -68,6 +69,7 @@ RUN python /tmp/verify_ffmpeg.py --ffmpeg /opt/ffmpeg/bin/ffmpeg
 COPY requirements-test.txt .
 RUN --mount=type=cache,target=/root/.cache/pip python -m pip install -r requirements-test.txt
 COPY --chown=sfde:sfde tests/ ./tests/
+COPY --chown=sfde:sfde assets/clock/ ./assets/clock/
 COPY --chown=sfde:sfde pytest.ini .
 USER sfde
 ENTRYPOINT ["python", "-m", "pytest"]
