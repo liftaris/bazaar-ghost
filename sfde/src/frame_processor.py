@@ -13,6 +13,7 @@ import logging
 import base64
 from emblem_detector import EmblemDetector
 from right_edge_detector import RightEdgeDetector
+from ocr_runtime import create_ocr_reader
 from telemetry import create_span, record_histogram, record_counter
 
 
@@ -132,22 +133,11 @@ class FrameProcessor:
             except Exception as e:
                 raise ValueError(f"Could not initialize right edge detector: {e}") from e
 
-        # Initialize PaddleOCR with mobile models (smallest footprint)
+        # Initialize the shared, regression-tested English CPU pipeline.
         self.ocr_confidence_threshold = config.get('ocr', {}).get('confidence_threshold', 0.5)
         try:
-            from paddleocr import PaddleOCR
-
-            self.reader = PaddleOCR(
-                text_detection_model_name="PP-OCRv5_mobile_det",
-                text_recognition_model_name="en_PP-OCRv5_mobile_rec",
-                use_doc_orientation_classify=False,
-                use_doc_unwarping=False,
-                use_textline_orientation=False,
-                # Paddle 3.3's oneDNN executor cannot run these mobile model graphs.
-                enable_mkldnn=False,
-                text_rec_score_thresh=self.ocr_confidence_threshold,
-            )
-            self.logger.info("Initialized PaddleOCR (mobile models)")
+            self.reader = create_ocr_reader(self.ocr_confidence_threshold)
+            self.logger.info("Initialized PaddleOCR (v5 mobile models, CPU)")
         except Exception as e:
             self.logger.error(f"Failed to initialize PaddleOCR: {e}")
             raise

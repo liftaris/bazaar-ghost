@@ -50,7 +50,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 RUN useradd -m -u 1000 sfde && chown sfde:sfde /app
 USER sfde
 # Cache exactly the models used at runtime, in the runtime user's home.
-RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(text_detection_model_name='PP-OCRv5_mobile_det', text_recognition_model_name='en_PP-OCRv5_mobile_rec', use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False, enable_mkldnn=False)"
+# Exercise inference too: constructing a reader alone misses executor regressions.
+COPY --chown=sfde:sfde src/ocr_runtime.py ./src/ocr_runtime.py
+RUN PYTHONPATH=/app/src python -c "import numpy as np; from ocr_runtime import create_ocr_reader; create_ocr_reader().predict(np.zeros((64, 256, 3), dtype=np.uint8))"
 COPY --chown=sfde:sfde config.yaml .
 COPY --chown=sfde:sfde src/ ./src/
 COPY --chown=sfde:sfde streamlink_plugins/ ./streamlink_plugins/

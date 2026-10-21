@@ -27,7 +27,7 @@ Use the streamer's database profile, not this illustrative crop, for real proces
 From the repository root, create `.env.dev` containing only local/development settings, and export `CHUNK_ID` and `SFDE_PROFILE`. The profile can be obtained from the streamer's `sfde_profiles` relation.
 
 ```bash
-docker build -t sfde:dev sfde/
+docker build --build-context contracts=./contracts -t sfde:dev sfde/
 docker run --rm --network host --env-file .env.dev \
   -e CHUNK_ID -e SFDE_PROFILE -e QUALITY=480p -e ENVIRONMENT=dev \
   sfde:dev
@@ -50,8 +50,17 @@ docker run --rm --network host --env-file .env.dev \
 
 ## Tests and tuning
 
+OCR uses PaddleOCR **3.7.0**, PaddlePaddle CPU **3.3.1**, and PaddleX **3.7.2**.
+`src/ocr_runtime.py` shares explicit `PP-OCRv5_mobile_det` and
+`en_PP-OCRv5_mobile_rec` settings between runtime and Docker cache warmup.
+It uses one CPU inference thread, disables oneDNN for mobile-graph compatibility,
+and leaves document orientation/unwarping and textline orientation disabled.
+Explicit models avoid the larger PP-OCRv6 default; retaining v5 also preserves
+the existing English name/day behavior. Docker exercises a prediction during
+warmup, and the tests check cached inference without network access.
+
 ```bash
-docker build --target test -t sfde:test sfde/
+docker build --build-context contracts=./contracts --target test -t sfde:test sfde/
 docker run --rm --network none sfde:test
 ```
 

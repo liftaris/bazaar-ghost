@@ -3,6 +3,8 @@
 streamlink==8.6.2
 opencv-contrib-python==4.10.0.84
 paddleocr==3.7.0
+# PaddleOCR allows any PaddleX 3.7.x; pin the tested inference implementation.
+paddlex[ocr-core]==3.7.2
 paddlepaddle==3.3.1
 numpy==2.3.5
 PyYAML==6.0.2
