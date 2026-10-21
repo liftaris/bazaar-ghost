@@ -6,6 +6,8 @@
     "previewUrls": false,
     "vars": {
       "ENVIRONMENT": "local",
+      "SFDE_AI_ENABLED": "false",
+      "SFDE_AI_DAILY_BUDGET_USD": "1",
       "BUILD_COMMIT": "local",
       "PUBLIC_URL": "http://localhost:8787",
       "PUBLIC_SITE_URL": "http://localhost:3000",
@@ -41,6 +43,8 @@
     "previewUrls": false,
     "vars": {
       "ENVIRONMENT": "dev",
+      "SFDE_AI_ENABLED": "false",
+      "SFDE_AI_DAILY_BUDGET_USD": "1",
       "PUBLIC_URL": "https://REPLACE_ME",
       "PUBLIC_SITE_URL": "https://REPLACE_ME",
       "OUTBOUND_ENABLED": "false",
@@ -75,6 +79,8 @@
     "previewUrls": false,
     "vars": {
       "ENVIRONMENT": "production",
+      "SFDE_AI_ENABLED": "false",
+      "SFDE_AI_DAILY_BUDGET_USD": "1",
       "PUBLIC_URL": "https://REPLACE_ME",
       "PUBLIC_SITE_URL": "https://bazaarghost.stream",
       "OUTBOUND_ENABLED": "false",
@@ -109,6 +115,8 @@
     "previewUrls": false,
     "vars": {
       "ENVIRONMENT": "validation",
+      "SFDE_AI_ENABLED": "false",
+      "SFDE_AI_DAILY_BUDGET_USD": "1",
       "BUILD_COMMIT": "unreleased",
       "PUBLIC_URL": "https://bazaarghost-validation.kaio-8df.workers.dev",
       "PUBLIC_SITE_URL": "https://bazaarghost-frontend-validation.kaio-8df.workers.dev",

@@ -15,6 +15,7 @@ import {
 } from "./http";
 import { claim, dispatch, plan, updateChunk, vodDetails } from "./processing";
 import { clearChunk, publish, upload } from "./detections";
+import { infer } from "./sfde-inference";
 import { retryVod, setProfile, setStreamer } from "./admin";
 import { streamersAdminRoute } from "./streamers";
 import { sessionsAdminRoute } from "./sessions";
@@ -230,7 +231,7 @@ async function route(req: Request, env: Env): Promise<Response> {
       return Response.json({ updated: result.results.length });
     }
     const match = path.match(
-      /^\/api\/processor\/chunks\/([^/]+)(?:\/(claim|detections|images))?$/,
+      /^\/api\/processor\/chunks\/([^/]+)(?:\/(claim|detections|images|inference))?$/,
     );
     if (match) {
       const id = uuid(match[1]),
@@ -257,22 +258,29 @@ async function route(req: Request, env: Env): Promise<Response> {
         return Response.json(
           await updateChunk(env, id, token, await body(req)),
         );
-      if (action === "images" && req.method === "PUT")
+      if (action === "images" && req.method === "PUT") {
+        const milliseconds = url.searchParams.has("timestamp_ms"), key = milliseconds ? "timestamp_ms" : "timestamp";
+        requireValue(milliseconds !== url.searchParams.has("timestamp"), "Provide exactly one of timestamp or timestamp_ms");
+        requireValue(url.searchParams.getAll(key).length === 1 && /^\d+$/.test(url.searchParams.get(key) ?? ""), "Invalid image timestamp");
         return Response.json(
           await upload(
             env,
             req,
             id,
-            Number(url.searchParams.get("timestamp")),
-            url.searchParams.get("kind") || "detection",
+            Number(url.searchParams.get(key)),
+            url.searchParams.get("kind") || (milliseconds ? "intro" : "detection"),
+            milliseconds,
           ),
         );
+      }
       if (action === "detections" && req.method === "POST")
         return Response.json(
           await publish(env, id, token, (await body(req)).detections),
         );
       if (action === "detections" && req.method === "DELETE")
         return Response.json(await clearChunk(env, id, token));
+      if (action === "inference" && req.method === "POST")
+        return Response.json(await infer(env, req, id));
     }
     throw new HttpError(404, "Unknown processor endpoint");
   }

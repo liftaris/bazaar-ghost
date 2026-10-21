@@ -114,8 +114,11 @@ export function computeAssignment(anchors: AnchorRow[], overrides: OverrideRow[]
   return { canonical, origin, conflicts };
 }
 
-interface Universe { anchors: AnchorRow[]; overrides: OverrideRow[] }
+interface Universe { anchors: AnchorRow[]; overrides: OverrideRow[]; revision: number }
 async function loadUniverse(env: Env, seeds: number[]): Promise<Universe> {
+  // Stable Detection IDs no longer signal a correction through pointer changes.
+  // Fence the name/visibility revision as well as the component/override topology.
+  const revision = (await one<{ revision: number }>(env, 'SELECT revision FROM public_search_state WHERE id=1'))!.revision;
   const ids = new Set(seeds);
   const overrides = new Map<string, OverrideRow>();
   for (let round = 0; round < 6 && ids.size; round++) {
@@ -129,11 +132,12 @@ async function loadUniverse(env: Env, seeds: number[]): Promise<Universe> {
     }
     if (ids.size === before) break;
   }
-  const anchors = ids.size ? await rows<AnchorRow>(env, `SELECT a.id,a.vod_id,a.matchup_id,g.session_id,a.anchor_seconds+g.offset_seconds AS t,d.username_lower AS name
+  const anchors = ids.size ? await rows<AnchorRow>(env, `SELECT a.id,a.vod_id,a.matchup_id,g.session_id,a.anchor_seconds+g.offset_seconds AS t,
+    CASE WHEN d.name_state IN('legacy','complete') AND d.confidence>0.7 THEN d.username_lower END AS name
     FROM matchup_anchors a LEFT JOIN recording_alignments g ON g.vod_id=a.vod_id AND g.revoked_at IS NULL
       AND g.rec_start<=a.anchor_seconds AND (g.rec_end IS NULL OR a.anchor_seconds<g.rec_end)
     LEFT JOIN detections d ON d.id=a.current_detection_id WHERE a.id IN(SELECT value FROM json_each(?)) ORDER BY a.id`, json([...ids])) : [];
-  return { anchors, overrides: [...overrides.values()] };
+  return { anchors, overrides: [...overrides.values()], revision };
 }
 
 interface MatchupRow { id: number; status: 'visible' | 'hidden'; merged_into: number | null; origin: string }
@@ -154,7 +158,7 @@ async function reconcile(env: Env, seeds: number[], trigger: Record<string, unkn
     if (attempt >= 3) throw new HttpError(409, 'Matchups changed while coalescing; try again');
   }
 }
-async function apply(env: Env, { anchors, overrides }: Universe, config: CoalesceConfig, trigger: Record<string, unknown>, by: string): Promise<CoalesceResult | null> {
+async function apply(env: Env, { anchors, overrides, revision }: Universe, config: CoalesceConfig, trigger: Record<string, unknown>, by: string): Promise<CoalesceResult | null> {
   const empty: CoalesceResult = { changed: 0, retired: 0, revived: 0, conflicts: [], event_id: null };
   if (!anchors.length) return empty;
   const { canonical, origin, conflicts } = computeAssignment(anchors, overrides, config);
@@ -183,6 +187,7 @@ async function apply(env: Env, { anchors, overrides }: Universe, config: Coalesc
   const event = hex(), stamp = now();
   const payload = { ...trigger, moves: moves.slice(0, 500), moved: moves.length, retired: retiredNow, revived, conflicts };
   const checks = [
+    { sql: 'SELECT revision=? FROM public_search_state WHERE id=1', args: [revision] },
     { sql: FENCE_ANCHORS, args: [json(anchorIds), `${anchors.length}:${anchors.reduce((sum, a) => sum + a.matchup_id * 31 + a.id, 0)}`] },
     { sql: FENCE_OVERRIDES, args: [json(anchorIds), json(anchorIds), `${overrides.length}:${overrides.reduce((m, o) => Math.max(m, o.rid ?? 0), 0)}`] },
     { sql: FENCE_MATCHUPS, args: [json(rowIds), `${matchups.size}:${[...matchups.values()].reduce((sum, m) => sum + (m.merged_into ?? 0), 0)}:${[...matchups.values()].filter(m => m.status === 'hidden').length}`] },

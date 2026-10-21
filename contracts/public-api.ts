@@ -98,17 +98,57 @@ export interface ClipSource {
 /** A playable way to watch a Matchup. Order is defined (MAT-03): recordings before clips, available first,
  * own before reuploads, best Detection confidence, earliest recording time, lowest Recording ID. */
 export type Source = RecordingSource | ClipSource;
+export type NameState = "legacy" | "complete" | "partial" | "obstructed" | "masked" | "unreadable";
+export type Hero = "vanessa" | "pygmalien" | "dooley" | "mak" | "jules" | "stelle" | "karnok" | "the_dragons";
+export type EvidenceField = "encounter" | "username" | "rank" | "igd" | "ghostHero" | "streamerHero" | "winsRemaining" | "lethal";
+/** One selected observation, at its actual image time, not necessarily the encounter anchor. */
+export interface FieldEvidence {
+  detectionId: string;
+  recordingId: number;
+  atMs: number;
+  confidence: number | null;
+  method: string;
+  screenshotUrl: string | null;
+  phase: "intro" | "pre_fight" | "post_fight" | "unknown";
+  frameSha256: string | null;
+  sourceWidth: number | null;
+  sourceHeight: number | null;
+  region: [number, number, number, number] | null;
+  selectionReason: string | null;
+  model?: string;
+  promptVersion?: string;
+  samples?: Array<{ atMs: number; screenshotUrl: string | null }>;
+  /** Processor-observed continuity segment, not a Session or server-verified visual run. */
+  runSegmentId?: string;
+  /** Original persisted direct proof; atMs/image above remain that original observation. */
+  inheritedFrom?: { detectionId: string; runSegmentId: string; atMs: number };
+}
+export interface Encounter {
+  /** Encounter confidence is separate from username confidence; unknown for legacy observations. */
+  confidence: number | null;
+  ghostHero: Hero | null;
+  streamerHero: Hero | null;
+  igd: number | null;
+  winsRemaining: number | null;
+  lethal: boolean | null;
+  fieldEvidence: Partial<Record<EvidenceField, FieldEvidence>>;
+}
 /** The best-supported name, rank and in-game day of a Matchup (MAT-04). */
 export interface Opponent {
-  username: string;
+  username: string | null;
   rank: string | null;
   igd: number | null;
-  confidence: number;
+  /** Username recognition confidence only. */
+  confidence: number | null;
+  nameState: NameState;
 }
 /** One distinct fight with every way to watch it. */
 export interface Matchup {
   id: number;
   opponent: Opponent;
+  encounter: Encounter;
+  /** Alias of encounter.fieldEvidence, also including selected name/rank evidence. */
+  fieldEvidence: Partial<Record<EvidenceField, FieldEvidence>>;
   streamer: StreamerRef | null;
   session: { id: string } | null;
   recordedAt: string | null;
@@ -124,8 +164,11 @@ export interface Evidence {
   id: string;
   recordingId: number;
   at: number;
-  username: string;
-  confidence: number;
+  username: string | null;
+  confidence: number | null;
+  nameState: NameState;
+  encounter: Encounter;
+  fieldEvidence: Partial<Record<EvidenceField, FieldEvidence>>;
   rank: string | null;
   igd: number | null;
   truncated: boolean;
@@ -172,7 +215,8 @@ export interface SessionCard {
 export interface TimelineMarker {
   id: number;
   timestampSeconds: number;
-  username: string;
+  username: string | null;
+  nameState: NameState;
   rank: string | null;
 }
 /** Player capabilities and completed coverage are distinct from Recording availability. */

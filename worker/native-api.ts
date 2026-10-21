@@ -164,12 +164,12 @@ export async function search(env: Env, url: URL) {
     HAVING 1.0*count(*)/(?+n.gram_count-count(*))>=0.25),
     hits AS (SELECT a.matchup_id,max(c.score) AS score,max(d.username_lower=?) AS exact
     FROM candidates c JOIN detections d ON d.username_lower=c.name JOIN matchup_anchors a ON a.current_detection_id=d.id
-    WHERE a.matchup_id<=? GROUP BY a.matchup_id),`
+    WHERE a.matchup_id<=? AND d.name_state IN('legacy','complete') AND d.confidence>0.7 AND d.username IS NOT NULL GROUP BY a.matchup_id),`
     : "";
   const named = pool
-    ? `named AS (SELECT r.matchup_id,r.detection_id,r.username,r.confidence,r.rank,r.igd,r.recorded_timestamp,r.latest_indexed_at AS indexed_at,
+    ? `named AS (SELECT r.matchup_id,r.detection_id,r.username,r.confidence,r.name_state,r.rank,r.igd,r.recorded_timestamp,r.latest_indexed_at AS indexed_at,
       m.session_id,m.session_time
-      FROM (SELECT ps.matchup_id,ps.detection_id,ps.username,ps.confidence,ps.rank,ps.igd,ps.recorded_timestamp,
+      FROM (SELECT ps.matchup_id,ps.detection_id,ps.username,ps.confidence,ps.name_state,ps.rank,ps.igd,ps.recorded_timestamp,
         row_number() OVER (PARTITION BY ps.matchup_id ORDER BY ps.confidence DESC,ps.rank IS NULL,ps.igd IS NULL,ps.indexed_at,ps.detection_id) AS display_rank,
         max(ps.indexed_at) OVER (PARTITION BY ps.matchup_id) AS latest_indexed_at
         FROM public_sources ps WHERE ps.matchup_id IN(${pool})) r
@@ -362,9 +362,9 @@ async function streamers(env: Env, url: URL): Promise<Page<StreamerCard>> {
 async function timeline(env: Env, url: URL, id: number): Promise<Page<TimelineMarker>> {
   const limit = parameters(url, ["cursor", "limit"]),
     state = await boundary(env, url);
-  const found = await rows<{ matchup_id: number; at: number; username: string; rank: string | null }>(
+  const found = await rows<{ matchup_id: number; at: number; username: string | null; name_state: TimelineMarker["nameState"]; rank: string | null }>(
     env,
-    `SELECT matchup_id,at,username,rank FROM public_sources
+    `SELECT matchup_id,at,username,name_state,rank FROM public_sources
     WHERE vod_id=? AND matchup_id<=? ${state.after.length ? "AND (at,matchup_id)>(?,?)" : ""}
     ORDER BY at,matchup_id LIMIT ?`,
     id,
@@ -375,7 +375,7 @@ async function timeline(env: Env, url: URL, id: number): Promise<Page<TimelineMa
   const resultPage = await page(env, state, found, limit, (row) => [row.at, row.matchup_id]);
   return {
     ...resultPage,
-    items: resultPage.items.map((row) => ({ id: row.matchup_id, timestampSeconds: row.at, username: row.username, rank: row.rank })),
+    items: resultPage.items.map((row) => ({ id: row.matchup_id, timestampSeconds: row.at, username: row.username, nameState: row.name_state, rank: row.rank })),
   };
 }
 async function recordingEvidence(env: Env, url: URL, id: number): Promise<Page<Evidence>> {

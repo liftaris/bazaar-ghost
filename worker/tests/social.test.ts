@@ -297,7 +297,7 @@ it('preserves a hidden anchor through replacement and refuses low-confidence att
   await expect(statement(env, 'UPDATE matchup_anchors SET anchor_seconds=13 WHERE id=?', clip).run()).rejects.toThrow('immutable');
 });
 
-it('keeps a shared clip through the real processor claim, screenshot clear, upload and publish retry', async () => {
+it('keeps a shared clip and current evidence through the real processor claim, retained clear, upload and publish retry', async () => {
   const chunk = '00000000-0000-4000-8000-000000000001';
   const comment = await createComment();
   await api(`/api/v1/matchups/${clip}/like`, 'PUT', undefined, alice);
@@ -307,18 +307,18 @@ it('keeps a shared clip through the real processor claim, screenshot clear, uplo
   const lease = await claim(env, chunk);
   expect(lease.claimed).toBe(true);
   const token = lease.claim_token!;
-  expect(await clearChunk(env, chunk, token)).toEqual({ deleted: 1 });
-  expect(await env.DETECTIONS.head('current.jpg')).toBeNull();
-  expect(await one(env, 'SELECT current_detection_id FROM matchup_anchors WHERE id=?', clip)).toEqual({ current_detection_id: null });
+  expect(await clearChunk(env, chunk, token)).toEqual({ deleted: 0, retained: 1, replacement: 'per_anchor' });
+  expect(await env.DETECTIONS.head('current.jpg')).not.toBeNull();
+  expect(await one(env, 'SELECT current_detection_id FROM matchup_anchors WHERE id=?', clip)).toEqual({ current_detection_id: detection });
   const image = await upload(env, new Request('http://localhost/image', { method: 'PUT',
     headers: { 'Content-Type': 'image/jpeg', 'X-Claim-Token': token }, body: new Uint8Array([255, 216, 255, 217]) }), chunk, 12, 'detection');
   const replacement = crypto.randomUUID();
   expect(await publish(env, chunk, token, [{ id: replacement, frame_time_seconds: 12,
-    username: 'New OCR reading', confidence: 0.96, rank: 'gold', igd: 13, ...image }])).toEqual({ published: 1 });
-  expect(await one(env, 'SELECT id,current_detection_id FROM matchup_anchors WHERE id=?', clip)).toEqual({ id: clip, current_detection_id: replacement });
+    username: 'New OCR reading', confidence: 0.96, rank: 'gold', igd: 13, ...image }])).toEqual({ published: 1, inserted: 0, replaced: 1, unchanged: 0 });
+  expect(await one(env, 'SELECT id,current_detection_id FROM matchup_anchors WHERE id=?', clip)).toEqual({ id: clip, current_detection_id: detection });
   expect(await one(env, 'SELECT id FROM matchup_comments WHERE id=?', comment)).toEqual({ id: comment });
   expect(await (await api(`/api/v1/matchups/${clip}/me`, 'GET', undefined, bob)).json()).toMatchObject({ favorite: true });
-  expect(await one(env, 'SELECT igd,storage_path FROM detections WHERE id=?', replacement)).toEqual({ igd: 13, storage_path: image.storage_path });
+  expect(await one(env, 'SELECT igd,storage_path FROM detections WHERE id=?', detection)).toEqual({ igd: 13, storage_path: image.storage_path });
 });
 
 it('addresses social records by canonical Matchup ID', async () => {

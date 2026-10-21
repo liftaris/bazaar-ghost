@@ -1,6 +1,7 @@
 import { coalesceConfig, namesMatch } from './coalesce';
 import { body, HttpError, integer, now, one, requireValue, rows, statement } from './http';
 import { mergeSessions } from './sessions';
+import { atomic } from './atomic';
 
 /**
  * Session link proposals (SES-03). Two Recordings of different Sessions that show the same opponents at one constant
@@ -9,8 +10,8 @@ import { mergeSessions } from './sessions';
  */
 export interface ProposalConfig { min_support: number; min_distinct_names: number; max_conflict_ratio: number; min_coverage: number; window_days: number }
 export interface AutoAcceptConfig { enabled: boolean; min_support: number; min_distinct_names: number; max_conflict_ratio: number; require_same_streamer: boolean }
-export interface ProposalAnchor { id: number; det: string; name: string; t: number }
-export interface Evidence { a: string; b: string; delta: number; name: string }
+export interface ProposalAnchor { id: number; det: string; name: string; t: number; revision?: string }
+export interface Evidence { a: string; b: string; delta: number; name: string; revision_a?: string; revision_b?: string }
 export interface Evaluation {
   offset: number; support: Evidence[]; distinct_names: number; conflicts: Evidence[]; coverage: number; overlap_a: number; overlap_b: number; eligible: boolean;
 }
@@ -70,7 +71,8 @@ export function evaluatePair(a: ProposalAnchor[], b: ProposalAnchor[], config: P
   const usedA = new Set<number>(), usedB = new Set<number>(), matched: typeof window = [];
   for (const p of window) if (!usedA.has(p.x.id) && !usedB.has(p.y.id)) { usedA.add(p.x.id); usedB.add(p.y.id); matched.push(p); }
   const offset = round(median(matched.map(p => p.delta)));
-  const support = matched.map(p => ({ a: p.x.det, b: p.y.det, delta: round(p.delta), name: p.x.name.toLowerCase() }))
+  const support = matched.map(p => ({ a: p.x.det, b: p.y.det, delta: round(p.delta), name: p.x.name.toLowerCase(),
+    ...(p.x.revision ? { revision_a: p.x.revision } : {}), ...(p.y.revision ? { revision_b: p.y.revision } : {}) }))
     .sort((p, q) => (p.a < q.a ? -1 : p.a > q.a ? 1 : p.b < q.b ? -1 : p.b > q.b ? 1 : 0));
   // Overlap: the stretch of A's timeline in which both Recordings have anchors.
   const lo = Math.max(Math.min(...a.map(x => x.t)), Math.min(...b.map(y => y.t + offset)));
@@ -98,13 +100,14 @@ export function evaluatePair(a: ProposalAnchor[], b: ProposalAnchor[], config: P
 async function sha256(text: string) {
   return [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))].map(b => b.toString(16).padStart(2, '0')).join('');
 }
-export const evidenceHash = (support: Evidence[]) => sha256([...support.map(s => `${s.a}:${s.b}`)].sort().join('\n'));
+export const evidenceHash = (support: Evidence[]) => sha256(support.map(s => JSON.stringify([s.a,s.b,s.delta,s.name,s.revision_a ?? null,s.revision_b ?? null])).sort().join('\n'));
 
 async function recordingAnchors(env: Env, vodId: number) {
-  return rows<ProposalAnchor & { session_id: string }>(env, `SELECT a.id,a.current_detection_id AS det,d.username_lower AS name,a.anchor_seconds+g.offset_seconds AS t,g.session_id
+  return rows<ProposalAnchor & { session_id: string }>(env, `SELECT a.id,a.current_detection_id AS det,d.username_lower AS name,a.anchor_seconds+g.offset_seconds AS t,g.session_id,
+    json_array(d.username_lower,d.confidence,d.name_state,d.publish_claim) AS revision
     FROM matchup_anchors a JOIN detections d ON d.id=a.current_detection_id
     JOIN recording_alignments g ON g.vod_id=a.vod_id AND g.revoked_at IS NULL AND g.rec_start<=a.anchor_seconds AND (g.rec_end IS NULL OR a.anchor_seconds<g.rec_end)
-    WHERE a.vod_id=? ORDER BY a.id`, vodId);
+     WHERE a.vod_id=? AND d.name_state IN('legacy','complete') AND d.confidence>0.7 AND d.username IS NOT NULL ORDER BY a.id`, vodId);
 }
 async function sessionOfVod(env: Env, vodId: number) {
   const found = await rows<{ session_id: string }>(env, 'SELECT DISTINCT session_id FROM recording_alignments WHERE vod_id=? AND revoked_at IS NULL', vodId);
@@ -131,8 +134,9 @@ export async function proposeForRecording(env: Env, vodId: number): Promise<Crea
   const [config, coalesce] = [await proposalConfig(env), await coalesceConfig(env)];
   const session = await sessionOfVod(env, vodId), made: Created[] = [];
   if (!session) return made;
+  const revision = (await one<{ revision: number }>(env, 'SELECT revision FROM public_search_state WHERE id=1'))!.revision;
   const mine = await recordingAnchors(env, vodId);
-  await statement(env, 'UPDATE vods SET proposals_checked_at=? WHERE id=?', now(), vodId).run();
+  await statement(env, 'UPDATE vods SET proposals_checked_at=? WHERE id=? AND (SELECT revision FROM public_search_state WHERE id=1)=?', now(), vodId, revision).run();
   if (mine.length < config.min_support) return made;
   const candidates = await rows<{ vod_id: number; n: number }>(env, `SELECT b.vod_id,count(DISTINCT db.username_lower) AS n
     FROM matchup_anchors a JOIN detections da ON da.id=a.current_detection_id
@@ -140,7 +144,9 @@ export async function proposeForRecording(env: Env, vodId: number): Promise<Crea
     JOIN matchup_anchors b ON b.current_detection_id=db.id
     JOIN recording_alignments g ON g.vod_id=b.vod_id AND g.revoked_at IS NULL AND g.session_id!=?2
     JOIN vods v ON v.id=b.vod_id JOIN vods me ON me.id=a.vod_id
-    WHERE a.vod_id=?1 AND (v.recorded_at IS NULL OR me.recorded_at IS NULL OR abs(julianday(v.recorded_at)-julianday(me.recorded_at))<=?3)
+    WHERE a.vod_id=?1 AND da.name_state IN('legacy','complete') AND da.confidence>0.7 AND da.username IS NOT NULL
+    AND db.name_state IN('legacy','complete') AND db.confidence>0.7 AND db.username IS NOT NULL
+    AND (v.recorded_at IS NULL OR me.recorded_at IS NULL OR abs(julianday(v.recorded_at)-julianday(me.recorded_at))<=?3)
     GROUP BY b.vod_id HAVING count(DISTINCT db.username_lower)>=?4 ORDER BY n DESC,b.vod_id LIMIT ?5`,
     vodId, session, config.window_days, config.min_distinct_names, MAX_CANDIDATES);
   for (const { vod_id: other } of candidates) {
@@ -166,7 +172,8 @@ export async function proposeForRecording(env: Env, vodId: number): Promise<Crea
     const items = statement(env, `INSERT OR IGNORE INTO proposal_evidence(proposal_id,detection_a,detection_b,delta,kind)
       SELECT ?1,json_extract(value,'$.a'),json_extract(value,'$.b'),json_extract(value,'$.delta'),json_extract(value,'$.kind') FROM json_each(?2)
       WHERE EXISTS(SELECT 1 FROM session_link_proposals WHERE id=?1)`, id, JSON.stringify(evidence));
-    const [, inserted] = await env.DB.batch([stale, insert, items]);
+    const committed = await atomic(env, [{ sql: 'SELECT revision=? FROM public_search_state WHERE id=1', args: [revision] }], [stale, insert, items]);
+    const inserted = committed[2];
     if (!inserted.meta.changes) continue;
     const created: Created = { id, vod_a: vodA, vod_b: vodB, support: result.support.length, accepted: false };
     created.accepted = await autoAccept(env, id).catch(error => {

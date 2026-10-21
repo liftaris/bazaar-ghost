@@ -9,6 +9,7 @@ export default defineConfig({
     cloudflareTest({
       experimental: { newConfig: { configPath: "./cloudflare.config.ts" } },
       miniflare: {
+        d1Databases: { MIGRATION_DB: "sfde-populated-migration-test" },
         bindings: {
           TEST_MIGRATIONS: await readD1Migrations("./worker/migrations"),
         },

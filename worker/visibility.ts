@@ -9,9 +9,12 @@ export async function publicImageVisible(env: Env, key: string): Promise<boolean
       key.split("/").some(part => part === "." || part === "..")) return false;
   const paths = JSON.stringify([key, `/detections/${key}`, `/storage/v1/object/public/detections/${key}`]);
   const result = await one<{ visible: number }>(env, `SELECT
-    EXISTS(SELECT 1 FROM public_sources WHERE available=1 AND storage_path IN(SELECT value FROM json_each(?)))
+    EXISTS(SELECT 1 FROM public_sources s WHERE available=1 AND (
+      storage_path IN(SELECT value FROM json_each(?1)) OR
+      EXISTS(SELECT 1 FROM json_tree(s.field_evidence) e WHERE e.key='image_path' AND e.value IN(SELECT value FROM json_each(?1)))))
     AND NOT EXISTS(SELECT 1 FROM detections d JOIN matchup_anchors c ON c.vod_id=d.vod_id AND c.anchor_seconds=d.frame_time_seconds JOIN matchups m ON m.id=c.matchup_id
-      WHERE d.storage_path IN(SELECT value FROM json_each(?)) AND m.status='hidden') AS visible`, paths, paths);
+      WHERE m.status='hidden' AND (d.storage_path IN(SELECT value FROM json_each(?1)) OR
+        EXISTS(SELECT 1 FROM json_tree(d.field_evidence) e WHERE e.key='image_path' AND e.value IN(SELECT value FROM json_each(?1))))) AS visible`, paths);
   return result?.visible === 1;
 }
 

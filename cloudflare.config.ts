@@ -22,6 +22,11 @@ export function configuration(mode = "local") {
         OUTBOUND_ENABLED: bindings.text(settings.vars.OUTBOUND_ENABLED),
         AUTH_ENABLED: bindings.text(settings.vars.AUTH_ENABLED),
         CORS_ORIGINS: bindings.text(settings.vars.CORS_ORIGINS),
+        SFDE_AI_ENABLED: bindings.text(settings.vars.SFDE_AI_ENABLED),
+        SFDE_AI_DAILY_BUDGET_USD: bindings.text(settings.vars.SFDE_AI_DAILY_BUDGET_USD),
+        // AI has no local emulator: omit it locally/tests rather than silently
+        // opening a paid remote development session. Tests inject a fake binding.
+        ...(mode === "validation" ? { AI: bindings.ai() } : {}),
         DB: bindings.d1(settings.database),
         DETECTIONS: bindings.r2({ name: settings.buckets.DETECTIONS }),
         LOGS: bindings.r2({ name: settings.buckets.LOGS }),

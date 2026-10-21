@@ -137,13 +137,13 @@ export async function notify(env: Env, matchup: number) {
   if (outbox.merged_into !== null) return settle(env, matchup, "merged");
   if (outbox.status === "hidden") return settle(env, matchup, "hidden");
   if (outbox.eligible_at > now()) return;
-  if (env.ENVIRONMENT !== "production") return settle(env, matchup);
   const sources = await rows<Source>(
     env,
     `SELECT ps.username,ps.username_lower,coalesce(pa.display_name,pa.login) AS display
      FROM public_sources ps JOIN public_matchups pm ON pm.matchup_id=ps.matchup_id
      LEFT JOIN platform_accounts pa ON pa.id=ps.channel_id
-     WHERE ps.matchup_id=? ORDER BY ps.detection_id=pm.detection_id DESC,ps.anchor_id`,
+      WHERE ps.matchup_id=? AND ps.name_state IN('legacy','complete') AND ps.confidence>0.7 AND ps.username IS NOT NULL
+      ORDER BY ps.detection_id=pm.detection_id DESC,ps.anchor_id`,
     matchup,
   );
   const owner = await one<{ display_name: string }>(
@@ -153,6 +153,7 @@ export async function notify(env: Env, matchup: number) {
     matchup,
   );
   if (!sources.length) return settle(env, matchup, "no_source");
+  if (env.ENVIRONMENT !== "production") return settle(env, matchup);
   // Another delivery path only starts once outbound calls are allowed; until then the row stays pending.
   if (env.OUTBOUND_ENABLED !== "true") return;
   const streamer = owner?.display_name ?? sources.find((s) => s.display)?.display ?? "Unknown streamer",

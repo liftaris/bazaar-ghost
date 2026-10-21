@@ -1,7 +1,13 @@
 import { channelUrl, embedUrl, watchUrl } from "./platform-registry";
+import type { FieldKey, FieldObservation, FieldObservations } from "./detections";
 import type {
   Channel,
   Evidence,
+  Encounter,
+  EvidenceField,
+  FieldEvidence,
+  Hero,
+  NameState,
   Matchup,
   MatchupDetail,
   MatchupResult,
@@ -42,8 +48,16 @@ export interface SourceRow {
   vod_id: number;
   at: number;
   detection_id: string;
-  username: string;
-  confidence: number;
+  username: string | null;
+  confidence: number | null;
+  name_state: NameState;
+  encounter_confidence: number | null;
+  ghost_hero: Hero | null;
+  streamer_hero: Hero | null;
+  wins_remaining: number | null;
+  lethal: number | null;
+  field_evidence: string;
+  indexed_at: string;
   rank: string | null;
   igd: number | null;
   truncated: number;
@@ -69,8 +83,9 @@ export interface SourceRow {
 /** One row of the public_matchups view plus search relevance. */
 export interface MatchupRow {
   matchup_id: number;
-  username: string;
-  confidence: number;
+  username: string | null;
+  confidence: number | null;
+  name_state: NameState;
   rank: string | null;
   igd: number | null;
   recorded_timestamp: string | null;
@@ -174,12 +189,16 @@ export function source(row: SourceRow): RecordingSource {
   };
 }
 export function evidence(row: SourceRow): Evidence {
+  const encounter = projectEncounter([row]);
   return {
     id: row.detection_id,
     recordingId: row.vod_id,
     at: row.at,
     username: row.username,
     confidence: row.confidence,
+    nameState: row.name_state,
+    encounter,
+    fieldEvidence: encounter.fieldEvidence,
     rank: row.rank,
     igd: row.igd,
     truncated: !!row.truncated,
@@ -189,15 +208,77 @@ export function evidence(row: SourceRow): Evidence {
 }
 /** Assemble a Matchup from its display row, ordered Sources and attributed Streamer. */
 export function matchup(row: MatchupRow, sources: SourceRow[], streamer: StreamerRef | null): Matchup {
+  const encounter = projectEncounter(sources);
   return {
     id: row.matchup_id,
-    opponent: { username: row.username, rank: row.rank, igd: row.igd, confidence: row.confidence },
+    opponent: { username: row.username, rank: sources.find(s => s.detection_id === encounter.fieldEvidence.rank?.detectionId)?.rank ?? null,
+      igd: encounter.igd, confidence: row.confidence, nameState: row.name_state },
+    encounter,
+    fieldEvidence: encounter.fieldEvidence,
     streamer,
     session: row.session_id ? { id: row.session_id } : null,
     recordedAt: row.recorded_timestamp,
     indexedAt: row.indexed_at,
     sources: sources.map(source),
   };
+}
+const publicField: Record<FieldKey, EvidenceField> = { encounter: "encounter", username: "username", rank: "rank", igd: "igd",
+  ghost_hero: "ghostHero", streamer_hero: "streamerHero", wins_remaining: "winsRemaining", lethal: "lethal" };
+function observations(row: SourceRow): FieldObservations {
+  return JSON.parse(row.field_evidence || "{}");
+}
+type Candidate = { row: SourceRow; observation?: FieldObservation };
+/** Scores only compare within the same method/model, never across unrelated scales.
+ * New direct observations precede legacy unknown-quality fallback; stable time/ID ties.
+ * Legacy-only projection retains the old display ordering, without relabeling its score.
+ */
+function selectField(sources: SourceRow[], field: FieldKey, observed: Map<SourceRow, FieldObservations>): Candidate | undefined {
+  const value = (r: SourceRow) => field === "encounter" ? r.encounter_confidence : r[field];
+  return sources.flatMap(row => {
+    const observation = observed.get(row)?.[field];
+    if (value(row) == null && field !== "encounter" && !(field === "username" && observation)) return [];
+    if (!observation && (row.name_state !== "legacy" || !["encounter", "username", "rank", "igd"].includes(field))) return [];
+    return [{ row, observation }];
+  }).sort((a, b) => {
+    if (field === "username") return Number(a.row.username === null) - Number(b.row.username === null)
+      || (b.row.confidence ?? -1) - (a.row.confidence ?? -1)
+      || Number(a.row.rank === null) - Number(b.row.rank === null) || Number(a.row.igd === null) - Number(b.row.igd === null)
+      || a.row.indexed_at.localeCompare(b.row.indexed_at) || a.row.detection_id.localeCompare(b.row.detection_id);
+    if (!!a.observation !== !!b.observation) return a.observation ? -1 : 1;
+    if (!a.observation && !b.observation) return (b.row.confidence ?? -1) - (a.row.confidence ?? -1)
+      || Number(a.row.rank === null) - Number(b.row.rank === null) || Number(a.row.igd === null) - Number(b.row.igd === null)
+      || a.row.indexed_at.localeCompare(b.row.indexed_at) || a.row.detection_id.localeCompare(b.row.detection_id);
+    const x = a.observation!, y = b.observation!;
+    // Group method/model before comparing confidence: this is a total ordering,
+    // unlike a pairwise comparator that skips scores only for unlike methods.
+    return Number(!!x.inherited_from) - Number(!!y.inherited_from)
+      || x.method.localeCompare(y.method) || (x.model ?? "").localeCompare(y.model ?? "")
+      || (y.confidence ?? -1) - (x.confidence ?? -1) || x.at_ms - y.at_ms || a.row.detection_id.localeCompare(b.row.detection_id);
+  })[0];
+}
+function fieldEvidence({ row, observation: o }: Candidate, field: FieldKey): FieldEvidence {
+  const visible = (path: string | null) => row.available ? screenshot(path) : null;
+  return { detectionId: row.detection_id, recordingId: row.vod_id, atMs: o?.at_ms ?? row.at * 1000,
+    confidence: o ? o.confidence : (field === "username" ? row.confidence : null), method: o?.method ?? "legacy",
+    screenshotUrl: visible(o?.image_path ?? row.storage_path), phase: o?.phase ?? "unknown",
+    frameSha256: o?.frame_sha256 ?? null, sourceWidth: o?.source_width ?? null, sourceHeight: o?.source_height ?? null,
+    region: o?.region ?? null, selectionReason: o?.selection_reason ?? null,
+    ...(o?.model ? { model: o.model } : {}), ...(o?.prompt_version ? { promptVersion: o.prompt_version } : {}),
+    ...(o?.samples ? { samples: o.samples.map(s => ({ atMs: s.at_ms, screenshotUrl: visible(s.image_path) })) } : {}),
+    ...(o?.run_segment_id ? { runSegmentId: o.run_segment_id } : {}),
+    ...(o?.inherited_from ? { inheritedFrom: { detectionId: o.inherited_from.detection_id,
+      runSegmentId: o.inherited_from.run_segment_id, atMs: o.inherited_from.at_ms } } : {}) };
+}
+/** Independent per-field winners within an already-established Matchup only. */
+function projectEncounter(sources: SourceRow[]): Encounter {
+  const observed = new Map(sources.map(row => [row, observations(row)]));
+  const chosen = Object.fromEntries((Object.keys(publicField) as FieldKey[]).map(k => [k, selectField(sources, k, observed)])) as Partial<Record<FieldKey, Candidate>>;
+  const fieldEvidenceMap: Encounter["fieldEvidence"] = {};
+  for (const key of Object.keys(chosen) as FieldKey[]) if (chosen[key]) fieldEvidenceMap[publicField[key]] = fieldEvidence(chosen[key]!, key);
+  return { confidence: chosen.encounter?.row.encounter_confidence ?? null,
+    ghostHero: chosen.ghost_hero?.row.ghost_hero ?? null, streamerHero: chosen.streamer_hero?.row.streamer_hero ?? null,
+    igd: chosen.igd?.row.igd ?? null, winsRemaining: chosen.wins_remaining?.row.wins_remaining ?? null,
+    lethal: chosen.lethal?.row.lethal == null ? null : !!chosen.lethal.row.lethal, fieldEvidence: fieldEvidenceMap };
 }
 export function result(row: MatchupRow, sources: SourceRow[], streamer: StreamerRef | null): MatchupResult {
   return { ...matchup(row, sources, streamer), relevance: { score: row.score, exact: !!row.exact } };
