@@ -79,8 +79,18 @@ on the existing `main` / Supabase system.
 ## Opt-in processor contract
 
 `SFDE_NEXT_ENABLED=true` requires an explicit validation/local environment and
-endpoint. The Process VOD workflow defaults to the existing processor. AI requests require
-the validation Worker's separate `SFDE_AI_ENABLED=true` switch.
+endpoint. Manual Process VOD runs default to the existing processor; validation
+automatic dispatch explicitly selects NEXT without a legacy profile. Other
+environments retain legacy automatic dispatch. AI requests require the validation
+Worker's separate `SFDE_AI_ENABLED=true` switch.
+
+The user authorized ongoing validation observation on 2026-10-22. Validation AI
+is enabled with the existing estimated $1/day gateway ceiling, 64 attempts/chunk,
+four attempts/fight, saved-request reuse and no automatic paid retry. Automatic
+processing retains its configured start date, platform controls and concurrency
+limit. The `automatic_vods=[]` pause is removed only after the NEXT dispatcher and
+AI-enabled validation deployment are verified. Reinsert that empty list to pause
+new automatic dispatch; already claimed jobs retain their existing leases.
 
 The new path retains full source frames, bounds neighboring-frame selection, and
 publishes nullable names with independent field evidence. Clock values come from

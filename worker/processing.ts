@@ -200,7 +200,13 @@ export async function dispatch(env: Env, vodId: number, automatic = false) {
     throw new HttpError(503, "GitHub dispatch is not configured");
   const vod = await one(env, "SELECT source,source_id FROM vods WHERE id=?", vodId);
   const details = await vodDetails(env, vod!.source_id, vod!.source);
-  const profile = profileCheck(details.profile);
+  // Validation's automatic observation window uses NEXT. Other dispatch paths
+  // retain their legacy profile contract; manual NEXT remains an explicit input.
+  const next = automatic && env.ENVIRONMENT === 'validation';
+  const profile = next ? null : profileCheck(details.profile);
+  const profileJoin = next ? '' : 'JOIN sfde_profiles p ON p.id=v.effective_profile_id';
+  const profileFence = profile ? `AND p.id=? AND ${profile.sql}` : '';
+  const profileArgs = profile ? [details.profile.id, ...profile.args] : [];
   const configured = await one(
     env,
     "SELECT value FROM processing_config WHERE key='max_concurrent_chunks'",
@@ -220,13 +226,12 @@ export async function dispatch(env: Env, vodId: number, automatic = false) {
         .map((c) =>
           statement(
             env,
-            `UPDATE chunks SET status='queued',queued_at=?,updated_at=? WHERE id=? AND status='pending' AND (scheduled_for IS NULL OR scheduled_for<=?) AND EXISTS(SELECT 1 FROM vod_processing_context v JOIN sfde_profiles p ON p.id=v.effective_profile_id WHERE v.id=chunks.vod_id AND v.processing_enabled=1 AND v.ready_for_processing=1 AND v.availability='available' AND p.id=? AND ${profile.sql} AND v.old_templates=? ${automatic ? `AND ${automaticVideoPredicate}` : ''}) AND (SELECT count(*) FROM chunks WHERE status IN('queued','processing'))<? RETURNING id`,
+            `UPDATE chunks SET status='queued',queued_at=?,updated_at=? WHERE id=? AND status='pending' AND (scheduled_for IS NULL OR scheduled_for<=?) AND EXISTS(SELECT 1 FROM vod_processing_context v ${profileJoin} WHERE v.id=chunks.vod_id AND v.processing_enabled=1 AND v.ready_for_processing=1 AND v.availability='available' ${profileFence} AND v.old_templates=? ${automatic ? `AND ${automaticVideoPredicate}` : ''}) AND (SELECT count(*) FROM chunks WHERE status IN('queued','processing'))<? RETURNING id`,
             queuedAt,
             queuedAt,
             c.id,
             queuedAt,
-            details.profile.id,
-            ...profile.args,
+            ...profileArgs,
             details.old_templates,
             maxActive,
           ),
@@ -255,7 +260,7 @@ export async function dispatch(env: Env, vodId: number, automatic = false) {
               chunk_uuids: JSON.stringify(ids),
               queued_at: queuedAt,
               old_templates: String(details.old_templates),
-              sfde_profile: JSON.stringify(details.streamers.sfde_profiles),
+              ...(next ? { sfde_next: 'true' } : { sfde_profile: JSON.stringify(details.streamers.sfde_profiles) }),
               environment: env.ENVIRONMENT,
             },
           }),

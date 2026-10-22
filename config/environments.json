@@ -115,7 +115,7 @@
     "previewUrls": false,
     "vars": {
       "ENVIRONMENT": "validation",
-      "SFDE_AI_ENABLED": "false",
+      "SFDE_AI_ENABLED": "true",
       "SFDE_AI_DAILY_BUDGET_USD": "1",
       "BUILD_COMMIT": "unreleased",
       "PUBLIC_URL": "https://bazaarghost-validation.kaio-8df.workers.dev",

@@ -27,6 +27,28 @@ it('selects only forward ingestion and fences queued historical messages while a
   expect(payload.ref).toBe('migration/cloudflare');
   expect(payload.inputs.environment).toBe('validation');
   expect(payload.inputs.vod_id).toBe('2');
+  expect(payload.inputs.sfde_next).toBe('true');
+  expect(payload.inputs.sfde_profile).toBeUndefined();
+});
+
+it('dispatches automatic validation NEXT without interpreting legacy crop settings', async () => {
+  await statement(env, "UPDATE sfde_profiles SET crop_region='[0,0,0,0]' WHERE id=1").run();
+  const hosted = { ...env, ENVIRONMENT: 'validation', OUTBOUND_ENABLED: 'true', GITHUB_TOKEN: 'test-only' };
+  const ids = await dispatchAutomatic(hosted, 2);
+  expect(ids).toHaveLength(1);
+  const payload = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string);
+  expect(payload.inputs).toMatchObject({sfde_next:'true', old_templates:'false', chunk_uuids:JSON.stringify(ids)});
+  expect(payload.inputs.sfde_profile).toBeUndefined();
+  expect(await one(env,'SELECT status,queued_at FROM chunks WHERE id=?',ids[0]))
+    .toEqual({status:'queued',queued_at:payload.inputs.queued_at});
+});
+
+it.each([['dev','dev'],['production','main']])('keeps automatic %s dispatch on the legacy contract', async (environment, branch) => {
+  await dispatchAutomatic({ ...env, ENVIRONMENT: environment, OUTBOUND_ENABLED: 'true', GITHUB_TOKEN: 'test-only' }, 2);
+  const payload = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string);
+  expect(payload.ref).toBe(branch);
+  expect(payload.inputs.sfde_next).toBeUndefined();
+  expect(JSON.parse(payload.inputs.sfde_profile).id).toBe(1);
 });
 
 it('fails closed on an invalid boundary and intersects it with an explicit allowlist', async () => {
