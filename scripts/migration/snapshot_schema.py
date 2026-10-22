@@ -6,7 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_VERSION = 3
-TARGET_SCHEMA_VERSION = 21
+TARGET_SCHEMA_VERSION = 23
 REQUIRED_TABLES = ('sfde_profiles', 'streamers', 'vods', 'chunks', 'detections',
                    'notification_subscriptions', 'server_channels', 'processing_config', 'cataloger_runs')
 # Optional means absent from older source schemas, never permission-denied or silently omitted.

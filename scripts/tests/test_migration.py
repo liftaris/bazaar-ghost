@@ -1,3 +1,4 @@
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -8,6 +9,15 @@ import unittest
 spec = importlib.util.spec_from_file_location('scripts.migration.convert', Path(__file__).resolve().parents[1] / 'migration' / 'convert.py')
 conversion = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(conversion)
+
+
+def inference_ledger_insert(status='uncertain'):
+    if status not in ('pending', 'completed', 'uncertain'):
+        raise ValueError('Unknown fixture inference status')
+    return f"""INSERT INTO sfde_inference(request_id,chunk_id,body_sha256,task,model,prompt_version,
+        utc_day,status,reserved_nano_usd,charged_nano_usd,actual_nano_usd,response_json,created_at,updated_at)
+        VALUES('existing-request','unrelated-chunk','{'a'*64}','ghost_hero','fixture-model','fixture-prompt',
+        '2026-09-08','{status}',100,100,NULL,NULL,'2026-09-08T00:00:00.000Z','2026-09-08T00:00:00.000Z');"""
 
 
 class MigrationTests(unittest.TestCase):
@@ -99,7 +109,9 @@ class MultiplatformMigrationTests(unittest.TestCase):
 
     def test_populated_platform_roundtrip_preserves_history_rotates_capabilities_and_normalizes_times(self):
         self.snapshot(self.records())
+        source_hashes = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in self.source.iterdir()}
         restored = self.restore()
+        self.assertEqual({path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in self.source.iterdir()}, source_hashes)
         self.assertEqual(restored.execute('SELECT id,source,source_id FROM vods ORDER BY id').fetchall(), [
             (1, 'twitch', '12345678901'), (2, 'youtube', '12345678901'), (3, 'bilibili', 'BV1234567890:111'), (4, 'bilibili', 'BV1234567890:222')])
         self.assertEqual(restored.execute("SELECT source_id,legacy_creator_id FROM platform_accounts WHERE source='twitch'").fetchall(), [('1', 'twitch:1')])
@@ -137,9 +149,10 @@ class MultiplatformMigrationTests(unittest.TestCase):
         manifest = json.loads((self.destination / 'manifest.json').read_text())
         self.assertEqual(manifest['schema_version'], 3)
         self.assertEqual(manifest['source_schema_version'], 3)
-        self.assertEqual(manifest['target_schema_version'], 21)
+        self.assertEqual(manifest['target_schema_version'], 23)
         self.assertEqual(len(manifest['migrations']), 3)
-        self.assertEqual(len(manifest['target_migrations']), 21)
+        self.assertEqual(manifest['target_migrations'], {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                         for path in (conversion.ROOT / 'worker/migrations').glob('*.sql')})
         self.assertEqual(manifest['target_counts']['platform_ingestion_dispatch'], 0)
         self.assertNotIn('platform_ingestion_dispatch', manifest['input_counts'])
         self.assertNotIn('platform_ingestion_dispatch', manifest['output_counts'])
@@ -156,6 +169,15 @@ class MultiplatformMigrationTests(unittest.TestCase):
         self.assertEqual(restored.execute('SELECT revision FROM public_cache_state WHERE id=1').fetchone()[0], 0)
         self.assertEqual(manifest['input_counts']['matchup_appearances'], 2)
         self.assertNotIn('notification_outbox', manifest['output_counts'])
+        self.assertEqual(manifest['target_counts']['sfde_inference'], 0)
+        self.assertNotIn('sfde_inference', manifest['input_counts'])
+        self.assertNotIn('sfde_inference', manifest['output_counts'])
+        source_detections = self.records()['detections']
+        self.assertEqual(restored.execute('SELECT id,username,confidence,igd,storage_path FROM detections ORDER BY id').fetchall(),
+                         [(row['id'], row['username'], row['confidence'], row['igd'], row['storage_path']) for row in source_detections])
+        self.assertEqual(restored.execute('''SELECT name_state,encounter_confidence,ghost_hero,streamer_hero,
+            wins_remaining,lethal,field_evidence,publish_id,publish_claim,publish_body FROM detections ORDER BY id''').fetchall(),
+                         [('legacy', None, None, None, None, None, '{}', None, None, None)] * 4)
 
     def test_refuses_active_ingestion_status_and_any_retained_lease(self):
         for active in [{'status': 'processing'}, {'lease_token': 'held'}, {'lease_expires_at': '2000-01-01T00:00:00Z'}]:
@@ -230,7 +252,9 @@ class MultiplatformMigrationTests(unittest.TestCase):
             "INSERT INTO auth_verifications(id,identifier,value,expiresAt,createdAt,updatedAt) VALUES('existing','private','private','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z')",
             "INSERT INTO social_moderation_audit(request_id,target_type,target_id,action,reason) VALUES('existing','user','old-user','suspended','History must survive')",
             "DELETE FROM public_cache_state",
-            "UPDATE public_cache_state SET revision=1",
+            "UPDATE public_cache_state SET revision=revision+1",
+            "DELETE FROM public_search_state",
+            "UPDATE public_search_state SET revision=revision+1",
         ]:
             with self.subTest(occupied=occupied):
                 target = sqlite3.connect(':memory:')
@@ -242,6 +266,41 @@ class MultiplatformMigrationTests(unittest.TestCase):
                     target.executescript((self.destination / 'import.sql').read_text())
                 self.assertEqual(target.execute('SELECT count(*) FROM vods').fetchone()[0], 0)
                 self.assertEqual(target.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").fetchall(), before)
+
+    def test_full_target_refuses_any_inference_ledger_before_import_changes(self):
+        self.snapshot(self.records())
+        conversion.convert(self.source, self.destination)
+        sql = (self.destination / 'import.sql').read_text()
+        self.assertIn('EXISTS(SELECT 1 FROM sfde_inference)', sql.splitlines()[0])
+        for status in ('pending', 'completed', 'uncertain'):
+            with self.subTest(status=status):
+                target = sqlite3.connect(':memory:')
+                self.addCleanup(target.close)
+                conversion.apply_schema(target, conversion.TARGET_SCHEMA_VERSION)
+                target.execute(inference_ledger_insert(status))
+                ledger = target.execute('SELECT * FROM sfde_inference').fetchall()
+                schema = target.execute('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').fetchall()
+                revisions = target.execute('SELECT revision FROM public_cache_state UNION ALL SELECT revision FROM public_search_state').fetchall()
+                with self.assertRaisesRegex(sqlite3.IntegrityError, 'valid_mutation'):
+                    target.executescript(sql)
+                self.assertEqual(target.execute('SELECT * FROM sfde_inference').fetchall(), ledger)
+                self.assertEqual(target.execute('SELECT count(*) FROM vods').fetchone()[0], 0)
+                self.assertEqual(target.execute('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').fetchall(), schema)
+                self.assertEqual(target.execute('SELECT revision FROM public_cache_state UNION ALL SELECT revision FROM public_search_state').fetchall(), revisions)
+
+    def test_schema_21_and_22_are_refused_before_any_import_changes(self):
+        self.snapshot(self.records())
+        conversion.convert(self.source, self.destination)
+        for version in (21, 22):
+            with self.subTest(version=version):
+                target = sqlite3.connect(':memory:')
+                self.addCleanup(target.close)
+                conversion.apply_schema(target, version)
+                schema = target.execute('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').fetchall()
+                with self.assertRaisesRegex(sqlite3.OperationalError, 'no such table: sfde_inference'):
+                    target.executescript((self.destination / 'import.sql').read_text())
+                self.assertEqual(target.execute('SELECT count(*) FROM vods').fetchone()[0], 0)
+                self.assertEqual(target.execute('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').fetchall(), schema)
 
     def test_old_target_schema_is_refused_and_source_auth_is_not_accepted(self):
         self.snapshot(self.records())
@@ -262,6 +321,13 @@ class MultiplatformMigrationTests(unittest.TestCase):
         self.snapshot(self.records())
         (self.source / 'platform_ingestion_dispatch.jsonl').write_text(
             json.dumps({'id': 1, 'state': 'queued', 'ticket_id': 'old-environment-ticket'}) + '\n')
+        with self.assertRaisesRegex(ValueError, 'Unsupported snapshot tables'):
+            conversion.convert(self.source, self.destination)
+        self.assertFalse(self.destination.exists())
+
+    def test_source_inference_ledger_is_not_accepted(self):
+        self.snapshot(self.records())
+        (self.source / 'sfde_inference.jsonl').write_text(json.dumps({'request_id': 'source-reservation'}) + '\n')
         with self.assertRaisesRegex(ValueError, 'Unsupported snapshot tables'):
             conversion.convert(self.source, self.destination)
         self.assertFalse(self.destination.exists())

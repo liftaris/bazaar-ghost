@@ -209,7 +209,7 @@ def convert(source, destination):
         triggers = db.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").fetchall()
         output_counts = {table: db.execute(f'SELECT count(*) FROM {table}').fetchone()[0] for table in IMPORT_TABLES}
         # Validate the old application snapshot separately from the complete deployment
-        # schema. New auth/social/dispatcher tables are never source import tables,
+        # schema. New auth/social/dispatcher/inference tables are never source import tables,
         # but any existing row makes the target unsafe for a fresh import.
         with closing(sqlite3.connect(':memory:')) as target:
             apply_schema(target, TARGET_SCHEMA_VERSION)
@@ -219,8 +219,13 @@ def convert(source, destination):
                 # platform_settings is seeded deployment configuration, never source data.
                 seeded = ('public_cache_state', 'public_search_state', 'platform_settings')
                 nonempty = ' OR '.join(f'EXISTS(SELECT 1 FROM {table})' for table in target_tables if table not in seeded)
-                singleton = ' AND '.join(f'(SELECT count(*) FROM {table})=1 AND EXISTS(SELECT 1 FROM {table} WHERE id=1 AND revision=0)'
-                                         for table in ('public_cache_state', 'public_search_state'))
+                # Migrations can invalidate projections even on an empty database
+                # (0022 starts both revisions at 1). Require each pristine target
+                # singleton, not the post-import revision reset of zero.
+                initial_revisions = {table: target.execute(f'SELECT revision FROM {table} WHERE id=1').fetchone()[0]
+                                     for table in ('public_cache_state', 'public_search_state')}
+                singleton = ' AND '.join(f'(SELECT count(*) FROM {table})=1 AND EXISTS(SELECT 1 FROM {table} WHERE id=1 AND revision={revision})'
+                                         for table, revision in initial_revisions.items())
                 output.write(f"INSERT INTO mutation_checks(id,ok) VALUES('snapshot-import-empty',NOT({nonempty}) AND {singleton});\n")
                 output.write("DELETE FROM mutation_checks WHERE id='snapshot-import-empty';\n")
                 # The reviewed-group tables no longer exist in the target schema; they are scratch input for post_import.sql, which drops them.
@@ -278,6 +283,8 @@ def convert(source, destination):
                                  'websub_delivery_receipts': 'retained', 'ingestion_jobs': 'retained; active leases refused',
                                  'auth': 'source auth is excluded; target auth and social tables must be empty',
                                  'ingestion_dispatch': 'source dispatch state is excluded; target dispatcher table must be empty',
+                                 'sfde_evidence': 'legacy names retained; name_state=legacy, empty field evidence, no inferred fields or publication ownership',
+                                 'sfde_inference': 'source inference state is excluded; target inference ledger must be empty',
                                  'target': f'full schema 0001–{TARGET_SCHEMA_VERSION:04d} required; anchors and Matchups derive from imported detections',
                                  'matchup_groups': 'run post_import.sql once after the import parts: reviewed groups become link overrides and merged Matchups'}}
         private_json(destination / 'manifest.json', manifest)

@@ -4,6 +4,7 @@ RUN_LOCAL_D1_MIGRATION_TESTS=1 python -m unittest scripts.tests.test_migration_d
 Set LOCAL_D1_ARTIFACT_DIR to a new directory to retain private proof artifacts.
 """
 from contextlib import redirect_stdout
+import hashlib
 import io
 import json
 import os
@@ -68,12 +69,20 @@ class FullTargetD1Tests(unittest.TestCase):
         for table in conversion.TABLES:
             with conversion.private_open(source / f'{table}.jsonl') as output:
                 output.write(''.join(json.dumps(row)+'\n' for row in records.get(table, [])))
+        source_hashes = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in source.iterdir()}
         with redirect_stdout(io.StringIO()):
             conversion.convert(source, destination)
+        self.assertEqual({path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in source.iterdir()}, source_hashes)
         manifest = json.loads((destination / 'manifest.json').read_text())
-        self.assertEqual(manifest['target_schema_version'], 21)
+        self.assertEqual(manifest['target_schema_version'], 23)
+        self.assertEqual(manifest['target_migrations'], {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                         for path in (conversion.ROOT / 'worker/migrations').glob('*.sql')})
         self.migrate()
-        before_triggers = self.query("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name")
+        self.assertEqual(self.query('SELECT name FROM d1_migrations ORDER BY name'),
+                         [{'name': name} for name in sorted(manifest['target_migrations'])])
+        before_triggers = self.query("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name")
+        self.assertEqual(self.query('SELECT (SELECT revision FROM public_cache_state) cache_revision,(SELECT revision FROM public_search_state) search_revision'),
+                         [{'cache_revision': 1, 'search_revision': 1}])
         for part in sorted(destination.glob('import-*.sql')):
             self.execute_file(part)
         self.execute_file(destination / 'post_import.sql')
@@ -81,7 +90,15 @@ class FullTargetD1Tests(unittest.TestCase):
         counts = self.query(counts_sql)[0]
         self.assertEqual(counts, manifest['target_counts'])
         self.assertEqual(self.query('PRAGMA foreign_key_check'), [])
-        self.assertEqual(self.query("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name"), before_triggers)
+        self.assertEqual(self.query("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name"), before_triggers)
+        self.assertEqual(counts['sfde_inference'], 0)
+        self.assertEqual(self.query('''SELECT id,username,confidence,igd,storage_path,name_state,encounter_confidence,
+            ghost_hero,streamer_hero,wins_remaining,lethal,field_evidence,publish_id,publish_claim,publish_body
+            FROM detections ORDER BY id'''), [
+            {**{key: row[key] for key in ('id','username','confidence','igd','storage_path')},
+             'name_state': 'legacy', 'encounter_confidence': None, 'ghost_hero': None, 'streamer_hero': None,
+             'wins_remaining': None, 'lethal': None, 'field_evidence': '{}', 'publish_id': None,
+             'publish_claim': None, 'publish_body': None} for row in records['detections']])
         self.assertEqual(self.query('SELECT id,source,source_id,source_video_id,source_part_id,source_part_index FROM vods ORDER BY id'), [
             {'id':1,'source':'twitch','source_id':'12345678901','source_video_id':None,'source_part_id':None,'source_part_index':None},
             {'id':2,'source':'youtube','source_id':'12345678901','source_video_id':None,'source_part_id':None,'source_part_index':None},
@@ -103,7 +120,7 @@ class FullTargetD1Tests(unittest.TestCase):
             self.assertEqual(counts[table],0,table)
         self.execute_file(destination/'import.sql',succeeds=False)
         self.assertEqual(self.query(counts_sql)[0],counts)
-        self.assertEqual(self.query("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name"),before_triggers)
+        self.assertEqual(self.query("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name"),before_triggers)
         # The full-target triggers still operate on the imported anchors, Matchups and public views.
         self.assertEqual(self.query('SELECT count(*) n,sum(matchup_id=id) m FROM matchup_anchors'),[{'n':4,'m':3}])
         self.assertEqual(self.query('SELECT count(*) n,count(DISTINCT matchup_id) c FROM matchup_anchors WHERE matchup_id IN(SELECT matchup_id FROM matchup_anchors GROUP BY matchup_id HAVING count(*)>1)'),[{'n':2,'c':1}])
@@ -133,10 +150,25 @@ class FullTargetD1Tests(unittest.TestCase):
         self.execute_file(destination/'import.sql',state='occupied-dispatch',succeeds=False)
         self.assertEqual(self.query('SELECT * FROM platform_ingestion_dispatch',state='occupied-dispatch'),owner)
         self.assertEqual(self.query('SELECT count(*) n FROM vods',state='occupied-dispatch'),[{'n':0}])
-        self.assertEqual(self.query("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name",state='occupied-dispatch'),before_triggers)
+        self.assertEqual(self.query("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name",state='occupied-dispatch'),before_triggers)
         self.assertEqual(self.query('PRAGMA foreign_key_check',state='occupied-dispatch'),[])
-        conversion.private_json(self.root/'proof.json',{'status':'passed','source_schema':3,'target_schema':7,
+        self.migrate(state='occupied-inference')
+        for status in ('pending', 'completed', 'uncertain'):
+            with self.subTest(inference_status=status):
+                self.query(fixtures.inference_ledger_insert(status),state='occupied-inference')
+                ledger = self.query('SELECT * FROM sfde_inference',state='occupied-inference')
+                self.execute_file(destination/'import.sql',state='occupied-inference',succeeds=False)
+                self.assertEqual(self.query('SELECT * FROM sfde_inference',state='occupied-inference'),ledger)
+                self.assertEqual(self.query('SELECT count(*) n FROM vods',state='occupied-inference'),[{'n':0}])
+                self.assertEqual(self.query("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name",state='occupied-inference'),before_triggers)
+                self.assertEqual(self.query('SELECT (SELECT revision FROM public_cache_state) cache_revision,(SELECT revision FROM public_search_state) search_revision',state='occupied-inference'),
+                                 [{'cache_revision': 1, 'search_revision': 1}])
+                self.query('DELETE FROM sfde_inference',state='occupied-inference')
+        conversion.private_json(self.root/'proof.json',{'status':'passed','source_schema':conversion.SCHEMA_VERSION,'target_schema':conversion.TARGET_SCHEMA_VERSION,
+            'target_migrations':manifest['target_migrations'],
             'counts_after_import':counts,'no_auth_imported':True,'nonempty_application_refused':True,
             'nonempty_auth_refused':True,'missing_cache_singleton_refused':True,'foreign_key_errors':0,
             'dispatcher_empty_after_import':True,'nonempty_dispatcher_refused':True,'existing_dispatch_ownership_preserved':True,
-            'triggers_preserved':True,'public_visibility_trigger_verified':True,'hosted_resources_touched':False})
+            'triggers_preserved':True,'public_visibility_trigger_verified':True,'hosted_resources_touched':False,
+            'legacy_evidence_defaults_verified':True,'inference_ledger_empty_after_import':True,
+            'nonempty_inference_ledger_refused':True,'inference_history_preserved':True,'source_bytes_unchanged':True})
