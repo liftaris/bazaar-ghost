@@ -1,7 +1,7 @@
 """Frozen BG-117 opponent locator. Coordinates returned here are source xywh.
 
-Template similarities are not probabilities. A missing plate edge is unknown
-geometry, not evidence of obstruction. No OCR or network work happens here.
+Template similarities are not probabilities. A missing plate edge marks an
+uncertain/obstructed observation, not proof of a webcam. No OCR happens here.
 """
 from pathlib import Path
 import cv2
@@ -9,8 +9,7 @@ import numpy as np
 
 
 class UILocator:
-    def __init__(self, templates_dir=None, profile=None):
-        self.profile = profile or {}
+    def __init__(self, templates_dir=None):
         root = Path(templates_dir or Path(__file__).resolve().parent.parent / 'templates')
         self.bank = []
         for old in (False, True):
@@ -79,17 +78,18 @@ class UILocator:
         if edge[0] >= .65:
             region = source([left, edge[2], edge[1] - left, edge[3]])
             complete, method = True, method + '+verified-right-edge'
-        # Explicit reviewed fallback only; arbitrary profile presence isn't review.
-        elif self.profile.get('next_reviewed_name_region'):
-            values = self.profile['next_reviewed_name_region']
-            if (isinstance(values, list) and len(values) == 4
-                    and all(type(v) in (int, float) and np.isfinite(v) for v in values)):
-                a, b, c, d = values
-                if 0 <= a < 1 and 0 <= b < 1 and 0 < c <= 1-a and 0 < d <= 1-b:
-                    region = [round(a*W), round(b*H), round(c*W), round(d*H)]
-                    state = 'obstructed' if self.profile.get('opaque_edge') else 'partial'
-                    complete = self.profile.get('next_reviewed_name_complete') is True and state != 'obstructed'
-                    method += '+reviewed-profile'
+        else:
+            # Same fixed layout and verified emblem, but unknown right boundary.
+            # Search only the nameplate-height strip beside that emblem, bounded
+            # by the existing edge search width and opponent UI search extent.
+            # This collects visible fragments, never reconstructs hidden text or
+            # interprets a matcher miss as evidence of an actual webcam.
+            strip_top = y + round(h * .23)
+            strip_height = round(h * .62)
+            strip_width = min(end, x2) - left
+            if strip_width >= h and strip_top + strip_height <= 480:
+                region = source([left, strip_top, strip_width, strip_height])
+                state, method = 'obstructed', method + '+bounded-rank-relative-strip'
         return {'rank': rank, 'rank_region': source([x, y, w, h]), 'score': score,
                 'name_region': region, 'complete': complete, 'name_state': state,
                 'method': method, 'edge_score': edge[0], 'template': filename, 'template_scale': scale}

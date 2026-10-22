@@ -53,7 +53,7 @@ it("migrates populated pre-0022 D1 atomically without retargeting FKs, losing po
     expect(incoming).toHaveLength(1);
     expect(incoming[0].name).toBe("matchup_anchors");
 
-    await applyD1Migrations(env.DB, migrations);
+    await applyD1Migrations(env.DB, migrations.filter(m => m.name < "0024"));
 
     for (const table of preserved) expect(await snapshot(table), table).toEqual(snapshots.get(table));
     const after = await rows(env, "SELECT * FROM detections ORDER BY id");
@@ -69,6 +69,64 @@ it("migrates populated pre-0022 D1 atomically without retargeting FKs, losing po
     expect((await rows(env, "PRAGMA foreign_key_list(matchup_anchors)")).some(f => f.table === "detections")).toBe(true);
     expect((await rows(env, "PRAGMA foreign_key_list(matchup_anchors)")).some(f => f.table === "detections_next")).toBe(false);
     expect((await one(env, "SELECT count(*) AS n FROM notification_outbox_v2"))!.n).toBe((snapshots.get("notification_outbox_v2") as unknown[]).length);
+
+    // The second, actual populated upgrade starts on schema23, including newer
+    // publications whose proof/claim bodies must NOT revert to legacy defaults.
+    await env.DB.batch([
+      statement(env, "INSERT INTO vods(id,streamer_id,source_id,duration_seconds) VALUES(2,1,'456',120)"),
+      statement(env, "INSERT INTO chunks(id,vod_id,start_seconds,end_seconds,chunk_index) VALUES('new-chunk',2,0,120,0)"),
+      statement(env, "INSERT INTO search_names(name,gram_count) VALUES('whole name!',1)"),
+      ...["complete", "masked", "partial", "obstructed", "unreadable"].map((state, i) => statement(env, `INSERT INTO detections(
+        id,chunk_id,vod_id,username,username_lower,confidence,frame_time_seconds,name_state,encounter_confidence,
+        ghost_hero,streamer_hero,wins_remaining,lethal,field_evidence,publish_id,publish_claim,publish_body,created_at)
+        VALUES(?,'new-chunk',2,?,?,NULL,?,?,0.99,'vanessa','dooley',0,1,?,?,?,?, '2026-09-02T00:00:00.000Z')`,
+        `modern-${state}`, state === "complete" ? "Whole name!" : null, state === "complete" ? "whole name!" : null,
+        10 + i * 10, state, JSON.stringify({ username: { raw_text: `proof-${state}` } }), `publisher-${state}`, "claim-preserved", `exact body ${state}`)),
+      statement(env, `INSERT INTO sfde_inference(request_id,chunk_id,body_sha256,task,model,prompt_version,utc_day,status,
+        reserved_nano_usd,charged_nano_usd,response_json,created_at,updated_at)
+        VALUES('ledger','new-chunk','hash','ghost_hero','model','v1','2026-09-02','completed',123,123,'{}','t','t')`),
+    ]);
+    await statement(env, "UPDATE matchup_anchors SET current_detection_id=NULL WHERE current_detection_id='modern-partial'").run();
+    await statement(env, "UPDATE sqlite_sequence SET seq=seq+1000").run();
+    const tables = ["detections", ...preserved, "sfde_inference", "search_names", "search_grams", "session_link_proposals", "proposal_evidence", "session_events"];
+    const schema23 = new Map<string, Record<string, any>[]>();
+    for (const table of tables) schema23.set(table, await snapshot(table));
+    const beforeSchema = await rows(env, "SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY name");
+    const policyMigration = migrations.find(m => m.name.startsWith("0024"))!;
+    await expect(env.DB.batch([
+      ...policyMigration.queries.map(sql => env.DB.prepare(sql)),
+      statement(env, "INSERT INTO mutation_checks(id,ok) VALUES('forced-migration-rollback',0)"),
+    ])).rejects.toThrow(/valid_mutation/);
+    expect(await rows(env, "SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY name")).toEqual(beforeSchema);
+    for (const table of tables) expect(await snapshot(table), `rollback ${table}`).toEqual(schema23.get(table));
+    await applyD1Migrations(env.DB, migrations);
+    for (const table of tables) {
+      const actual = await snapshot(table);
+      const expected = schema23.get(table)!;
+      if (table === "vods" || table === "sessions") {
+        expect(actual.map(({ streamer_mode: _mode, ...row }) => row), table).toEqual(expected);
+      } else expect(actual, table).toEqual(expected);
+    }
+    expect(await rows(env, "SELECT id,streamer_mode FROM vods ORDER BY id")).toEqual([{ id: 1, streamer_mode: 0 }, { id: 2, streamer_mode: 1 }]);
+    expect((await one(env, "SELECT s.streamer_mode FROM sessions s JOIN vods v ON v.session_id=s.id WHERE v.id=2"))!.streamer_mode).toBe(1);
+    expect((await one(env, "SELECT username,confidence FROM public_sources WHERE detection_id='modern-complete'")))
+      .toEqual({ username: "Whole name!", confidence: null });
+    expect(await rows(env, "PRAGMA foreign_key_check")).toEqual([]);
+    expect(await rows(env, "SELECT name FROM sqlite_schema WHERE type='table' AND name IN('name_policy_anchor_pointers','detections_next')")).toEqual([]);
+    expect((await rows(env, "PRAGMA foreign_key_list(matchup_anchors)")).filter(f => f.from === "current_detection_id").map(f => f.table)).toEqual(["detections"]);
+    for (const { name } of await rows<{ name: string }>(env, "SELECT name FROM sqlite_schema WHERE type='view'"))
+      await rows(env, `SELECT * FROM "${name.replaceAll('"', '""')}" LIMIT 0`);
+    expect((await rows(env, "PRAGMA index_list(detections)")).map(r => r.name)).toEqual(expect.arrayContaining([
+      "detections_name", "detections_vod", "detections_chunk", "detections_storage_path", "detections_publish_id",
+    ]));
+    // The new SQL constraints, not just HTTP validation, permit retained fragments
+    // but still forbid inventing text for unreadable/masked observations.
+    await env.DB.batch([
+      statement(env, "INSERT INTO search_names(name,gram_count) VALUES('observed fragment',1)"),
+      statement(env, "UPDATE detections SET username='Observed fragment',username_lower='observed fragment',confidence=0.99 WHERE id='modern-obstructed'"),
+    ]);
+    await expect(statement(env, "UPDATE detections SET username='Observed fragment',username_lower='observed fragment',confidence=0.99 WHERE id='modern-masked'").run()).rejects.toThrow(/CHECK/);
+    await expect(statement(env, "UPDATE detections SET username=NULL,username_lower=NULL,confidence=0.99 WHERE id='modern-partial'").run()).rejects.toThrow(/CHECK/);
   } finally {
     // Leave the shared setup contract intact even if a regression assertion fails.
     await applyD1Migrations(env.DB, migrations);

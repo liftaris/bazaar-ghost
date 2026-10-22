@@ -142,5 +142,68 @@ class NativePreparationTests(unittest.TestCase):
                 self.assertEqual(values['stream_quality'], native)
 
 
+class NextPreparationTests(unittest.TestCase):
+    def test_no_profile_and_malformed_or_changed_ambient_profiles_are_ignored(self):
+        vod = {'id': 1, 'source': 'youtube', 'processing_enabled': True, 'ready_for_processing': True,
+               'availability': 'available', 'old_templates': False}
+        for saved in ('absent', None, {'invalid': True}):
+            details = dict(vod)
+            if saved != 'absent':
+                details['profile'] = saved
+            for ambient in (None, 'not JSON', 'null', '[1]', '{"id":999,"crop_region":[1]}'):
+                values = {'SFDE_NEXT_ENABLED': 'true', 'ENVIRONMENT': 'local',
+                          'BAZAARGHOST_API_URL': 'http://127.0.0.1:8787', 'LOCAL': 'true',
+                          'VOD_ID': 'abcdefghijk'}
+                if ambient is not None:
+                    values['SFDE_PROFILE'] = ambient
+                with self.subTest(saved=saved, ambient=ambient), patch.dict(workflow.os.environ, values, clear=True), \
+                        patch.object(workflow, 'get_vod', return_value=details), \
+                        patch.object(workflow, 'api', return_value=[{'id': 'chunk'}]), \
+                        patch.object(workflow, 'prepared_profile', side_effect=AssertionError('NEXT must not validate profiles')), \
+                        patch.object(workflow, 'output') as output, patch.object(workflow, 'resolve_media') as resolve:
+                    workflow.prepare()
+                    outputs = dict(call.args for call in output.call_args_list)
+                    self.assertEqual(outputs['sfde_profile'], {})
+                    self.assertEqual(outputs['old_templates'], 'false')
+                    resolve.assert_not_called()
+
+    def test_next_keeps_catalog_template_era_fence_without_profile(self):
+        vod = {'id': 1, 'source': 'youtube', 'processing_enabled': True, 'ready_for_processing': True,
+               'availability': 'available', 'old_templates': False}
+        with patch.dict(workflow.os.environ, {'SFDE_NEXT_ENABLED': 'true', 'ENVIRONMENT': 'validation',
+                'BAZAARGHOST_API_URL': 'https://bazaarghost-validation.kaio-8df.workers.dev',
+                'OLD_TEMPLATES': 'true', 'SFDE_PROFILE': 'not JSON'}, clear=True), \
+                patch.object(workflow, 'get_vod', return_value=vod), \
+                patch.object(workflow, 'api', return_value=[{'id': 'chunk'}]), \
+                patch.object(workflow, 'output'), patch.object(workflow, 'resolve_media') as resolve:
+            with self.assertRaisesRegex(ValueError, 'saved template era'):
+                workflow.prepare()
+            resolve.assert_not_called()
+
+    def test_next_rejects_nonvalidation_target_before_backend_or_media_access(self):
+        for environment, url in [('production', 'http://localhost:8787'),
+                                 ('dev', 'https://bazaarghost-validation.kaio-8df.workers.dev'),
+                                 ('validation', 'https://production.example')]:
+            with self.subTest(environment=environment, url=url), \
+                    patch.dict(workflow.os.environ, {'SFDE_NEXT_ENABLED': 'true', 'ENVIRONMENT': environment,
+                        'BAZAARGHOST_API_URL': url, 'SFDE_PROFILE': 'not JSON'}, clear=True), \
+                    patch.object(workflow, 'get_vod') as get_vod:
+                with self.assertRaisesRegex(ValueError, 'validation/local'):
+                    workflow.prepare()
+                get_vod.assert_not_called()
+
+    def test_legacy_still_rejects_missing_or_malformed_profiles(self):
+        vod = {'id': 1, 'source': 'youtube', 'processing_enabled': True, 'ready_for_processing': True,
+               'availability': 'available', 'old_templates': False, 'profile': None}
+        for ambient in ('', 'not JSON', 'null', '{}'):
+            with self.subTest(ambient=ambient), patch.dict(workflow.os.environ, {'SFDE_PROFILE': ambient}, clear=True), \
+                    patch.object(workflow, 'get_vod', return_value=vod), \
+                    patch.object(workflow, 'api', return_value=[{'id': 'chunk'}]), \
+                    patch.object(workflow, 'output'), patch.object(workflow, 'resolve_media') as resolve:
+                with self.assertRaises(ValueError):
+                    workflow.prepare()
+                resolve.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()

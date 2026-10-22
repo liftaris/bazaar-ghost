@@ -39,7 +39,7 @@ async function detection(index = 0, at = 12, name: string | null = null, token =
   const intro = await image(index, at * 1000 + 25, "intro", token), clock = await image(index, at * 1000 + 2025, "clock", token);
   const e = observation(intro, at * 1000 + 25), c = observation(clock, at * 1000 + 2025, "pre_fight");
   return { schema_version: 2, id: `00000000-0000-5000-8000-${String((index + 1) * 1000 + at).padStart(12, "0")}`, timestamp: at,
-    username: name, confidence: name ? 0.92 : null, name_state: name ? "complete" : "masked", encounter_confidence: 0.99,
+    username: name, confidence: name ? 0.92 : null, name_state: name ? "complete" : "unreadable", encounter_confidence: 0.99,
     rank: "gold", igd: 9, ghost_hero: "vanessa", streamer_hero: "dooley", wins_remaining: 0, lethal: false,
     storage_path: intro, field_evidence: { encounter: e, username: { ...e, raw_text: name ?? "***" }, rank: e,
       igd: c, ghost_hero: e, streamer_hero: e, wins_remaining: c, lethal: c } };
@@ -57,14 +57,15 @@ async function nextClaim(index = 0) {
   return tokens[index];
 }
 
-it("publishes masked encounters on browse/detail/timeline/favorites/counts, never in name search/indexes/notifications", async () => {
-  const d = await detection();
+it("publishes masked encounters on scoped browse/detail/timeline/favorites/counts, never in discovery/name search/indexes/notifications", async () => {
+  const d = await detection(); d.name_state = "masked";
   expect(await post(0, [d])).toMatchObject({ published: 1, inserted: 1, replaced: 0, unchanged: 0 });
   expect(await rows(env, "SELECT username,username_lower,confidence,name_state FROM detections")).toEqual([{ username: null, username_lower: null, confidence: null, name_state: "masked" }]);
   expect(await rows(env, "SELECT * FROM search_names")).toEqual([]);
   expect(await rows(env, "SELECT * FROM search_grams")).toEqual([]);
   expect(await rows(env, "SELECT * FROM notification_outbox_v2")).toEqual([]);
-  const id = await anchor(), browse = await get("/search");
+  expect((await get("/search")).items).toEqual([]);
+  const id = await anchor(), browse = await get("/search?recordingId=1");
   expect(browse.items).toHaveLength(1);
   expect(browse.items[0]).toMatchObject({ id, opponent: { username: null, confidence: null, nameState: "masked", igd: 9 },
     encounter: { confidence: 0.99, winsRemaining: 0, lethal: false, ghostHero: "vanessa", streamerHero: "dooley" } });
@@ -94,7 +95,7 @@ it("publishes masked encounters on browse/detail/timeline/favorites/counts, neve
 it.each(["partial", "obstructed", "unreadable"])("retains %s name-state observations without fabricating a name", async nameState => {
   const d = await detection(); d.name_state = nameState;
   await post(0, [d]);
-  expect((await get("/search")).items[0].opponent).toMatchObject({ username: null, nameState });
+  expect((await get("/search?recordingId=1")).items[0].opponent).toMatchObject({ username: null, nameState });
   expect(await rows(env, "SELECT * FROM notification_outbox_v2")).toEqual([]);
 });
 
@@ -213,7 +214,7 @@ it("rejects unsupported values, missing proofs, invalid claim/image/time/region/
   const d = await detection(), foreign = await detection(1);
   const invalid = [
     { ...d, name_state: "complete" }, { ...d, username: "***" }, { ...d, name_state: "legacy" },
-    { ...d, name_state: "complete", username: "***", confidence: 0.9 },
+    { ...d, name_state: "complete", username: "\u0001", confidence: 0.9 },
     { ...d, ghost_hero: "unknown" }, { ...d, wins_remaining: 11 }, { ...d, wins_remaining: 1.5 }, { ...d, lethal: 0 },
     { ...d, timestamp: 120 }, { ...d, timestamp: 12.5 }, { ...d, frame_time_seconds: 13 },
     { ...d, field_evidence: { ...d.field_evidence, ghost_hero: undefined } },

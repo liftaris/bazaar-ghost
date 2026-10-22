@@ -1,0 +1,222 @@
+{
+  "image": "sha256:a588920419482936fc8027dd6fa74165386835fed46810a3183876c0874a1039",
+  "modelInstances": 1,
+  "network": "none",
+  "moduleSha256": {
+    "name_reader": "39f0f4028abd0e301dcb3596a45ed3e08e978a9e24346eca8096f6678c131469",
+    "ui_locator": "a0713f2604a6df43483b72dddac179d8f400cc6d582638a9fe5ab24d129bef70"
+  },
+  "reads": [
+    {
+      "at_ms": 106000,
+      "location": {
+        "rank": "gold",
+        "rank_region": [
+          542,
+          352,
+          50,
+          53
+        ],
+        "score": 0.7996905446052551,
+        "name_region": [
+          584,
+          365,
+          129,
+          33
+        ],
+        "complete": true,
+        "name_state": "unreadable",
+        "method": "spatial-masked-rank-480+verified-right-edge",
+        "edge_score": 0.7907311916351318,
+        "template": "gold_480p.png",
+        "template_scale": 1.0
+      },
+      "name": {
+        "username": null,
+        "confidence": 0.9951841235160828,
+        "name_state": "masked",
+        "raw_text": "{\"native\": [], \"mask\": [[\"******\", 0.9951841235160828]]}",
+        "method": "mask-binary65-linear4x-english-ocr",
+        "region": [
+          584,
+          362,
+          129,
+          36
+        ]
+      }
+    },
+    {
+      "at_ms": 108000,
+      "location": {
+        "rank": "gold",
+        "rank_region": [
+          542,
+          352,
+          50,
+          53
+        ],
+        "score": 0.7359301447868347,
+        "name_region": [
+          584,
+          364,
+          129,
+          33
+        ],
+        "complete": true,
+        "name_state": "unreadable",
+        "method": "spatial-masked-rank-480+verified-right-edge",
+        "edge_score": 0.7702313661575317,
+        "template": "gold_480p.png",
+        "template_scale": 1.0
+      },
+      "name": {
+        "username": null,
+        "confidence": 0.9946115612983704,
+        "name_state": "masked",
+        "raw_text": "{\"native\": [[\"*kkak\", 0.5455000400543213]], \"mask\": [[\"******\", 0.9946115612983704]]}",
+        "method": "mask-binary65-linear4x-english-ocr",
+        "region": [
+          584,
+          361,
+          129,
+          36
+        ]
+      }
+    },
+    {
+      "at_ms": 110000,
+      "location": {
+        "rank": "gold",
+        "rank_region": [
+          542,
+          352,
+          50,
+          53
+        ],
+        "score": 0.7348129153251648,
+        "name_region": [
+          584,
+          364,
+          129,
+          33
+        ],
+        "complete": true,
+        "name_state": "unreadable",
+        "method": "spatial-masked-rank-480+verified-right-edge",
+        "edge_score": 0.7697060704231262,
+        "template": "gold_480p.png",
+        "template_scale": 1.0
+      },
+      "name": {
+        "username": null,
+        "confidence": 0.9959168434143066,
+        "name_state": "masked",
+        "raw_text": "{\"native\": [], \"mask\": [[\"******\", 0.9959168434143066]]}",
+        "method": "mask-binary65-linear4x-english-ocr",
+        "region": [
+          584,
+          361,
+          129,
+          36
+        ]
+      }
+    }
+  ],
+  "consumeEmissions": [
+    {
+      "at_ms": 104000,
+      "count": 0
+    },
+    {
+      "at_ms": 106000,
+      "count": 0
+    },
+    {
+      "at_ms": 108000,
+      "count": 0
+    },
+    {
+      "at_ms": 110000,
+      "count": 0
+    },
+    {
+      "at_ms": 112000,
+      "count": 0
+    }
+  ],
+  "flushEmissionCount": 1,
+  "secondFlush": [],
+  "event": {
+    "schema_version": 2,
+    "id": "ee952403-f9ee-5a9a-92b6-6438660ce10c",
+    "recording_identity": "bilibili:BV1fUn56tEwY:42856547006",
+    "anchor_ms": 106000,
+    "timestamp": 106,
+    "vod_id": "BV1fUn56tEwY:42856547006",
+    "chunk_id": "bounded-native-mask-validation",
+    "is_matchup": true,
+    "username": null,
+    "confidence": null,
+    "name_state": "masked",
+    "encounter_confidence": 0.7996905446052551,
+    "detected_rank": "gold",
+    "igd": null,
+    "wins_remaining": null,
+    "lethal": null,
+    "ghost_hero": null,
+    "streamer_hero": null,
+    "field_evidence": {
+      "encounter": {
+        "at_ms": 110000,
+        "frame_sha256": "bdab6670afc3d6b5f146c875ad33a6c89451736b71f95ad2474177638ecad0a3",
+        "source_width": 852,
+        "source_height": 480,
+        "region": [
+          542,
+          352,
+          50,
+          53
+        ],
+        "method": "spatial-masked-rank-480",
+        "confidence": null,
+        "phase": "intro",
+        "selection_reason": "selected_full_intro;immutable_first_owned_anchor_ms=106000"
+      },
+      "rank": {
+        "at_ms": 106000,
+        "frame_sha256": "cd62c3b71ae6e485990b682ce733094ad5408a26512ba11b51ecc1040e9e0346",
+        "source_width": 852,
+        "source_height": 480,
+        "region": [
+          542,
+          352,
+          50,
+          53
+        ],
+        "method": "spatial-masked-rank-480",
+        "confidence": null,
+        "phase": "intro",
+        "selection_reason": "strongest_rank_template",
+        "raw_text": "{\"template\": \"gold_480p.png\", \"template_scale\": 1.0, \"score\": 0.7996905446052551}"
+      },
+      "username": {
+        "at_ms": 110000,
+        "frame_sha256": "bdab6670afc3d6b5f146c875ad33a6c89451736b71f95ad2474177638ecad0a3",
+        "source_width": 852,
+        "source_height": 480,
+        "region": [
+          584,
+          361,
+          129,
+          36
+        ],
+        "method": "mask-binary65-linear4x-english-ocr",
+        "confidence": 0.9959168434143066,
+        "phase": "intro",
+        "selection_reason": "best_of_bounded_intro_window",
+        "raw_text": "{\"native\": [], \"mask\": [[\"******\", 0.9959168434143066]]}"
+      }
+    }
+  },
+  "originalDiagnosticSha256": "f7c2dad740e2ee8cc1912ed518cf8e33fd545a2888eb7c2b781b173d84af87e9"
+}

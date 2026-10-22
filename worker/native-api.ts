@@ -23,6 +23,7 @@ import { Timing } from "./timing";
 import { memoizesState } from "./visibility";
 import { listPlatforms, platform } from "./platform-registry";
 import { resolveStreamer } from "./streamers";
+import { discoveryAllowed, nameOrder } from "./name-policy";
 
 const prefix = "/api/v1";
 const idValue = (value: string, label = "ID") => {
@@ -116,7 +117,7 @@ async function streamersOf(env: Env, ids: number[]) {
 export async function search(env: Env, url: URL) {
   const timeline = url.searchParams.has("sessionId") && url.searchParams.get("sort") === "time";
   // A whole recording's ghosts are listed in one page, so session-time lists may be longer.
-  const limit = parameters(url, ["q", "streamerId", "channelId", "platform", "excludePlatform", "from", "to", "sessionId", "sort", "recordingId", "limit", "cursor"], timeline ? 500 : 100);
+  const limit = parameters(url, ["q", "streamerId", "channelId", "platform", "excludePlatform", "from", "to", "sessionId", "sort", "recordingId", "excludeObstructed", "limit", "cursor"], timeline ? 500 : 100);
   const q = queryText(url),
     state = await boundary(env, url),
     filter = filters(url),
@@ -128,10 +129,15 @@ export async function search(env: Env, url: URL) {
     sort = url.searchParams.get("sort");
   requireValue(sort === null || (sort === "time" && sessionId !== null), "sort=time requires sessionId");
   requireValue(sessionId === null || SESSION_ID.test(sessionId), "Invalid sessionId");
+  const obstruction = url.searchParams.get("excludeObstructed");
+  requireValue(obstruction === null || obstruction === "true" || obstruction === "false", "Invalid excludeObstructed");
   const grams = trigrams(q);
   if (q && !grams.length) return { items: [], nextCursor: null };
   const clauses = ["p.matchup_id<=?"],
     args: unknown[] = [state.matchups];
+  const browse = !q && (sessionId !== null || filter.recording !== undefined);
+  if (!browse) clauses.push(discoveryAllowed("p.matchup_id"));
+  if (obstruction === "true" || (obstruction === null && !browse)) clauses.push("p.name_state NOT IN('partial','obstructed')");
   // A filter needs an available Source that satisfies it, so a filtered result is always playable there.
   const scope = (sql: string, ...values: unknown[]) => {
     clauses.push(`EXISTS(SELECT 1 FROM public_sources f WHERE f.matchup_id=p.matchup_id AND f.available=1 AND ${sql})`);
@@ -170,7 +176,7 @@ export async function search(env: Env, url: URL) {
     ? `named AS (SELECT r.matchup_id,r.detection_id,r.username,r.confidence,r.name_state,r.rank,r.igd,r.recorded_timestamp,r.latest_indexed_at AS indexed_at,
       m.session_id,m.session_time
       FROM (SELECT ps.matchup_id,ps.detection_id,ps.username,ps.confidence,ps.name_state,ps.rank,ps.igd,ps.recorded_timestamp,
-        row_number() OVER (PARTITION BY ps.matchup_id ORDER BY ps.confidence DESC,ps.rank IS NULL,ps.igd IS NULL,ps.indexed_at,ps.detection_id) AS display_rank,
+        row_number() OVER (PARTITION BY ps.matchup_id ORDER BY ${nameOrder("ps")}) AS display_rank,
         max(ps.indexed_at) OVER (PARTITION BY ps.matchup_id) AS latest_indexed_at
         FROM public_sources ps WHERE ps.matchup_id IN(${pool})) r
       JOIN matchups m ON m.id=r.matchup_id WHERE r.display_rank=1),`
@@ -438,9 +444,9 @@ async function sessionsOf(env: Env, ids: string[]): Promise<Session[]> {
   if (!ids.length) return [];
   const json = JSON.stringify(ids);
   const [found, segments, counts] = await Promise.all([
-    rows<{ id: string; title: string | null; streamer_id: number | null; owner_name: string | null; owner_avatar: string | null }>(
+    rows<{ id: string; title: string | null; streamer_id: number | null; streamer_mode: number; owner_name: string | null; owner_avatar: string | null }>(
       env,
-      `SELECT s.id,s.title,s.streamer_id,i.display_name AS owner_name,i.avatar_url AS owner_avatar FROM sessions s
+      `SELECT s.id,s.title,s.streamer_id,s.streamer_mode,i.display_name AS owner_name,i.avatar_url AS owner_avatar FROM sessions s
       LEFT JOIN streamer_identities i ON i.id=s.streamer_id WHERE s.merged_into IS NULL AND s.id IN(SELECT value FROM json_each(?))`,
       json,
     ),
@@ -469,6 +475,7 @@ async function sessionsOf(env: Env, ids: string[]): Promise<Session[]> {
     return {
       id,
       title: row.title,
+      streamerMode: !!row.streamer_mode,
       streamer: row.streamer_id ? streamerRef({ id: row.streamer_id, display_name: row.owner_name!, avatar_url: row.owner_avatar }) : null,
       recordings: recordingRows
         .filter((r) => members.has(r.id))
@@ -484,7 +491,7 @@ async function sessionsOf(env: Env, ids: string[]): Promise<Session[]> {
 const sessionRecordings = `SELECT g.session_id,r.id,r.platform,r.title,r.duration_seconds,r.availability='available' AS available,
     coalesce(r.recorded_at,r.published_at) AS at,s.streamer_id AS session_streamer,r.channel_streamer_id,
     CASE WHEN s.streamer_id IS NOT NULL AND r.channel_streamer_id IS NOT s.streamer_id THEN 1 ELSE 0 END AS is_reupload,
-    r.channel_id,r.channel_source_id,r.channel_name,r.channel_login,r.channel_avatar,s.title AS session_title,lower(i.display_name) AS streamer_name
+    r.channel_id,r.channel_source_id,r.channel_name,r.channel_login,r.channel_avatar,s.title AS session_title,s.streamer_mode,lower(i.display_name) AS streamer_name
   FROM (SELECT DISTINCT session_id,vod_id FROM recording_alignments WHERE revoked_at IS NULL) g
   JOIN sessions s ON s.id=g.session_id AND s.merged_into IS NULL
   JOIN public_recordings r ON r.id=g.vod_id AND r.id<=?
@@ -505,6 +512,7 @@ interface SessionRecordingRow {
   channel_avatar: string | null;
   channel_streamer_id: number | null;
   session_title: string | null;
+  streamer_mode: number;
 }
 /** Sessions that have an available Recording, searched and filtered, newest first (relevance first with `q`).
  * A Session is a Streamer's when it names them or any of its Recordings was published by a Channel they actively own
@@ -588,6 +596,7 @@ async function sessionCards(env: Env, ids: string[], state: { recordings: number
     return {
       id,
       title: best.title ?? best.session_title,
+      streamerMode: !!best.streamer_mode,
       streamer: ownerOf.get(id) ?? null,
       channel: channel(best, best.platform),
       startedAt: own.reduce<string | null>((min, r) => (r.at && (!min || r.at < min) ? r.at : min), null),
@@ -674,11 +683,17 @@ export async function nativeRoute(req: Request, env: Env): Promise<Response> {
     const state = await boundary(timed, url);
     const cacheUrl = new URL(url);
     cacheUrl.searchParams.set("native-revision", `${state.revision}:${state.matchups}:${state.recordings}`);
-    return publicCache(new Request(cacheUrl, req), timed, async () => {
+    let checked = false;
+    const response = await publicCache(new Request(cacheUrl, req), timed, async () => {
       const loaded = await nativeLoad(req, timed);
       await unchanged(timed, state, true);
+      checked = true;
       return loaded;
     });
+    // A cache hit bypasses the loader, and the boundary may come from the brief
+    // revision memo. Never deliver pre-correction discovery results on that path.
+    if (!checked) await unchanged(timed, state, true);
+    return response;
   };
   let response: Response;
   try {

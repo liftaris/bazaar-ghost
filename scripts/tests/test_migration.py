@@ -20,6 +20,13 @@ def inference_ledger_insert(status='uncertain'):
         '2026-09-08','{status}',100,100,NULL,NULL,'2026-09-08T00:00:00.000Z','2026-09-08T00:00:00.000Z');"""
 
 
+def target_seed_revisions():
+    with sqlite3.connect(':memory:') as target:
+        conversion.apply_schema(target, conversion.TARGET_SCHEMA_VERSION)
+        return {table: target.execute(f'SELECT revision FROM {table} WHERE id=1').fetchone()[0]
+                for table in ('public_cache_state', 'public_search_state')}
+
+
 class MigrationTests(unittest.TestCase):
     def test_snapshot_roundtrip_preserves_ids_and_does_not_replay_notifications(self):
         with tempfile.TemporaryDirectory() as root:
@@ -149,7 +156,7 @@ class MultiplatformMigrationTests(unittest.TestCase):
         manifest = json.loads((self.destination / 'manifest.json').read_text())
         self.assertEqual(manifest['schema_version'], 3)
         self.assertEqual(manifest['source_schema_version'], 3)
-        self.assertEqual(manifest['target_schema_version'], 23)
+        self.assertEqual(manifest['target_schema_version'], 24)
         self.assertEqual(len(manifest['migrations']), 3)
         self.assertEqual(manifest['target_migrations'], {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                          for path in (conversion.ROOT / 'worker/migrations').glob('*.sql')})
@@ -177,7 +184,50 @@ class MultiplatformMigrationTests(unittest.TestCase):
                          [(row['id'], row['username'], row['confidence'], row['igd'], row['storage_path']) for row in source_detections])
         self.assertEqual(restored.execute('''SELECT name_state,encounter_confidence,ghost_hero,streamer_hero,
             wins_remaining,lethal,field_evidence,publish_id,publish_claim,publish_body FROM detections ORDER BY id''').fetchall(),
-                         [('legacy', None, None, None, None, None, '{}', None, None, None)] * 4)
+                          [('legacy', None, None, None, None, None, '{}', None, None, None)] * 4)
+        self.assertEqual(restored.execute('SELECT streamer_mode FROM vods ORDER BY id').fetchall(), [(0,)] * 4)
+        self.assertEqual(restored.execute('SELECT streamer_mode FROM sessions ORDER BY id').fetchall(), [(0,)] * 4)
+        self.assertEqual(restored.execute('SELECT streamer_mode FROM public_recordings ORDER BY id').fetchall(), [(0,)] * 4)
+        self.assertIn('default false', manifest['policies']['streamer_mode'])
+
+    def test_legacy_asterisks_do_not_fabricate_masking_and_all_target_triggers_survive(self):
+        records = self.records()
+        records['detections'][0]['username'] = '******'
+        self.snapshot(records)
+        target = sqlite3.connect(':memory:')
+        self.addCleanup(target.close)
+        conversion.apply_schema(target, conversion.TARGET_SCHEMA_VERSION)
+        triggers = target.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").fetchall()
+        restored = self.restore()
+        self.assertEqual(restored.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").fetchall(), triggers)
+        self.assertEqual(restored.execute("SELECT username,name_state FROM detections WHERE id='detection-1'").fetchone(), ('******', 'legacy'))
+        self.assertEqual(restored.execute('SELECT count(*) FROM vods WHERE streamer_mode!=0').fetchone()[0], 0)
+        self.assertEqual(restored.execute('SELECT count(*) FROM sessions WHERE streamer_mode!=0').fetchone()[0], 0)
+        # New mask observation/propagation/monotonicity triggers were not part of
+        # schema3's suspension list and remain live after import/backfill.
+        restored.execute("INSERT INTO search_names(name,gram_count) VALUES('visible fragment',0)")
+        for state in ('obstructed', 'partial'):
+            restored.execute("UPDATE detections SET username='visible fragment',username_lower='visible fragment',name_state=?,encounter_confidence=.95 WHERE id='detection-1'", (state,))
+            self.assertEqual(restored.execute("SELECT username,name_state FROM public_sources WHERE detection_id='detection-1'").fetchone(), ('visible fragment', state))
+            self.assertEqual(restored.execute('SELECT streamer_mode FROM vods WHERE id=1').fetchone()[0], 0)
+            self.assertEqual(restored.execute("SELECT count(*) FROM search_grams WHERE name='visible fragment'").fetchone()[0], 0)
+        restored.execute("UPDATE detections SET username=NULL,username_lower=NULL,confidence=NULL,name_state='masked' WHERE id='detection-1'")
+        self.assertEqual(restored.execute('SELECT streamer_mode FROM vods WHERE id=1').fetchone()[0], 1)
+        self.assertEqual(restored.execute('SELECT streamer_mode FROM sessions WHERE id=(SELECT session_id FROM vods WHERE id=1)').fetchone()[0], 1)
+        restored.execute("UPDATE detections SET name_state='unreadable' WHERE id='detection-1'")
+        restored.execute("DELETE FROM detections WHERE id='detection-1'")
+        self.assertEqual(restored.execute('SELECT streamer_mode FROM public_recordings WHERE id=1').fetchone()[0], 1)
+        for table in ('vods', 'sessions'):
+            with self.subTest(table=table), self.assertRaisesRegex(sqlite3.IntegrityError, 'cannot be cleared'):
+                restored.execute(f'UPDATE {table} SET streamer_mode=0 WHERE streamer_mode=1')
+        self.assertEqual(restored.execute('PRAGMA foreign_key_check').fetchall(), [])
+
+    def test_pristine_revision_guard_uses_target_migration_seeds(self):
+        self.snapshot(self.records())
+        conversion.convert(self.source, self.destination)
+        guard = (self.destination / 'import.sql').read_text().splitlines()[0]
+        for table, revision in target_seed_revisions().items():
+            self.assertIn(f'EXISTS(SELECT 1 FROM {table} WHERE id=1 AND revision={revision})', guard)
 
     def test_refuses_active_ingestion_status_and_any_retained_lease(self):
         for active in [{'status': 'processing'}, {'lease_token': 'held'}, {'lease_expires_at': '2000-01-01T00:00:00Z'}]:
@@ -301,6 +351,20 @@ class MultiplatformMigrationTests(unittest.TestCase):
                     target.executescript((self.destination / 'import.sql').read_text())
                 self.assertEqual(target.execute('SELECT count(*) FROM vods').fetchone()[0], 0)
                 self.assertEqual(target.execute('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').fetchall(), schema)
+
+    def test_schema_23_is_refused_before_any_import_changes(self):
+        self.snapshot(self.records())
+        conversion.convert(self.source, self.destination)
+        target = sqlite3.connect(':memory:')
+        self.addCleanup(target.close)
+        conversion.apply_schema(target, 23)
+        before = target.execute('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').fetchall()
+        revisions = target.execute('SELECT revision FROM public_cache_state UNION ALL SELECT revision FROM public_search_state').fetchall()
+        with self.assertRaisesRegex(sqlite3.IntegrityError, 'valid_mutation'):
+            target.executescript((self.destination / 'import.sql').read_text())
+        self.assertEqual(target.execute('SELECT count(*) FROM vods').fetchone()[0], 0)
+        self.assertEqual(target.execute('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').fetchall(), before)
+        self.assertEqual(target.execute('SELECT revision FROM public_cache_state UNION ALL SELECT revision FROM public_search_state').fetchall(), revisions)
 
     def test_old_target_schema_is_refused_and_source_auth_is_not_accepted(self):
         self.snapshot(self.records())

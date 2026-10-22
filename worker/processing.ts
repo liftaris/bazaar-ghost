@@ -282,7 +282,7 @@ export async function claim(
   env: Env,
   id: string,
   queuedAt: string | null = null,
-  expected?: { profile: unknown; oldTemplates: unknown },
+  expected?: { profile: unknown; oldTemplates: unknown; processorMode?: unknown },
 ) {
   requireValue(
     queuedAt === null ||
@@ -291,13 +291,22 @@ export async function claim(
   );
   let fence = { sql: '', args: [] as unknown[] };
   if (expected) {
-    const profile = expectedProfile(expected.profile);
+    requireValue(expected.processorMode === undefined || expected.processorMode === 'legacy' || expected.processorMode === 'next', 'Invalid processor mode');
+    const next = expected.processorMode === 'next';
+    if (next) requireValue(env.ENVIRONMENT === 'validation' || env.ENVIRONMENT === 'local', 'NEXT claims require validation/local');
     requireValue(typeof expected.oldTemplates === 'boolean', 'Expected template era required');
-    const match = profileCheck(profile);
-    fence = {
-      sql: ` AND v.old_templates=? AND v.effective_profile_id=? AND EXISTS(SELECT 1 FROM sfde_profiles p WHERE p.id=v.effective_profile_id AND ${match.sql})`,
-      args: [expected.oldTemplates, profile.id, ...match.args],
-    };
+    if (next) {
+      // Automatic layout is independent of saved crop/profile mutations, but
+      // still binds the catalog template era in the same atomic claim update.
+      fence = { sql: ' AND v.old_templates=?', args: [expected.oldTemplates] };
+    } else {
+      const profile = expectedProfile(expected.profile);
+      const match = profileCheck(profile);
+      fence = {
+        sql: ` AND v.old_templates=? AND v.effective_profile_id=? AND EXISTS(SELECT 1 FROM sfde_profiles p WHERE p.id=v.effective_profile_id AND ${match.sql})`,
+        args: [expected.oldTemplates, profile.id, ...match.args],
+      };
+    }
   }
   const token = crypto.randomUUID(),
     time = now();

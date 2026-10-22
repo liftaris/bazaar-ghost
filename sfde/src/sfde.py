@@ -104,8 +104,8 @@ class SFDEProcessor:
         # Load configuration
         self.config = self._load_config()
 
-        # Parse SFDE profile from environment variable
-        self.profile = self._parse_sfde_profile()
+        # NEXT uses automatic full-frame layout, never saved or ambient crops.
+        self.profile = {} if self.next_enabled else self._parse_sfde_profile()
 
         # Initialize backend client first to fetch chunk details
         self.backend = BackendClient(
@@ -164,7 +164,7 @@ class SFDEProcessor:
             self.config,
             quality=self.quality,
             old_templates=self.old_templates,
-            profile=self.profile,
+            profile=None if self.next_enabled else self.profile,
             streamer=self.streamer,
         )
         if self.next_enabled:
@@ -213,7 +213,7 @@ class SFDEProcessor:
             self.logger.warning('SFDE next clock module unavailable: clock fields remain unknown')
         else:
             try:
-                clock = ClockReader(self.frame_processor.reader, profile=self.profile)
+                clock = ClockReader(self.frame_processor.reader)
             except Exception:
                 self.logger.warning('Optional clock initialization failed; retaining encounters', exc_info=True)
         self.encounters = EncounterPipeline(self.frame_processor, recording=f'{self.source}:{self.vod_pk or self.vod_id}',
@@ -221,10 +221,7 @@ class SFDEProcessor:
             end_ms=round(self.end_time*1000), clock=clock)
         # Keep the paid-attempt budget across in-process media retries.
         if not hasattr(self, 'enricher'):
-            self.enricher = EncounterEnricher(self.backend,
-                allow_run_reuse=os.getenv('SFDE_NEXT_RUN_REUSE_ENABLED') == 'true')
-        else:
-            self.enricher.run.invalidate('media_retry')
+            self.enricher = EncounterEnricher(self.backend)
 
     def _load_config(self) -> Dict[str, Any]:
         """Load configuration from YAML file"""
@@ -411,10 +408,11 @@ class SFDEProcessor:
             "chunk.id": self.chunk_id,
             "streamer": self.streamer,
             "quality": self.formatted_quality,
-            "profile.name": self.profile.get("profile_name", "default"),
             "start_seconds": self.start_time,
             "end_seconds": self.end_time,
         }
+        if not self.next_enabled:
+            self.span_attributes['profile.name'] = self.profile.get('profile_name', 'default')
 
     def _handle_shutdown(self, signum, frame):
         """Handle shutdown signals gracefully"""
@@ -426,10 +424,13 @@ class SFDEProcessor:
         self.logger.info(
             f"Starting VOD processing: {self.vod_id} [{self.start_time}-{self.end_time}]"
         )
-        self.logger.info(
-            f"Using SFDE profile: {self.profile.get('profile_name', 'unknown')}"
-        )
-        self.logger.info(f"Crop region: {self.profile['crop_region']}")
+        if self.next_enabled:
+            self.logger.info('Using automatic full-frame SFDE NEXT layout (no profile)')
+        else:
+            self.logger.info(
+                f"Using SFDE profile: {self.profile.get('profile_name', 'unknown')}"
+            )
+            self.logger.info(f"Crop region: {self.profile['crop_region']}")
         if self.old_templates:
             self.logger.info(
                 "Using small templates (underscore-prefixed) for older VOD processing"
@@ -443,7 +444,12 @@ class SFDEProcessor:
         # Wrap entire processing in a root span
         with create_span("process_chunk", attributes=self.span_attributes, context=self.trace_context) as root_span:
             try:
-                if not self.backend.claim_chunk(self.chunk_id, expected_profile=self.profile, expected_old_templates=self.old_templates):
+                claim_options = {'expected_old_templates': self.old_templates}
+                if self.next_enabled:
+                    claim_options['processor_mode'] = 'next'
+                else:
+                    claim_options['expected_profile'] = self.profile
+                if not self.backend.claim_chunk(self.chunk_id, **claim_options):
                     raise ValueError(f'Chunk {self.chunk_id} is unavailable, already claimed, or has changed profile/templates')
                 claimed = True
                 self.backend.delete_chunk_detections(self.chunk_id)
@@ -452,9 +458,12 @@ class SFDEProcessor:
                 # Pre-compute combined crop and subregion slices so both
                 # ffmpeg_worker and opencv_worker have them before they start.
                 pre_fw, pre_fh = QUALITY_RESOLUTIONS[self.quality]
-                combined_crop, nameplate_slice, igd_slice = self._compute_combined_crop(
-                    pre_fw, pre_fh
-                )
+                if self.next_enabled:
+                    combined_crop, nameplate_slice, igd_slice = [pre_fw, pre_fh, 0, 0], None, None
+                else:
+                    combined_crop, nameplate_slice, igd_slice = self._compute_combined_crop(
+                        pre_fw, pre_fh
+                    )
                 self._combined_crop = combined_crop
                 self._nameplate_slice = nameplate_slice
                 self._igd_slice = igd_slice
@@ -1035,6 +1044,7 @@ class SFDEProcessor:
                 summary = {key: value for key, value in result.items()
                            if not key.startswith('_') and key not in ('frame_base64',)}
                 summary['inference_audit'] = result.get('_inference_audit', [])
+                summary['name_observation'] = result.get('_name_observation')
                 summary['paid_attempts'] = result.get('_paid_attempts', 0)
                 summary['rank'] = result.get('detected_rank')
                 self.all_detections.append(summary)

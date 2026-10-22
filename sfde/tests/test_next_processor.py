@@ -19,7 +19,7 @@ import pytest
 from backend_client import BackendClient
 from encounter_pipeline import EncounterPipeline, EncounterEnricher, detection_id, parse_hero, HEROES
 from name_reader import NameReader
-from run_context import RunContext, ObservedRun, PlayerState
+from run_context import ObservedRun, PlayerState
 from sfde import SFDEProcessor, next_enabled
 from ui_locator import UILocator
 
@@ -125,6 +125,23 @@ def test_neighbor_selection_keeps_anchor_rank_and_name_independent():
     assert p.flush() == []
 
 
+@pytest.mark.parametrize('reads,expected,score', [
+    ([name('MiXeD.', 'obstructed', .21), name(None, 'obstructed', .99)], 'MiXeD.', .21),
+    ([name(None, 'partial', .99), name('Two\nparts!', 'obstructed', .31)], 'Two\nparts!', .31),
+    ([name('fragment', 'obstructed', .99), name('Whole.Name', 'complete', .51)], 'Whole.Name', .51),
+])
+def test_pipeline_keeps_observed_names_and_their_source_when_neighbors_are_empty(reads, expected, score):
+    p = pipeline([LOCATION] * len(reads), reads)
+    for index in range(len(reads)):
+        p.consume(image(), index * 2000)
+    result = p.flush()[0]
+    assert result['username'] == expected and result['confidence'] == score
+    source_index = next(i for i, read in enumerate(reads) if read['username'] == expected)
+    proof = result['field_evidence']['username']
+    assert proof['at_ms'] == source_index * 2000 and proof['raw_text'] == expected
+    assert result['name_state'] == reads[source_index]['name_state']
+
+
 def test_intro_read_window_is_bounded_and_does_not_lock_on_weak_first_read():
     p = pipeline([LOCATION] * 20, [name('weak', 'complete', .91), name('better', 'complete', .99), name(), name()])
     result = []
@@ -134,6 +151,22 @@ def test_intro_read_window_is_bounded_and_does_not_lock_on_weak_first_read():
     # No second encounter just because the same intro stays visible for 40s.
     assert p.flush() == []
     assert len(result) == 1 and result[0]['username'] == 'better'
+
+
+def test_oversized_observed_name_keeps_original_locally_and_explicit_wire_excerpt():
+    text = '😀' * 90
+    raw = json.dumps({'native': [[text, .3]], 'mask': [['x' * 1200, .1]]}, ensure_ascii=False)
+    read = dict(name(text, 'obstructed', .3), raw_text=raw)
+    p = pipeline([LOCATION], [read])
+    p.consume(image(), 0)
+    result = p.flush()[0]
+    assert result['username'] == '😀' * 64 and result['name_state'] == 'obstructed'
+    assert result['_name_observation']['username'] == text
+    assert result['_name_observation']['raw_text'] == raw
+    evidence = result['field_evidence']['username']['raw_text']
+    assert len(evidence.encode('utf-16-le')) // 2 <= 1024
+    excerpt = json.loads(evidence)
+    assert excerpt['truncated'] and excerpt['sha256'] == hashlib.sha256(raw.encode()).hexdigest()
 
 
 @pytest.mark.parametrize('state', ['masked', 'partial', 'obstructed', 'unreadable'])
@@ -256,7 +289,8 @@ def test_local_day_unknown_can_fallback_on_proven_owned_pre_intro_full_clock():
         if kwargs['task'] == 'clock_day' else response(kwargs['task']))
     EncounterEnricher(backend).enrich(result)
     assert result['igd'] == 1 and result['field_evidence']['igd']['at_ms'] == 4000
-    assert backend.infer.call_args.kwargs['at_ms'] == 4000
+    day_calls = [c for c in backend.infer.call_args_list if c.kwargs['task'] == 'clock_day']
+    assert len(day_calls) == 1 and day_calls[0].kwargs['at_ms'] == 4000
 
 
 def test_long_clock_window_has_bounded_jpeg_storage_and_never_corrects_days():
@@ -305,26 +339,30 @@ def test_local_name_and_clock_failure_do_not_drop_encounter():
 
 @pytest.mark.parametrize('raw,mask,state,username', [
     ([('normal.', .99)], [], 'complete', 'normal.'),
-    ([('ab***cd', .99)], [], 'partial', None),
+    ([('ab***cd', .99)], [], 'obstructed', 'ab***cd'),
     ([('kokkkkk', .65)], [('******', .99)], 'masked', None),
-    ([], [('******', .89)], 'partial', None),
-    ([('partial', .65)], [], 'unreadable', None),
-    ([('two', .99), ('fragments', .99)], [], 'partial', None),
-    ([('ab cd', .99)], [], 'unreadable', None),
+    ([], [('******', .89)], 'obstructed', None),
+    ([('partial', .65)], [], 'complete', 'partial'),
+    ([('low', .25)], [], 'obstructed', 'low'),
+    ([('two', .99), ('fragments', .99)], [], 'obstructed', 'two\nfragments'),
+    ([('ab cd', .99)], [], 'obstructed', 'ab cd'),
 ])
 def test_name_whole_tokens_mask_before_cleanup(monkeypatch, raw, mask, state, username):
     monkeypatch.setattr('name_reader.tokens', Mock(side_effect=[raw, mask]))
     read = NameReader(Mock()).read(np.zeros((36, 64, 3), np.uint8), LOCATION)
     assert (read['name_state'], read['username']) == (state, username)
-    assert json.loads(read['raw_text']) == {'native': [list(r) for r in raw], 'mask': [list(r) for r in mask]}
+    assert json.loads(read['raw_text']) == {'native': [list(r) for r in raw], 'mask': [list(r) for r in mask],
+                                          'regions': read['ocr_regions']}
 
 
 @pytest.mark.parametrize('state', ['partial', 'obstructed'])
-def test_incomplete_name_never_runs_either_ocr_branch(state):
+def test_incomplete_name_runs_ocr_and_retains_observed_fragment(state):
     reader = Mock()
+    reader.predict.side_effect = [[{'rec_texts': ['MiXeD.'], 'rec_scores': [.31]}], []]
     read = NameReader(reader).read(np.zeros((36, 64, 3), np.uint8), dict(LOCATION, complete=False, name_state=state))
-    assert read['username'] is None and read['name_state'] == state
-    reader.predict.assert_not_called()
+    assert read['username'] == 'MiXeD.' and read['name_state'] == 'obstructed'
+    assert read['confidence'] == .31
+    assert reader.predict.call_count == 2
 
 
 def test_inference_hero_halves_full_height_bounded_no_upscale_and_unknown_name():
@@ -411,29 +449,33 @@ def test_day_fallback_only_registered_full_clock_strict_integer(day, expected):
     assert result['_paid_attempts'] == 3
 
 
-def test_run_reuse_keeps_original_evidence_and_every_ghost_is_rechecked():
+def test_both_heroes_are_rechecked_with_each_fights_own_evidence():
     backend = Mock()
     backend.infer.side_effect = lambda _, **kwargs: response(kwargs['task'])
-    enrich = EncounterEnricher(backend, allow_run_reuse=True)
+    enrich = EncounterEnricher(backend)
     first, second, third = event(8, 0), event(9, 20000), event(10, 40000)
     enrich.enrich(first)
     first['field_evidence']['streamer_hero']['image_path'] = '/original-intro.jpg'
     enrich.enrich(second)
     enrich.enrich(third)
-    assert [c.kwargs['task'] for c in backend.infer.call_args_list] == ['ghost_hero','streamer_hero','ghost_hero','ghost_hero']
+    assert [c.kwargs['task'] for c in backend.infer.call_args_list] == ['ghost_hero','streamer_hero'] * 3
     evidence = third['field_evidence']['streamer_hero']
-    assert evidence['at_ms'] == 0 and evidence['image_path'] == '/original-intro.jpg'
-    assert evidence['inherited_from']['detection_id'] == first['id']
+    assert evidence['at_ms'] == 40000 and 'image_path' not in evidence
+    assert 'inherited_from' not in evidence
 
 
 @pytest.mark.parametrize('day,segment,supported', [(8,'chunk:1',True), (1,'chunk:1',True),
     (None,'chunk:1',True), (9,'chunk:2',True), (9,'otherchunk:1',True), (9,'chunk:1',False)])
-def test_run_context_invalidates_nonincrement_reset_unknown_cut_and_gap(day, segment, supported):
-    context = RunContext()
-    first = event()
-    context.accept(first, 'stelle', {'at_ms':0})
-    assert context.select(event(day, 20000, segment, supported)) is None
-    assert context.accepted is None
+def test_both_hero_calls_are_independent_of_day_and_chunk(day, segment, supported):
+    backend = Mock()
+    backend.infer.side_effect = lambda _, **kwargs: response(kwargs['task'])
+    enrich = EncounterEnricher(backend)
+    enrich.enrich(event())
+    second = event(day, 20000, segment, supported)
+    enrich.enrich(second)
+    assert [c.kwargs['task'] for c in backend.infer.call_args_list] == ['ghost_hero','streamer_hero'] * 2
+    assert second['field_evidence']['streamer_hero']['at_ms'] == 20000
+    assert 'inherited_from' not in second['field_evidence']['streamer_hero']
 
 
 def test_new_payload_uploads_every_source_before_publish_even_unknown_name():
@@ -542,7 +584,9 @@ def test_frozen_native_fullframe_locator_regressions(locator, key):
     else:
         assert found is not None
         if 'right-edge-matcher-abstention-not-obstruction' in record['tags'] or key == 'boundaryA-03408':
-            assert not found['complete'] and found['name_state'] != 'obstructed'
+            # The fallback is uncertain, not evidence of a physical obstruction.
+            assert not found['complete'] and found['name_state'] == 'obstructed'
+            assert found['name_region'] is not None
         else:
             assert found['complete']
 
@@ -561,11 +605,11 @@ def test_real_same_stelle_reset_frames_force_fresh_streamer_check(locator, bound
     assert p.continuity_epoch > old_epoch
     backend = Mock()
     backend.infer.side_effect = lambda _, **kwargs: response(kwargs['task'])
-    enrich = EncounterEnricher(backend, allow_run_reuse=True)
+    enrich = EncounterEnricher(backend)
     enrich.enrich(event())
     enrich.enrich(latest)
     assert 'inherited_from' not in latest['field_evidence']['streamer_hero']
-    assert [c.kwargs['task'] for c in backend.infer.call_args_list].count('streamer_hero') == (2 if latest['_hero_ms'] is not None else 1)
+    assert [c.kwargs['task'] for c in backend.infer.call_args_list].count('streamer_hero') == 2
 
 
 @pytest.fixture(scope='module')
@@ -700,7 +744,6 @@ def test_next_retries_keep_paid_cap_and_replace_request_without_assuming_deletio
     p.enricher.attempts = 12
     p._reset_for_retry()
     assert p.enricher is previous_enricher and p.enricher.attempts == 12
-    assert p.enricher.run.accepted is None
     p.backend.delete_chunk_detections.assert_called_once_with('chunk')
     assert p.frames_processed == p.preroll_frames_processed == 0
 
@@ -720,7 +763,8 @@ def test_mask_payload_has_null_name_confidence_but_keeps_mask_score_in_evidence(
     assert result['field_evidence']['username']['confidence'] == .999
 
 
-def test_run_reuse_off_by_default_until_parent_reviews_continuous_demonstration():
+def test_obsolete_reuse_setting_cannot_enable_hero_reuse(monkeypatch):
+    monkeypatch.setenv('SFDE_NEXT_RUN_REUSE_ENABLED', 'true')
     backend = Mock()
     backend.infer.side_effect = lambda _, **kwargs: response(kwargs['task'])
     enrich = EncounterEnricher(backend)
@@ -761,11 +805,13 @@ def test_observed_continuity_survives_clock_deadline_and_ordinary_transitions():
     assert output[0]['_clock_closed'] is True
     assert all(e['_continuity_supported'] for e in output)
     assert output[0]['_continuity_segment'] == output[1]['_continuity_segment']
-    backend = Mock(infer=lambda _,**k: response(k['task']))
-    enrich = EncounterEnricher(backend,allow_run_reuse=True)
+    backend = Mock()
+    backend.infer.side_effect = lambda _,**k: response(k['task'])
+    enrich = EncounterEnricher(backend)
     for e in output:
         enrich.enrich(e)
-    assert output[1]['field_evidence']['streamer_hero']['inherited_from']['detection_id'] == output[0]['id']
+    assert backend.infer.call_count == 4
+    assert 'inherited_from' not in output[1]['field_evidence']['streamer_hero']
 
 
 @pytest.mark.parametrize('fault', ['gap','day_regression','day_jump','menu','loading','run_end','blackout','cut','unknown_gap'])
@@ -872,14 +918,19 @@ def test_hero_selection_is_independent_of_name_and_rejects_first_fade():
     assert p.flush()[0]['_hero_ms'] == 2000  # Nameplate completeness is not hero quality.
 
 
-def test_unstable_or_single_intro_art_abstains_without_optional_calls():
+def test_single_intro_still_checks_both_heroes_without_a_stable_pair():
     p = pipeline([LOCATION])
     p.consume(image(),0)
     result = p.flush()[0]
     backend = Mock()
+    backend.infer.side_effect = lambda _, **kwargs: response(kwargs['task'])
     EncounterEnricher(backend).enrich(result)
-    backend.infer.assert_not_called()
-    assert result['ghost_hero'] is None and result['streamer_hero'] is None
+    assert [call.kwargs['task'] for call in backend.infer.call_args_list] == ['ghost_hero', 'streamer_hero']
+    for role in ('ghost_hero', 'streamer_hero'):
+        proof = result['field_evidence'][role]
+        assert proof['at_ms'] == result['_intro_ms']
+        assert 'no_stable_pair' in proof['selection_reason']
+        assert 'inherited_from' not in proof
 
 
 @pytest.mark.parametrize('role',['ghost_hero','streamer_hero'])
@@ -895,24 +946,23 @@ def test_original_exploratory_hero_guard_both_roles_not_a_calibration(role):
     assert parse_hero(response(role,probabilities=scores),role) == (None,None)
 
 
-def test_run_segment_only_on_supported_prefight_day_and_exact_original_hero_proof():
+def test_hero_evidence_does_not_depend_on_prefight_day_proof():
     backend = Mock()
     backend.infer.side_effect = lambda _,**k: response(k['task'])
-    enrich = EncounterEnricher(backend,allow_run_reuse=True)
+    enrich = EncounterEnricher(backend)
     first = event(8,0)
     enrich.enrich(first)
-    original = deepcopy(first['field_evidence']['streamer_hero'])
-    assert original['run_segment_id'] == first['_continuity_segment']
+    assert 'run_segment_id' not in first['field_evidence']['streamer_hero']
     second = event(9,20000)
     enrich.enrich(second)
-    inherited = {k:v for k,v in second['field_evidence']['streamer_hero'].items()
-                 if k not in ('selection_reason','inherited_from')}
-    assert inherited == {k:v for k,v in original.items() if k!='selection_reason'}
+    assert second['field_evidence']['streamer_hero']['at_ms'] == 20000
+    assert 'inherited_from' not in second['field_evidence']['streamer_hero']
     third = event(10,40000)
     third['field_evidence']['igd']['phase'] = 'unknown'
     enrich.enrich(third)
     assert 'run_segment_id' not in third['field_evidence']['streamer_hero']
     assert 'inherited_from' not in third['field_evidence']['streamer_hero']
+    assert backend.infer.call_count == 6
 
 
 def test_spatially_persistent_shop_survives_extended_clock_registration_failure():
@@ -1279,7 +1329,7 @@ def test_cached_continuous_repair_replay():
         processor.reset_state()
         pipeline = EncounterPipeline(processor,recording=window['recording'],vod_id=window['recording'],
             chunk_id='offline-repair-'+wid,start_ms=window['start_ms'],end_ms=window['end_ms'],clock=reader)
-        enrich = EncounterEnricher(backend,allow_run_reuse=True)
+        enrich = EncounterEnricher(backend)
         source = video if window['media']=='twitch' else mask
         cmd = ['ffmpeg','-hide_banner','-loglevel','error','-threads','2','-filter_threads','1',
                '-ss',str((window['start_ms']-window['source_offset_ms'])/1000),'-i',str(source),
@@ -1355,10 +1405,10 @@ def test_cached_continuous_repair_replay():
         assert summary['clock_snapshot_unchanged']
         assert [e['username'] for e in events] == ['limonerism','Meninim','RedMint']
         first,second,after_reset = events
-        assert second['field_evidence']['streamer_hero']['inherited_from']['detection_id'] == first['id']
+        assert 'inherited_from' not in second['field_evidence']['streamer_hero']
         assert 'inherited_from' not in after_reset['field_evidence']['streamer_hero']
         assert first['_continuity_segment']==second['_continuity_segment']!=after_reset['_continuity_segment']
     if approved_continuity:
         assert summary['previous_failed_replay_unchanged']
-        assert summary['inherited']==1 and summary['streamer_calls']==2
+        assert summary['inherited']==0 and summary['streamer_calls']==len(events)
     assert len([e for e in events if e['_replay_window']=='continuous']) == (2 if pair_only else 3)

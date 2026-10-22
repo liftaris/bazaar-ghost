@@ -185,6 +185,9 @@ export async function mergeSessions(env: Env, winner: string, loser: string, del
     { sql: fp.sql, args: fp.fn(before) },
     { sql: 'SELECT (SELECT count(*) FROM matchups WHERE session_id=?)=?', args: [loser, matchups.length] },
   ], [
+    // Read the loser's current sticky observation inside the transaction, not the
+    // earlier JS snapshot: a parallel chunk may have observed masking since then.
+    statement(env, 'UPDATE sessions SET streamer_mode=1 WHERE id=? AND streamer_mode=0 AND EXISTS(SELECT 1 FROM sessions WHERE id=? AND streamer_mode=1)', winner, loser),
     statement(env, 'UPDATE matchups SET session_id=?,session_time=session_time+? WHERE session_id=?', winner, delta, loser),
     ...(vodIds.length ? [revokeVods(env, by.actor, vodIds), insertSegments(env, winner, by, event, recordingJson(after))] : []),
     statement(env, 'UPDATE sessions SET merged_into=?,updated_at=? WHERE id=?', winner, now(), loser),

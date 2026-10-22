@@ -455,6 +455,7 @@ it("lists Sessions as lean cards: searchable, filterable, newest first, pageable
   expect(list.items.map((s) => s.id)).not.toContain(await sessionOf(empty));
   expect(list.items[0]).toEqual({
     id: home,
+    streamerMode: false,
     title: "Morning ladder",
     streamer: { id: 1, displayName: "Example", avatarUrl: null },
     channel: expect.objectContaining({ platform: "twitch", streamerId: 1 }),
@@ -647,7 +648,7 @@ it("answers the Discord /search command with the same Matchups as the public sea
   expect(lines[0]).toContain(`https://site.example/matchups/${items[0].id}`);
   expect(await ask("zzzzzz")).toBe("No results found for **zzzzzz**");
 });
-it("reports D1 round trips in Server-Timing and spends none on a repeated hosted read", async () => {
+it("reports D1 round trips in Server-Timing and only revalidates the revision on a repeated hosted read", async () => {
   await evidence(1);
   const hosted = { ...env, ENVIRONMENT: "validation" };
   await publicState(hosted, true);
@@ -655,7 +656,7 @@ it("reports D1 round trips in Server-Timing and spends none on a repeated hosted
   const first = await request();
   expect(first.headers.get("Server-Timing")).toMatch(/^d1;dur=[\d.]+;desc="\d+ queries",sql;dur=[\d.]+,total;dur=[\d.]+$/);
   const again = await request();
-  expect(again.headers.get("Server-Timing")).toContain('desc="0 queries"');
+  expect(again.headers.get("Server-Timing")).toContain('desc="1 queries"');
   expect(await again.json()).toEqual(await first.json());
 });
 it("restarts a cursor-less read once when the memoized revision predates a correction", async () => {

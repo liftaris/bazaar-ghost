@@ -1,5 +1,6 @@
 import { channelUrl, embedUrl, watchUrl } from "./platform-registry";
 import type { FieldKey, FieldObservation, FieldObservations } from "./detections";
+import { nameTier } from "./name-policy";
 import type {
   Channel,
   Evidence,
@@ -33,6 +34,7 @@ export interface RecordingRow {
   status: string;
   bazaar_chapters: string;
   session_id: string | null;
+  streamer_mode: number;
   channel_id: string;
   channel_source_id: string;
   channel_name: string;
@@ -151,6 +153,7 @@ export function recording(row: RecordingRow): Recording {
     available: row.availability === "available",
     channel: channel(row, row.platform),
     sessionId: row.session_id,
+    streamerMode: !!row.streamer_mode,
     matchupCount: row.matchup_count ?? null,
   };
 }
@@ -240,7 +243,7 @@ function selectField(sources: SourceRow[], field: FieldKey, observed: Map<Source
     if (!observation && (row.name_state !== "legacy" || !["encounter", "username", "rank", "igd"].includes(field))) return [];
     return [{ row, observation }];
   }).sort((a, b) => {
-    if (field === "username") return Number(a.row.username === null) - Number(b.row.username === null)
+    if (field === "username") return nameTier(a.row) - nameTier(b.row)
       || (b.row.confidence ?? -1) - (a.row.confidence ?? -1)
       || Number(a.row.rank === null) - Number(b.row.rank === null) || Number(a.row.igd === null) - Number(b.row.igd === null)
       || a.row.indexed_at.localeCompare(b.row.indexed_at) || a.row.detection_id.localeCompare(b.row.detection_id);

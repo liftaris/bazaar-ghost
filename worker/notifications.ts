@@ -1,4 +1,5 @@
 import { HttpError, external, now, one, rows, statement } from "./http";
+import { discoveryAllowed } from "./name-policy";
 
 export const MAX_DELIVERY_ATTEMPTS = 5;
 const OUTBOX_BATCH = 100;
@@ -137,6 +138,8 @@ export async function notify(env: Env, matchup: number) {
   if (outbox.merged_into !== null) return settle(env, matchup, "merged");
   if (outbox.status === "hidden") return settle(env, matchup, "hidden");
   if (outbox.eligible_at > now()) return;
+  const eligible = () => one(env, `SELECT 1 FROM matchups m WHERE m.id=? AND ${discoveryAllowed("m.id")}`, matchup);
+  if (!await eligible()) return settle(env, matchup, "no_source");
   const sources = await rows<Source>(
     env,
     `SELECT ps.username,ps.username_lower,coalesce(pa.display_name,pa.login) AS display
@@ -164,6 +167,7 @@ export async function notify(env: Env, matchup: number) {
   const base = env.PUBLIC_SITE_URL.replace(/\/+$/, "");
   let unfinished = false;
   for (const [key, target] of destinations) {
+    if (!await eligible()) return settle(env, matchup, "no_source");
     const previous = await rows(
       env,
       "SELECT status,attempts FROM notification_deliveries_v2 WHERE matchup_id=? AND destination=?",
@@ -186,6 +190,9 @@ export async function notify(env: Env, matchup: number) {
           await discordApi(env, "users/@me/channels", { recipient_id: target.user })
         ).id;
       if (!channel) throw new Error("Discord did not return a channel");
+      // A different parallel chunk may have observed masking during destination
+      // lookup. A later observation cannot recall an already-issued HTTP send.
+      if (!await eligible()) return settle(env, matchup, "no_source");
       const content = `👻🚨 New matchup found!\n**${streamer}** vs **${opponents.join("**, **")}**\n${base}/matchups/${matchup}${target.channel ? "\n" + [...target.users].map((u) => `<@${u}>`).join(" ") : ""}`;
       sending = true;
       await discordApi(env, `channels/${channel}/messages`, {

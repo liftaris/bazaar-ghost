@@ -245,11 +245,12 @@ export async function publish(env: Env, id: string, token: string | null, input:
     const state = v2 ? record.name_state : "legacy";
     requireValue(["legacy", "complete", "partial", "obstructed", "masked", "unreadable"].includes(state as string) && (!v2 || state !== "legacy"), "Invalid name_state");
     const named = state === "legacy" || state === "complete";
-    if (named) {
+    const observed = named || state === "partial" || state === "obstructed";
+    if (observed && record.username !== null) {
       text(record.username, "username", 128);
-      requireValue((record.username as string).trim().length > 0 && /[\p{L}\p{N}]/u.test(record.username as string), "Invalid or masked username");
+      requireValue((record.username as string).trim().length > 0, "Invalid username");
       score(record.confidence, "confidence", v2);
-    } else requireValue(record.username === null && record.confidence === null, "Incomplete names must be null with null name confidence");
+    } else requireValue(!named && record.username === null && record.confidence === null, "This name state requires null text and confidence");
     if (v2) score(record.encounter_confidence, "encounter_confidence");
     if (record.igd != null) integer(record.igd, "igd", 1, 20);
     requireValue(record.rank == null || ["bronze", "silver", "gold", "diamond", "legend"].includes(record.rank as string), "Invalid rank");
@@ -271,7 +272,7 @@ export async function publish(env: Env, id: string, token: string | null, input:
       requireValue(record.storage_path === `/detections/${key}`, "Screenshot must belong to the current claim");
       await claimedImage(env, chunk, token!, record.storage_path, at * 1000, heads);
     }
-    const name = named ? (record.username as string).toLowerCase() : null;
+    const name = typeof record.username === "string" ? record.username.toLowerCase() : null;
     const normalized = { id: publisherId, timestamp: at, schema_version: v2 ? 2 : 1, username: record.username, confidence: record.confidence,
       rank: record.rank ?? null, igd: record.igd ?? null, storage_path: record.storage_path, no_right_edge: !!record.no_right_edge, truncated: !!record.truncated,
       name_state: state, encounter_confidence: v2 ? record.encounter_confidence : null, ghost_hero: record.ghost_hero ?? null,
@@ -295,10 +296,11 @@ export async function publish(env: Env, id: string, token: string | null, input:
         args: [old.id, old.publish_claim, old.publish_body, publisherId, publisherId, old.id] });
     } else checks.push({ sql: "SELECT NOT EXISTS(SELECT 1 FROM detections WHERE (vod_id=? AND frame_time_seconds=?) OR id=? OR publish_id=?)", args: [chunk.vod_id, at, publisherId, publisherId] });
     if (name) {
-      // Low-quality legacy names still need the FK parent, but never enter gram indexing.
+      // Retained fragments/low-quality names still need the FK parent, but do
+      // not become identity candidates merely because observed text exists.
       const grams = trigrams(name);
       statements.push(statement(env, "INSERT OR IGNORE INTO search_names(name,gram_count) VALUES(?,?)", name, grams.length));
-      if ((record.confidence as number) > 0.7) statements.push(statement(env,
+      if (named && (record.confidence as number) > 0.7) statements.push(statement(env,
         "INSERT OR IGNORE INTO search_grams(gram,name) SELECT value,? FROM json_each(?)", name, JSON.stringify(grams)));
     }
     const fields = ["username", "username_lower", "confidence", "rank", "storage_path", "no_right_edge", "truncated", "igd", "name_state", "encounter_confidence", "ghost_hero", "streamer_hero", "wins_remaining", "lethal", "field_evidence", "publish_id", "publish_claim", "publish_body"];
@@ -312,6 +314,8 @@ export async function publish(env: Env, id: string, token: string | null, input:
   }
   // All observations/images validated before any write. Assertions and replacement
   // share a transaction: expiry/conflict rolls back search indexes and every row.
+  if (input.some(record => object(record) && record.schema_version === 2 && record.name_state === "masked") && (inserted || replaced))
+    statements.unshift(statement(env, "UPDATE vods SET streamer_mode=1 WHERE id=? AND streamer_mode=0", chunk.vod_id));
   await atomic(env, checks, statements);
   if (inserted || replaced) await coalesceVod(env, chunk.vod_id).catch(error =>
     console.log(JSON.stringify({ event: "coalesce_failed", vod_id: chunk.vod_id, error: String(error) })));

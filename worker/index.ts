@@ -251,6 +251,7 @@ async function route(req: Request, env: Env): Promise<Response> {
         return Response.json(
           await claim(env, id, input.queued_at ?? null, {
             profile: input.expected_profile, oldTemplates: input.expected_old_templates,
+            processorMode: input.processor_mode,
           }),
         );
       }

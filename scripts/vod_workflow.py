@@ -8,7 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 from typing import Any, Dict, List
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request
 from uuid import UUID
 
@@ -106,6 +106,13 @@ def prepared_profile(saved: Dict[str, Any], profile: Any) -> Dict[str, Any]:
 
 
 def prepare() -> None:
+    automatic_layout = os.getenv('SFDE_NEXT_ENABLED') == 'true'
+    if automatic_layout:
+        target = urlparse(os.getenv('BAZAARGHOST_API_URL', ''))
+        local = target.hostname in ('localhost', '127.0.0.1', '::1', 'host.docker.internal')
+        validation = target.hostname == 'bazaarghost-validation.kaio-8df.workers.dev' and target.scheme == 'https'
+        if os.getenv('ENVIRONMENT') not in ('validation', 'local') or not (local or validation):
+            raise ValueError('SFDE_NEXT_ENABLED requires an explicit validation/local target')
     vod = get_vod()
     if not vod['processing_enabled'] or not vod['ready_for_processing'] or vod['availability'] != 'available':
         raise ValueError('VOD is not eligible for processing')
@@ -122,7 +129,10 @@ def prepare() -> None:
     output('chunk_uuids', ids)
     if not ids:
         return
-    profile = prepared_profile(vod['profile'], json.loads(os.environ['SFDE_PROFILE']) if os.getenv('SFDE_PROFILE') else vod['profile'])
+    # NEXT derives its layout from pixels. Do not even parse an ambient profile;
+    # malformed or changed legacy settings have no bearing on automatic layout.
+    profile = {} if automatic_layout else prepared_profile(
+        vod['profile'], json.loads(os.environ['SFDE_PROFILE']) if os.getenv('SFDE_PROFILE') else vod['profile'])
     if os.getenv('OLD_TEMPLATES') == 'true' and not vod['old_templates']:
         raise ValueError('Requested old templates differ from the saved template era; update the catalog first')
     old = vod['old_templates']

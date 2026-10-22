@@ -74,15 +74,17 @@ class FullTargetD1Tests(unittest.TestCase):
             conversion.convert(source, destination)
         self.assertEqual({path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in source.iterdir()}, source_hashes)
         manifest = json.loads((destination / 'manifest.json').read_text())
-        self.assertEqual(manifest['target_schema_version'], 23)
+        self.assertEqual(manifest['target_schema_version'], 24)
         self.assertEqual(manifest['target_migrations'], {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                          for path in (conversion.ROOT / 'worker/migrations').glob('*.sql')})
         self.migrate()
         self.assertEqual(self.query('SELECT name FROM d1_migrations ORDER BY name'),
                          [{'name': name} for name in sorted(manifest['target_migrations'])])
         before_triggers = self.query("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name")
+        seeds = fixtures.target_seed_revisions()
+        pristine_revisions = {'cache_revision': seeds['public_cache_state'], 'search_revision': seeds['public_search_state']}
         self.assertEqual(self.query('SELECT (SELECT revision FROM public_cache_state) cache_revision,(SELECT revision FROM public_search_state) search_revision'),
-                         [{'cache_revision': 1, 'search_revision': 1}])
+                          [pristine_revisions])
         for part in sorted(destination.glob('import-*.sql')):
             self.execute_file(part)
         self.execute_file(destination / 'post_import.sql')
@@ -116,6 +118,8 @@ class FullTargetD1Tests(unittest.TestCase):
         self.assertEqual(self.query('SELECT status,next_attempt_at FROM platform_ingestion_jobs'),[{'status':'waiting','next_attempt_at':'2026-09-08T15:00:00.000Z'}])
         self.assertEqual(self.query("SELECT count(*) n FROM vods WHERE status='completed'"),[{'n':4}])
         self.assertEqual(self.query('SELECT id,revision FROM public_cache_state'),[{'id':1,'revision':0}])
+        for table in ('vods', 'sessions', 'public_recordings'):
+            self.assertEqual(self.query(f'SELECT streamer_mode FROM {table} ORDER BY id'), [{'streamer_mode':0}] * 4)
         for table in ['app_users','user_accounts','user_sessions','auth_verifications','auth_flows','auth_rate_limits','matchup_comments','matchup_likes','matchup_favorites','social_reports','social_moderation_audit','platform_ingestion_dispatch']:
             self.assertEqual(counts[table],0,table)
         self.execute_file(destination/'import.sql',succeeds=False)
@@ -130,10 +134,23 @@ class FullTargetD1Tests(unittest.TestCase):
         # Imported Recordings each got a singleton Session and Matchups carry Session time.
         self.assertEqual(self.query("SELECT (SELECT count(*) FROM sessions) s,(SELECT count(*) FROM vods) v,(SELECT count(*) FROM recording_alignments WHERE method='singleton' AND offset_seconds=0 AND revoked_at IS NULL) a"),[{'s':counts['vods'],'v':counts['vods'],'a':counts['vods']}])
         self.assertEqual(self.query('SELECT count(*) n FROM matchups WHERE session_id IS NULL OR session_time IS NULL'),[{'n':0}])
+        before_hide = self.query('SELECT revision FROM public_cache_state')[0]['revision']
         self.query("UPDATE matchups SET status='hidden' WHERE id IN(SELECT matchup_id FROM matchup_anchors WHERE vod_id=1)")
-        self.assertEqual(self.query('SELECT revision FROM public_cache_state'),[{'revision':1}])
+        self.assertEqual(self.query('SELECT revision FROM public_cache_state'),[{'revision':before_hide+1}])
         self.assertEqual(self.query("SELECT count(*) n FROM sqlite_master WHERE name='detection_search'"),[{'n':0}])
         self.assertEqual(self.query('SELECT count(*) n FROM public_sources'),[{'n':2}])  # hiding the merged Matchup hides every Source
+        # The new mask triggers were never suspended, and remain operational
+        # after restoring all target trigger definitions and importing history.
+        self.query("UPDATE detections SET username=NULL,username_lower=NULL,confidence=NULL,name_state='masked',encounter_confidence=.95 WHERE id='detection-3'")
+        self.assertEqual(self.query('SELECT streamer_mode FROM vods WHERE id=3'), [{'streamer_mode':1}])
+        self.assertEqual(self.query('SELECT streamer_mode FROM sessions WHERE id=(SELECT session_id FROM vods WHERE id=3)'), [{'streamer_mode':1}])
+        self.query("UPDATE detections SET name_state='unreadable' WHERE id='detection-3'")
+        self.assertEqual(self.query('SELECT streamer_mode FROM public_recordings WHERE id=3'), [{'streamer_mode':1}])
+        self.query("INSERT INTO detections(id,chunk_id,vod_id,frame_time_seconds,name_state,encounter_confidence) VALUES('new-mask','chunk-4',4,4,'masked',.95)")
+        self.assertEqual(self.query('SELECT streamer_mode FROM vods WHERE id=4'), [{'streamer_mode':1}])
+        self.assertEqual(self.query('SELECT streamer_mode FROM sessions WHERE id=(SELECT session_id FROM vods WHERE id=4)'), [{'streamer_mode':1}])
+        self.assertEqual(self.query("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name"), before_triggers)
+        self.assertEqual(self.query('PRAGMA foreign_key_check'), [])
         self.migrate(state='occupied-auth')
         self.query("INSERT INTO app_users(id,name,email,emailVerified,createdAt,updatedAt) VALUES('existing','Existing','fixture@invalid.test',0,'2026-09-07T00:00:00.000Z','2026-09-07T00:00:00.000Z')",state='occupied-auth')
         self.execute_file(destination/'import.sql',state='occupied-auth',succeeds=False)
@@ -162,7 +179,7 @@ class FullTargetD1Tests(unittest.TestCase):
                 self.assertEqual(self.query('SELECT count(*) n FROM vods',state='occupied-inference'),[{'n':0}])
                 self.assertEqual(self.query("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name",state='occupied-inference'),before_triggers)
                 self.assertEqual(self.query('SELECT (SELECT revision FROM public_cache_state) cache_revision,(SELECT revision FROM public_search_state) search_revision',state='occupied-inference'),
-                                 [{'cache_revision': 1, 'search_revision': 1}])
+                                  [pristine_revisions])
                 self.query('DELETE FROM sfde_inference',state='occupied-inference')
         conversion.private_json(self.root/'proof.json',{'status':'passed','source_schema':conversion.SCHEMA_VERSION,'target_schema':conversion.TARGET_SCHEMA_VERSION,
             'target_migrations':manifest['target_migrations'],
@@ -171,4 +188,6 @@ class FullTargetD1Tests(unittest.TestCase):
             'dispatcher_empty_after_import':True,'nonempty_dispatcher_refused':True,'existing_dispatch_ownership_preserved':True,
             'triggers_preserved':True,'public_visibility_trigger_verified':True,'hosted_resources_touched':False,
             'legacy_evidence_defaults_verified':True,'inference_ledger_empty_after_import':True,
+            'legacy_streamer_mode_false_verified':True,'mask_insert_update_propagation_verified':True,
+            'target_seed_revisions':seeds,
             'nonempty_inference_ledger_refused':True,'inference_history_preserved':True,'source_bytes_unchanged':True})

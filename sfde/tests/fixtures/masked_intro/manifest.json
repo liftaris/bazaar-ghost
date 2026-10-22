@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 1,
+  "split": "regression",
+  "previouslySeen": true,
+  "blindHeldout": false,
+  "algorithmTuningBeforeOrDuringCheck": false,
+  "labelReview": {
+    "method": "AI parent review of native fullframes and crop sheet; six visible asterisks",
+    "independentHuman": false,
+    "reviewedBeforeModelRun": true
+  },
+  "source": {
+    "platform": "bilibili",
+    "bvid": "BV1fUn56tEwY",
+    "cid": "42856547006",
+    "recordingIdentity": "bilibili:BV1fUn56tEwY:42856547006",
+    "sourceId": "BV1fUn56tEwY:42856547006",
+    "rendition": "32; H.264 native 852x480 30fps; video only",
+    "clipSha256": "42640c098adee4ad0b3d97f0bdc4d78f5c266b3d60e50cc5df0cd35c74b6f92b",
+    "timeBase": "1/16000",
+    "sourceOriginPtsSeconds": 0.061,
+    "timeBasis": "atMs = round((sourcePts/16000 - 0.061)*1000); actual source PTS, not historical wall time",
+    "exactSourcePts": true
+  },
+  "labels": {
+    "positiveAtMs": [
+      106000,
+      108000,
+      110000
+    ],
+    "nameState": "masked",
+    "username": null,
+    "confidence": null,
+    "rank": "gold",
+    "visibleMask": "******",
+    "anchorMs": 106000,
+    "nameEvidenceAtMs": 110000,
+    "emissionsAfterFlush": 1
+  },
+  "span": {
+    "startMs": 104000,
+    "endMsExclusive": 114000,
+    "flushAfterLastAtMs": 112000,
+    "sampling": "five original 2-second-spaced samples, no synthesized boundary samples"
+  },
+  "frames": [
+    {
+      "file": "104.png",
+      "sha256": "3df57bb41708d21fc491cedf7f75473953cb537f10666f847e4108ac6519d9b4",
+      "originalSha256": "3df57bb41708d21fc491cedf7f75473953cb537f10666f847e4108ac6519d9b4",
+      "bytes": 518551,
+      "dimensions": [
+        852,
+        480
+      ],
+      "transformation": "none; byte-identical native fullframe PNG copy",
+      "atMs": 104000,
+      "sourceFrameIndex": 3120,
+      "sourcePts": 1664976,
+      "sourcePtsSeconds": 104.061,
+      "expectedIntro": false
+    },
+    {
+      "file": "106.png",
+      "sha256": "cd62c3b71ae6e485990b682ce733094ad5408a26512ba11b51ecc1040e9e0346",
+      "originalSha256": "cd62c3b71ae6e485990b682ce733094ad5408a26512ba11b51ecc1040e9e0346",
+      "bytes": 509209,
+      "dimensions": [
+        852,
+        480
+      ],
+      "transformation": "none; byte-identical native fullframe PNG copy",
+      "atMs": 106000,
+      "sourceFrameIndex": 3180,
+      "sourcePts": 1696976,
+      "sourcePtsSeconds": 106.061,
+      "expectedIntro": true
+    },
+    {
+      "file": "108.png",
+      "sha256": "8e58f8f9e6b5e3ec3df8c5248c4af9009b87e2e446473be3dbf3f9f5ffad93f2",
+      "originalSha256": "8e58f8f9e6b5e3ec3df8c5248c4af9009b87e2e446473be3dbf3f9f5ffad93f2",
+      "bytes": 602483,
+      "dimensions": [
+        852,
+        480
+      ],
+      "transformation": "none; byte-identical native fullframe PNG copy",
+      "atMs": 108000,
+      "sourceFrameIndex": 3240,
+      "sourcePts": 1728976,
+      "sourcePtsSeconds": 108.061,
+      "expectedIntro": true
+    },
+    {
+      "file": "110.png",
+      "sha256": "bdab6670afc3d6b5f146c875ad33a6c89451736b71f95ad2474177638ecad0a3",
+      "originalSha256": "bdab6670afc3d6b5f146c875ad33a6c89451736b71f95ad2474177638ecad0a3",
+      "bytes": 582809,
+      "dimensions": [
+        852,
+        480
+      ],
+      "transformation": "none; byte-identical native fullframe PNG copy",
+      "atMs": 110000,
+      "sourceFrameIndex": 3300,
+      "sourcePts": 1760976,
+      "sourcePtsSeconds": 110.061,
+      "expectedIntro": true
+    },
+    {
+      "file": "112.png",
+      "sha256": "6472200cb34efe01c2271e881474715af64b5043b9338681c181315a30782350",
+      "originalSha256": "6472200cb34efe01c2271e881474715af64b5043b9338681c181315a30782350",
+      "bytes": 667853,
+      "dimensions": [
+        852,
+        480
+      ],
+      "transformation": "none; byte-identical native fullframe PNG copy",
+      "atMs": 112000,
+      "sourceFrameIndex": 3360,
+      "sourcePts": 1792976,
+      "sourcePtsSeconds": 112.061,
+      "expectedIntro": false
+    }
+  ],
+  "observedOutput": {
+    "file": "observed-name-output.json",
+    "sha256": "16978e4bed6befea57b145959c47279f2dd97feac7f3a29453210917659ddfa9",
+    "purpose": "Actual pre-promotion Q2 local Paddle and pipeline output; evidence, not supplied model observations"
+  },
+  "limitations": [
+    "AI-parent-reviewed labels, not independent human ground truth",
+    "Previously seen regression after promotion, not blind held-out accuracy",
+    "No optional clock, hero enrichment or day-interstitial OCR; no paid calls",
+    "PNG bytes use the pipeline existing imdecode input contract without JPEG recompression",
+    "Historical exact rejecting branch and recording-wide zero-detection cause remain unknown"
+  ]
+}

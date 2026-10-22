@@ -12,7 +12,7 @@ import math
 import re
 import time
 from uuid import NAMESPACE_URL, uuid5
-from run_context import RunContext, ObservedRun
+from run_context import ObservedRun
 from name_reader import tokens
 import cv2
 import numpy as np
@@ -24,6 +24,18 @@ FIELDS = ('igd', 'wins_remaining', 'lethal')
 
 def detection_id(recording, anchor_ms):
     return str(uuid5(NAMESPACE_URL, f'bazaarghost:encounter:{recording}:{anchor_ms}'))
+
+
+def bounded_name_evidence(raw):
+    """Keep the wire's 1024 UTF-16-unit limit without emitting broken JSON.
+
+    The complete observation is retained in the native result artifact. A wire
+    excerpt explicitly identifies omission and hashes the original UTF-8 text.
+    """
+    if len(raw.encode('utf-16-le')) // 2 <= 1024:
+        return raw
+    return json.dumps({'truncated': True, 'sha256': hashlib.sha256(raw.encode()).hexdigest(),
+                       'characters': len(raw), 'preview': raw[:48]}, ensure_ascii=True)
 
 
 def valid_field(field, value):
@@ -232,13 +244,27 @@ class EncounterPipeline:
                     'method': 'native-english-ocr-failed'}
         state = read['name_state']
         # A verified mask dominates contradictory ordinary OCR, not a first-read lock.
-        quality = ({'complete': 4, 'masked': 5, 'partial': 2, 'obstructed': 1, 'unreadable': 0}[state],
+        # Prefer actual observed text over empty uncertainty, irrespective of
+        # its OCR score. A verified mask remains authoritative for this intro.
+        quality = (5 if state == 'masked' else 4 if state == 'complete' and read.get('username')
+                   else 2 if read.get('username') else 1 if state in ('partial', 'obstructed') else 0,
                    read.get('confidence') or 0.)
         if quality > event['_name_quality']:
             event['_name_quality'] = quality
             event.update({key: read[key] for key in ('username', 'confidence', 'name_state')})
-            if state != 'complete':
+            # Extraction retains observed fragments. Search policy belongs to
+            # the backend; only an actual mask or absent text has no name.
+            if state == 'masked' or not event['username']:
                 event['username'], event['confidence'] = None, None
+            elif len(event['username'].encode('utf-16-le')) // 2 > 128:
+                # Preserve a bounded observed prefix, never drop the encounter
+                # because noisy OCR exceeded the publisher's text limit.
+                event['username'] = event['username'].encode('utf-16-le')[:256].decode('utf-16-le', errors='ignore')
+                event['name_state'] = 'obstructed'
+            raw = read.get('raw_text', '')
+            event['_name_observation'] = {'username': read.get('username'), 'raw_text': raw,
+                                          'ocr_regions': read.get('ocr_regions'),
+                                          'at_ms': source['at_ms']}
             event['_intro_ms'] = source['at_ms']
             self._remember(source)
             event['field_evidence']['encounter'] = self._evidence(
@@ -247,7 +273,7 @@ class EncounterPipeline:
             region = read.get('region') or location.get('name_region') or location['rank_region']
             event['field_evidence']['username'] = self._evidence(
                 source, region, read['method'], 'intro', 'best_of_bounded_intro_window',
-                read.get('confidence'), raw_text=read.get('raw_text', '')[:1024])
+                read.get('confidence'), raw_text=bounded_name_evidence(raw))
 
     def _clock(self, source, observation):
         event = self.active
@@ -509,17 +535,15 @@ def parse_hero(response, role):
             return None, None
         confidence = scores[hero]
     # Frozen exploratory guard for BOTH roles, not calibrated accuracy. A known
-    # overlay/skin counterexample still passes it and remains a rollout blocker.
+    # overlay/skin counterexample still passes it and remains documented tuning work.
     return hero, confidence
 
 
 class EncounterEnricher:
     """Result-worker-only paid work. One attempt per role, no automatic retry."""
-    def __init__(self, backend, *, allow_run_reuse=False):
+    def __init__(self, backend):
         self.backend = backend
-        self.allow_run_reuse = allow_run_reuse
         self.attempts = 0
-        self.run = RunContext()
         self.logger = logging.getLogger('sfde.enrichment')
 
     @staticmethod
@@ -580,20 +604,7 @@ class EncounterEnricher:
         hero_ms = event.get('_hero_ms')
         source = event['_images'][hero_ms if hero_ms is not None else event['_intro_ms']]
         W, H = source['source_width'], source['source_height']
-        reusable = self.run.select(event) if self.allow_run_reuse else None
         for role, region in [('ghost_hero', [W//2, 0, W-W//2, H]), ('streamer_hero', [0, 0, W//2, H])]:
-            if role == 'streamer_hero' and reusable:
-                event[role] = reusable['hero']
-                evidence = reusable['evidence']
-                evidence['inherited_from'] = {'detection_id': reusable['id'],
-                    'run_segment_id': reusable['segment'], 'at_ms': evidence['at_ms']}
-                evidence['selection_reason'] = 'accepted_hero_reused_under_observed_run_continuity'
-                event['field_evidence'][role] = evidence
-                continue
-            if hero_ms is None:
-                event['field_evidence'][role] = EncounterPipeline._evidence(source,region,
-                    'intro-art-quality-abstention','intro','no_adjacent_stable_intro_art_pixels')
-                continue
             response = self._infer(event, role, source, region)
             hero, confidence = parse_hero(response, role)
             if hero is None:
@@ -603,15 +614,15 @@ class EncounterEnricher:
                 continue
             event[role] = hero
             evidence = EncounterPipeline._evidence(source, region, 'fixed-task-inference', 'intro',
-                       'stable_intro_full_height_max640;exploratory_top060_margin030_uncalibrated', None,
+                        ('stable_intro_full_height_max640' if hero_ms is not None
+                         else 'selected_intro_full_height_max640_no_stable_pair')
+                        + ';exploratory_top060_margin030_uncalibrated', None,
                        model=str(response.get('model', 'unknown'))[:128],
                        prompt_version=str(response.get('prompt_version', 'unknown'))[:128],
                        raw_text=json.dumps(response.get('result'), ensure_ascii=False)[:1024])
             event['field_evidence'][role] = evidence
             if event.get('_hero_previous_ms') is not None:
                 evidence['samples'] = [{'at_ms':event['_hero_previous_ms']},{'at_ms':hero_ms}]
-            if role == 'streamer_hero':
-                self.run.accept(event, hero, evidence)
         return event
 
     def _enrich_day(self, event):

@@ -215,12 +215,13 @@ def convert(source, destination):
             apply_schema(target, TARGET_SCHEMA_VERSION)
             target_tables = [row[0] for row in target.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+            target_triggers = target.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").fetchall()
             with private_open(destination / 'import.sql') as output:
                 # platform_settings is seeded deployment configuration, never source data.
                 seeded = ('public_cache_state', 'public_search_state', 'platform_settings')
                 nonempty = ' OR '.join(f'EXISTS(SELECT 1 FROM {table})' for table in target_tables if table not in seeded)
                 # Migrations can invalidate projections even on an empty database
-                # (0022 starts both revisions at 1). Require each pristine target
+                # (0022 and 0024 both invalidate revisions). Require each pristine target
                 # singleton, not the post-import revision reset of zero.
                 initial_revisions = {table: target.execute(f'SELECT revision FROM {table} WHERE id=1').fetchone()[0]
                                      for table in ('public_cache_state', 'public_search_state')}
@@ -260,8 +261,14 @@ def convert(source, destination):
             with private_open(destination / 'post_import.sql') as output:
                 output.write(post_import)
             target.executescript(post_import)
-            if target.execute('SELECT revision FROM public_cache_state WHERE id=1').fetchone()[0]:
-                raise ValueError('Post-import left a non-zero cache revision')
+            if any(target.execute(f'SELECT revision FROM {table} WHERE id=1').fetchone()[0]
+                   for table in initial_revisions):
+                raise ValueError('Post-import left a non-zero public revision')
+            if target.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").fetchall() != target_triggers:
+                raise ValueError('Generated import changed target trigger definitions')
+            if any(target.execute(f'SELECT count(*) FROM {table} WHERE streamer_mode!=0').fetchone()[0]
+                   for table in ('vods', 'sessions')):
+                raise ValueError('Legacy import fabricated observed streamer mode')
             if target.execute('PRAGMA foreign_key_check').fetchall():
                 raise ValueError('Generated import violates target foreign keys')
             target_counts = {table: target.execute(f'SELECT count(*) FROM {table}').fetchone()[0] for table in target_tables}
@@ -283,7 +290,8 @@ def convert(source, destination):
                                  'websub_delivery_receipts': 'retained', 'ingestion_jobs': 'retained; active leases refused',
                                  'auth': 'source auth is excluded; target auth and social tables must be empty',
                                  'ingestion_dispatch': 'source dispatch state is excluded; target dispatcher table must be empty',
-                                 'sfde_evidence': 'legacy names retained; name_state=legacy, empty field evidence, no inferred fields or publication ownership',
+                                  'sfde_evidence': 'legacy names retained; name_state=legacy, empty field evidence, no inferred fields or publication ownership',
+                                  'streamer_mode': 'VOD and Session flags default false; legacy text is not masking evidence',
                                  'sfde_inference': 'source inference state is excluded; target inference ledger must be empty',
                                  'target': f'full schema 0001–{TARGET_SCHEMA_VERSION:04d} required; anchors and Matchups derive from imported detections',
                                  'matchup_groups': 'run post_import.sql once after the import parts: reviewed groups become link overrides and merged Matchups'}}

@@ -1,5 +1,4 @@
 """Conservative, per-decode run continuity; never a Session/streamer cache."""
-from copy import deepcopy
 from collections import deque
 import cv2
 import numpy as np
@@ -311,42 +310,3 @@ class ObservedRun:
                     setattr(self,group,(at_ms,state))
         self.recent.append((at_ms,sig))
         return self.epoch
-
-
-class RunContext:
-    """Lives on the serial result worker, consuming decode's continuity summary.
-
-    The accepted observation is immutable. Reused encounters advance last_day,
-    not the original detection/image/time that supported the identity.
-    """
-    def __init__(self):
-        self.invalidate('first_encounter')
-
-    def invalidate(self, reason):
-        self.accepted, self.last_day, self.segment_id = None, None, None
-        self.reason = reason
-
-    def select(self, event):
-        day, segment = event.get('igd'), event.get('_continuity_segment')
-        evidence = event.get('field_evidence',{}).get('igd',{})
-        if (not event.get('_continuity_supported') or type(day) is not int or not 1 <= day <= 20
-                or evidence.get('phase') != 'pre_fight'
-                or self.last_day is None or day != self.last_day + 1 or segment != self.segment_id
-                or not self.accepted
-                or any(t >= event['anchor_ms'] for t in [self.accepted['evidence']['at_ms']] +
-                       [s['at_ms'] for s in self.accepted['evidence'].get('samples', [])])):
-            self.invalidate('unknown_or_changed_continuity_or_nonincrementing_day')
-            return None
-        self.last_day = day
-        return deepcopy(self.accepted)
-
-    def accept(self, event, hero, evidence):
-        if (event.get('_continuity_supported') and type(event.get('igd')) is int
-                and 1 <= event['igd'] <= 20
-                and event.get('field_evidence',{}).get('igd',{}).get('phase') == 'pre_fight'):
-            self.segment_id, self.last_day = event['_continuity_segment'], event['igd']
-            evidence['run_segment_id'] = self.segment_id
-            # Keep evidence by reference until upload fills image_path. Publication
-            # is synchronous before the next event; selection returns a deep copy.
-            self.accepted = {'hero': hero, 'evidence': evidence, 'id': event['id'],
-                             'segment': self.segment_id}

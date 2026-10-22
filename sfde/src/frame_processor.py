@@ -156,7 +156,7 @@ class FrameProcessor:
         """Lazy next-path helpers share the already configured native OCR reader."""
         if not hasattr(self, '_full_locator'):
             from ui_locator import UILocator
-            self._full_locator = UILocator(profile=self.profile)
+            self._full_locator = UILocator()
         return self._full_locator.locate(frame)
 
     def read_full_name(self, frame, location):

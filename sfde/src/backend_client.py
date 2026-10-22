@@ -6,11 +6,13 @@ import logging
 import os
 import time
 from urllib.error import HTTPError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from uuid import NAMESPACE_URL, uuid5
 
 from telemetry import create_span, record_counter, record_histogram
+
+_MISSING_PROFILE = object()
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -55,20 +57,33 @@ class BackendClient:
     def get_chunk_details(self, chunk_id):
         return self._request(f'chunks/{chunk_id}')
 
-    def claim_chunk(self, chunk_id, *, expected_profile, expected_old_templates):
-        # Bind this run's prepared crop to the catalog at the claim transition.
-        # The Worker validates and compares the operational fields atomically;
-        # malformed/missing preparation must never fall back to an unfenced claim.
-        if (not isinstance(expected_profile, dict) or type(expected_profile.get('id')) is not int
-                or expected_profile['id'] <= 0):
+    def claim_chunk(self, chunk_id, *, expected_old_templates, expected_profile=_MISSING_PROFILE, processor_mode='legacy'):
+        # Legacy binds prepared crops to the catalog; explicit NEXT binds only
+        # the template era because it derives layout from full-frame pixels.
+        # Neither mode may silently fall back to an unfenced HTTP claim.
+        if processor_mode not in ('legacy', 'next'):
+            raise ValueError('Unsupported processor mode')
+        if processor_mode == 'legacy' and expected_profile is _MISSING_PROFILE:
+            raise TypeError('Legacy claims require expected_profile')
+        if processor_mode == 'legacy' and (not isinstance(expected_profile, dict)
+                or type(expected_profile.get('id')) is not int or expected_profile['id'] <= 0):
             raise ValueError('The prepared SFDE_PROFILE must identify a saved catalog profile')
         if type(expected_old_templates) is not bool:
             raise ValueError('The prepared template selection must be boolean before claiming')
-        result = self._request(f'chunks/{chunk_id}/claim', 'POST', {
+        payload = {
             'queued_at': os.getenv('QUEUED_AT') or None,
-            'expected_profile': expected_profile,
             'expected_old_templates': expected_old_templates,
-        })
+        }
+        if processor_mode == 'next':
+            target = urlparse(self.url)
+            local = target.hostname in ('localhost', '127.0.0.1', '::1', 'host.docker.internal')
+            validation = target.hostname == 'bazaarghost-validation.kaio-8df.workers.dev' and target.scheme == 'https'
+            if os.getenv('ENVIRONMENT') not in ('validation', 'local') or not (local or validation):
+                raise ValueError('NEXT claims require an explicit validation/local target')
+            payload['processor_mode'] = 'next'
+        else:
+            payload['expected_profile'] = expected_profile
+        result = self._request(f'chunks/{chunk_id}/claim', 'POST', payload)
         if result['claimed']:
             self.claims[chunk_id] = result['claim_token']
         return result['claimed']

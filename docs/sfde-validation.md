@@ -13,9 +13,8 @@ and starting boards are later work.
   and punctuation. Do not score a partial name as complete or guess hidden text.
 - Label name state separately: complete, partial, obstructed, masked or unreadable.
   A mask is a visible masking pattern, not an OCR failure.
-- Score the ghost hero once per encounter. Score streamer identification once per
-  independently labeled run; report reused encounters separately. A Session,
-  recording or unchanged hero is not proof of one run.
+- Score ghost and streamer identification separately for each encounter. Each
+  gets its own model call; streamer results are not reused between fights.
 - Label clock fields at their own frame time and phase. Day is an integer; wins
   remaining is ten minus blue-filled boxes; lethal is the grey/cracked crown.
   Hidden fields are unknown. The crown is not the battle outcome.
@@ -47,7 +46,7 @@ and hero coverage for all eight identities. Missing cases stay explicit gaps.
 | Ghost and streamer hero exactness / coverage | At least 98% / 90%, scored separately |
 | Day and wins exactness / coverage | At least 99% / 90% of clearly visible clocks, per field |
 | Lethal exactness / coverage | At least 99% / 90%, report both classes separately |
-| Run reuse and field association | Zero cross-run or cross-fight propagation in reviewed cases |
+| Field association | Zero cross-fight propagation in reviewed cases |
 | Data integrity | Stable Matchup IDs; no lost social data, links, or valid field evidence |
 
 All named regression cases must pass. Small samples establish regression evidence,
@@ -80,8 +79,7 @@ on the existing `main` / Supabase system.
 ## Opt-in processor contract
 
 `SFDE_NEXT_ENABLED=true` requires an explicit validation/local environment and
-endpoint. The Process VOD workflow defaults to the existing processor. Streamer
-reuse additionally requires `SFDE_NEXT_RUN_REUSE_ENABLED=true`; AI requests require
+endpoint. The Process VOD workflow defaults to the existing processor. AI requests require
 the validation Worker's separate `SFDE_AI_ENABLED=true` switch.
 
 The new path retains full source frames, bounds neighboring-frame selection, and
@@ -91,13 +89,33 @@ clock cannot supply a pre-fight value. No temporal day reconciliation is perform
 Win counting uses collective row geometry and color quality, not a guarantee that
 every individual box is unobstructed. Unsupported/glowing rows remain unknown.
 
-Reuse requires observed dynamic player-state continuity and the next supported
-day in the same claim/chunk. Inventory or distributed skill textures can persist
-through ordinary gameplay; bounded occlusions require matching returning state.
-Sampling gaps, blackouts and run/day resets invalidate continuity. Inherited hero
-evidence keeps the original pixels/time; backend reference checks fence the root
-and preceding encounter. This cannot prove the absence of indistinguishable edits.
+Each fight makes two independent hero requests when the model service is enabled
+and within its request limit: one
+for the ghost and one for the streamer. Streamer results are never reused across
+fights, regardless of day sequence, run continuity, or chunk boundaries.
 
-Hero probability guards are exploratory, not calibrated accuracy. The known
-overlaid-layout hero error and incomplete all-eight coverage remain broader-rollout
-gates. Passing protocol tests or a bounded canary does not close those gaps.
+Prefer a stable artwork frame when available; otherwise use the selected intro
+frame rather than skipping both hero calls. Record which selection was used.
+
+### Automatic extraction, without profiles
+
+The new path uses automatic nameplate and clock location, not per-streamer crops
+or edge settings. The clock reader searches the left third for the clock rim;
+day, wins, and crown crops are positioned relative to that match. NEXT does not
+pass a profile to the clock reader. Existing legacy profile behavior is separate.
+
+Preserve partial or uncertain OCR text and mark it obstructed. SFDE collects
+observations; backend queries own search filtering. Never reconstruct hidden
+letters. Streamer mode is recorded on the VOD/session from observed masking, not
+assumed to be a permanent streamer property.
+
+The existing publisher bounds display names to 128 UTF-16 units. Oversized OCR
+keeps an observed prefix marked obstructed; the full observation remains in the
+native result artifact. Raw field evidence stays within its 1024-unit bound;
+oversized evidence uses an explicit excerpt with original length/hash rather
+than silently cutting JSON. Ordinary names and evidence retain their exact text.
+
+Hero probability guards are exploratory, not calibrated accuracy. The user
+accepted imperfect hero identification for this slice; known errors and incomplete
+coverage remain documented tuning work rather than delivery blockers. The local
+Paddle/OpenCV clock approach is accepted; model comparisons remain dated research.

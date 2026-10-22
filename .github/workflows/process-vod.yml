@@ -24,7 +24,7 @@ on:
         options: [validation, dev, production]
         default: validation
       sfde_profile:
-        description: Optional saved catalog profile snapshot; differing ad hoc overrides fail claim
+        description: Legacy saved profile snapshot; ignored by SFDE NEXT
         type: string
       local:
         description: Use a prebuilt local image and skip rendition discovery
@@ -67,6 +67,7 @@ jobs:
       INPUT_CHUNKS: ${{ inputs.chunk_uuids }}
       REQUESTED_QUALITY: ${{ inputs.quality }}
       SFDE_PROFILE: ${{ inputs.sfde_profile }}
+      SFDE_NEXT_ENABLED: ${{ inputs.sfde_next && 'true' || 'false' }}
       OLD_TEMPLATES: ${{ inputs.old_templates }}
       LOCAL: ${{ inputs.local }}
     outputs:
@@ -118,8 +119,6 @@ jobs:
       OLD_TEMPLATES: ${{ needs.prepare.outputs.old_templates }}
       ENVIRONMENT: ${{ inputs.environment }}
       SFDE_NEXT_ENABLED: ${{ inputs.sfde_next && 'true' || 'false' }}
-      # Reviewed same-claim reuse is part of the explicitly opted-in validation path.
-      SFDE_NEXT_RUN_REUSE_ENABLED: ${{ inputs.sfde_next && 'true' || 'false' }}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${{ inputs.environment != 'validation' && secrets.GRAFANA_OTLP_ENDPOINT || '' }}
       OTEL_EXPORTER_OTLP_HEADERS: ${{ inputs.environment != 'validation' && format('Authorization=Basic {0}', secrets.GRAFANA_OTLP_AUTH) || '' }}
     steps:
@@ -147,7 +146,7 @@ jobs:
             -v "$PWD/output:/app/output" \
             -e BAZAARGHOST_API_URL -e BAZAARGHOST_PROCESSOR_KEY -e CHUNK_ID -e QUEUED_AT \
             -e QUALITY -e STREAM_QUALITY -e SFDE_PROFILE -e OLD_TEMPLATES \
-            -e ENVIRONMENT -e SFDE_NEXT_ENABLED -e SFDE_NEXT_RUN_REUSE_ENABLED \
+            -e ENVIRONMENT -e SFDE_NEXT_ENABLED \
             -e OTEL_EXPORTER_OTLP_ENDPOINT -e OTEL_EXPORTER_OTLP_HEADERS \
             sfde:dev
       - name: Fail unclaimed chunk
