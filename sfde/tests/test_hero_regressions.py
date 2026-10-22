@@ -3,10 +3,12 @@
 No live inference, OCR, backend access, downloads, or fixture rewriting.
 """
 from collections import Counter
+from datetime import datetime
 import hashlib
 import json
 import math
 from pathlib import Path
+from urllib.parse import urlparse
 
 import numpy as np
 from PIL import Image
@@ -57,11 +59,11 @@ def test_corpus_bounds_and_recording_level_provenance():
     assert MANIFEST['blindHeldout'] is False and MANIFEST['split'] == 'regression'
     assert set(CONTEXTS) == {'m01', 'm05', 'm09', 'm15', 'p01-youtube-dragons-360',
                              'p03-overlay-pygmalien-480', 'p04-drummer-pygmalien-480',
-                             'p06-transition-jules-480'}
+                             'p06-transition-jules-480', 'kripp-intro-2861'}
     assert len(MANIFEST['nameVisibility']) == 5 and len(RESPONSES) == 19
-    assert len(MANIFEST['assets']) == 44
-    assert sum(row['kind'] == 'image' for row in MANIFEST['assets'].values()) == 20
-    assert all(row['hero'] != 'karnok' for row in CONTEXTS.values())
+    assert len(MANIFEST['assets']) == 46
+    assert sum(row['kind'] == 'image' for row in MANIFEST['assets'].values()) == 22
+    assert [row['id'] for row in CONTEXTS.values() if row['hero'] == 'karnok'] == ['kripp-intro-2861']
     partitions = {}
     for row in [*CONTEXTS.values(), *MANIFEST['nameVisibility']]:
         source = row['source']
@@ -86,6 +88,7 @@ def test_corpus_bounds_and_recording_level_provenance():
     assert len({CONTEXTS[id]['partition'] for id in ('m01', 'm05', 'm09', 'm15')}) == 1
     assert all(row['verifiedSkinId'] is None for row in CONTEXTS.values())
     referenced = {p['promptFile'] for p in MANIFEST['protocols'].values()}
+    referenced.update(reference['file'] for reference in MANIFEST['references'].values())
     for row in CONTEXTS.values():
         referenced.add(row['file'])
         for view in row['inputs']:
@@ -95,6 +98,56 @@ def test_corpus_bounds_and_recording_level_provenance():
         context = CONTEXTS[row['contextId']]
         assert row['inputFile'] in {context['file'], *(view['file'] for view in context['inputs'])}
     assert referenced == set(MANIFEST['assets'])
+
+
+def test_scoped_karnok_named_art_adjudication_without_invented_model_evidence():
+    row = CONTEXTS['kripp-intro-2861']
+    reference = MANIFEST['references']['karnok-prize-pass']
+    review = row['labelReview']
+    adjudication = review['adjudication']
+    reference_hash = '3b3c49810c768a091e641d94eb10663e564564ec5b7d33e5ff26cc72cc56f016'
+    frame_hash = 'dd8bae010628af9896e871380b4245e23aac3dd9070c6314e7b35a20274c013c'
+    assert row['hero'] == 'karnok' and row['roleLabels'] == {'ghost': 'karnok', 'streamer': 'karnok'}
+    assert row['stableIntro'] is True and row['identityEligible'] is True
+    assert reference['sha256'] == adjudication['referenceSha256'] == reference_hash
+    assert MANIFEST['assets'][reference['file']]['sha256'] == reference_hash
+    assert MANIFEST['assets'][row['file']]['sha256'] == adjudication['frameSha256'] == frame_hash
+    assert row['skinName'] == reference['skinName'] == 'Talon Talent Karnok'
+    assert reference['labelReadInImage'] == 'Level 40 — DIAMOND SKIN — Talon Talent Karnok'
+    assert urlparse(reference['imageUrl']).hostname == 'i.redd.it'
+    assert urlparse(reference['sourcePageUrl']).hostname == 'www.reddit.com'
+    assert reference['publisherAuthenticated'] is False
+    assert reference['publisherHostedNamedArtObtained'] is False
+    assert reference['sourcePageContentObtained'] is False
+    assert adjudication['publisherAuthenticated'] is False
+    assert adjudication['independentHuman'] is False
+    assert adjudication['inferredFromVideoTitle'] is False
+    assert adjudication['status'] == 'provisional_named_art_match'
+    assert set(adjudication['matchFeatures']) == {
+        'teal hood', 'amber eye', 'brown/metal bird', 'shaggy magenta/teal feathers'}
+    assert review['referenceId'] == 'karnok-prize-pass'
+    assert review['priorLabels']['ghost'] is None and review['priorLabels']['streamer'] is None
+    assert review['sourceLabelsSha256'] == '646882378d7c5a464ad5d0cf93779676c0aa0174cb3f658e7c8ad6f223b8b3a1'
+    assert datetime.fromisoformat(adjudication['recordedAt']) > datetime.fromisoformat(reference['evidenceManifestRecordedAt'])
+    source = row['source']
+    assert (source['recordingId'], source['partId'], source['nominalSeconds']) == ('kDaJyGcC5Ww', None, 2861)
+    assert source['exactSourcePts'] is False and source['sourceCompleteFileSha256'] is None
+    assert source['localDecodedFramePts'] == 1520640
+    assert source['localTimebase'] == '1/15360' and source['localDecodedFrameSeconds'] == 99
+    assert source['acquiredClipSha256'] == '517ceaae454b2062df53e00589af2fd405384ca985810b0503e7d7e9548e4090'
+    assert source['clipRequestedUploadIntervalSeconds'][0] + source['localDecodedFrameSeconds'] == source['nominalSeconds']
+    assert row['inputs'] == [] and row['modelEvaluation']['cachedResponses'] == 0
+    assert not any(response['contextId'] == row['id'] for response in RESPONSES.values())
+    # Folder versus aggregate coverage: Jules remains a transition, not an eighth stable ghost.
+    folder_ids = {context['hero'] for context in CONTEXTS.values()}
+    folder_stable = {context['hero'] for context in CONTEXTS.values() if context['stableIntro']}
+    assert folder_ids == HEROES - {'stelle'}
+    assert folder_stable == HEROES - {'stelle', 'jules'}
+    encounters = json.loads((ROOT.parent / 'encounters' / 'manifest.json').read_text())
+    existing = {canonical(record['labels']['opponentHero']) for record in encounters['records']
+                if record['labels']['expectedScene'] == 'pvp_intro' and record['labels']['opponentHero']}
+    assert folder_ids | existing == HEROES
+    assert folder_stable | existing == HEROES - {'jules'}
 
 
 @pytest.mark.parametrize('file', sorted(MANIFEST['assets']))

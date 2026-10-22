@@ -1,6 +1,6 @@
 # Hero regression corpus v1 (BG-15)
 
-Eight previously reviewed contexts, 20 unchanged image files, 19 unchanged saved
+Nine previously reviewed contexts, 22 unchanged image files, 19 unchanged saved
 responses and five original prompt documents. Five natural name-visibility
 annotations reference existing `../frames/` bytes; no duplicate crops are added.
 `manifest.json` records SHA-256, dimensions, source/time/part/rendition, recording
@@ -8,8 +8,14 @@ partitions, known run bounds, crop parents and AI-provisional review status.
 
 This is **previously seen regression data, not blind heldout or independently
 human-adjudicated truth**. Skins have descriptions, not verified catalog IDs.
-There is no Karnok positive. Ghost Jules is a dissolve, excluded from stable
-identity scoring. No clock or temporal footage is promoted here.
+One **provisional Karnok positive**, YouTube `kDaJyGcC5Ww` ~2861s, labels both
+roles by parent AI visual comparison with named **Talon Talent Karnok** prize-pass
+art. The unchanged reference is community-hosted on `i.redd.it`, **not
+publisher-authenticated**; source URLs, hashes and later scoped adjudication time
+are recorded in the manifest. Earlier unknown-label reports remain unchanged.
+No Karnok model response is available or invented. This folder has seven labeled
+ghost IDs, six stable; together with encounter-corpus Stelle there are eight IDs,
+**seven stable**. Ghost Jules remains a dissolve. No clock/temporal footage is added.
 
 Preserved failures include full-frame Dooley/Mak/wrestling Vanessa → left Stelle,
 original eight-choice m01 Pygmalien → Mak, earlier wrestling Vanessa → unknown,

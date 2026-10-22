@@ -8,11 +8,29 @@
   "reviewPolicy": "AI provisional labels, not independent human adjudication. Hidden names and unsupported identities remain unknown. Skins are descriptive, not verified catalog IDs.",
   "guardPolicy": "Replay parse_hero only for original eight-choice task protocols; experimental/ten-choice protocols remain separate. Guard .60/.30 is exploratory, not calibrated.",
   "gaps": [
-    "No Karnok positive",
+    "Karnok has one scoped provisional named-art positive; community reference is not publisher-authenticated or independent human adjudication",
     "Jules ghost is a dissolve, not a stable eligible positive",
     "Known overlaid Pygmalien-to-Mak error still passes current guard",
     "No fresh heldout or runtime accuracy claim; no clock/temporal promotion"
   ],
+  "references": {
+    "karnok-prize-pass": {
+      "file": "references/prize-pass-reference.png",
+      "sha256": "3b3c49810c768a091e641d94eb10663e564564ec5b7d33e5ff26cc72cc56f016",
+      "imageUrl": "https://i.redd.it/u4stbw195fsg1.png",
+      "sourcePageUrl": "https://www.reddit.com/r/PlayTheBazaar/comments/1s8uqk7/do_you_think_ill_make_it/",
+      "sourcePageContentObtained": false,
+      "labelReadInImage": "Level 40 — DIAMOND SKIN — Talon Talent Karnok",
+      "skinName": "Talon Talent Karnok",
+      "attribution": "Community-hosted, user-posted in-game prize-pass screenshot; i.redd.it. Individual uploader unverified. Underlying game/art: The Bazaar / Tempo.",
+      "publisherAuthenticated": false,
+      "publisherHostedNamedArtObtained": false,
+      "rights": "Research/reference only; no permissive artwork license or redistribution rights verified.",
+      "downloadedAt": "2026-10-22T02:15:36.897796+00:00",
+      "evidenceManifestRecordedAt": "2026-10-22T02:20:26.433630+00:00",
+      "evidenceManifestSha256": "c4bdd182c48f81aab0d4c9c549a51c03032b5e2e742e929d5ae6d3ec5a77c55e"
+    }
+  },
   "assets": {
     "prompts/full-ten.json": {
       "file": "prompts/full-ten.json",
@@ -445,6 +463,24 @@
       "kind": "json",
       "originalSha256": "670f72a80f39334245946bf5ac07fd1880c4d2412f7ce533c7a596e2396c012b",
       "transformation": "none; byte-identical copy"
+    },
+    "images/kripp-intro-2861-full.jpg": {
+      "file": "images/kripp-intro-2861-full.jpg",
+      "sha256": "dd8bae010628af9896e871380b4245e23aac3dd9070c6314e7b35a20274c013c",
+      "bytes": 90671,
+      "kind": "image",
+      "originalSha256": "dd8bae010628af9896e871380b4245e23aac3dd9070c6314e7b35a20274c013c",
+      "transformation": "none; byte-identical copy",
+      "dimensions": [854, 480]
+    },
+    "references/prize-pass-reference.png": {
+      "file": "references/prize-pass-reference.png",
+      "sha256": "3b3c49810c768a091e641d94eb10663e564564ec5b7d33e5ff26cc72cc56f016",
+      "bytes": 3270306,
+      "kind": "image",
+      "originalSha256": "3b3c49810c768a091e641d94eb10663e564564ec5b7d33e5ff26cc72cc56f016",
+      "transformation": "none; byte-identical copy",
+      "dimensions": [2626, 1756]
     }
   },
   "protocols": {
@@ -892,6 +928,65 @@
           "resize": "none; native no-upscale"
         }
       ]
+    },
+    {
+      "id": "kripp-intro-2861",
+      "file": "images/kripp-intro-2861-full.jpg",
+      "hero": "karnok",
+      "side": "ghost",
+      "roleLabels": {"ghost": "karnok", "streamer": "karnok"},
+      "stableIntro": true,
+      "identityEligible": true,
+      "skinDescription": "Talon Talent Karnok: teal hood, amber eye, brown/metal bird and shaggy magenta/teal feathers match the named prize-pass reward art on both intro sides.",
+      "skinName": "Talon Talent Karnok",
+      "verifiedSkinId": null,
+      "source": {
+        "platform": "youtube",
+        "recordingId": "kDaJyGcC5Ww",
+        "partId": null,
+        "publicUrl": "https://www.youtube.com/watch?v=kDaJyGcC5Ww",
+        "nominalSeconds": 2861,
+        "exactSourcePts": false,
+        "timeBasis": "upload_seconds",
+        "rendition": "135; native854x480/30fps; video-only re-encoded at same spatial resolution",
+        "sourceCompleteFileSha256": null,
+        "acquiredClipSha256": "517ceaae454b2062df53e00589af2fd405384ca985810b0503e7d7e9548e4090",
+        "clipRequestedUploadIntervalSeconds": [2762, 2942],
+        "localDecodedFramePts": 1520640,
+        "localDecodedFrameSeconds": 99,
+        "localTimebase": "1/15360",
+        "mapping": "Exact decoded local PTS; nominal upload offset after seeking/re-encoding, not exact original source or Twitch PTS.",
+        "sourceManifestSha256": "1a3acf58abf46bf89e6c52b0c01bffb431024030e7b0b49f7575e5d85a30e3c0",
+        "surveyManifestSha256": "be90fc4177d029c785ed6291eefff8560ca92ee69b0f67fa7f73aa9442a2e0f2"
+      },
+      "recordingGroup": "youtube:kDaJyGcC5Ww",
+      "partition": "regression:youtube:kDaJyGcC5Ww",
+      "run": null,
+      "labelReview": {
+        "method": "AI parent direct visual review of the cached full intro and named prize-pass art; scoped provisional identity adjudication, not independent human review or measured accuracy",
+        "independentHuman": false,
+        "sourceLabelsSha256": "646882378d7c5a464ad5d0cf93779676c0aa0174cb3f658e7c8ad6f223b8b3a1",
+        "referenceId": "karnok-prize-pass",
+        "priorLabels": {
+          "ghost": null,
+          "streamer": null,
+          "status": "Earlier unknown labels/reports remain immutable; only this later versioned fixture receives the approved adjudication. No other frame is relabeled."
+        },
+        "adjudication": {
+          "recordedAt": "2026-10-22T02:23:57.163614+00:00",
+          "timestampBasis": "Recorded after parent approval; exact visual-review instant was not recorded.",
+          "scope": "kripp-intro-2861 only, both ghost and streamer roles",
+          "status": "provisional_named_art_match",
+          "referenceSha256": "3b3c49810c768a091e641d94eb10663e564564ec5b7d33e5ff26cc72cc56f016",
+          "frameSha256": "dd8bae010628af9896e871380b4245e23aac3dd9070c6314e7b35a20274c013c",
+          "matchFeatures": ["teal hood", "amber eye", "brown/metal bird", "shaggy magenta/teal feathers"],
+          "publisherAuthenticated": false,
+          "inferredFromVideoTitle": false,
+          "independentHuman": false
+        }
+      },
+      "modelEvaluation": {"cachedResponses": 0, "status": "not_evaluated; no hero response invented"},
+      "inputs": []
     }
   ],
   "responses": [
