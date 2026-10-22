@@ -76,3 +76,28 @@ saved screenshots, public field evidence, unknown names, and retry identity. Kee
 the canary result separate from corpus accuracy. Broader validation processing
 starts after review of canary correctness and account usage. Production remains
 on the existing `main` / Supabase system.
+
+## Opt-in processor contract
+
+`SFDE_NEXT_ENABLED=true` requires an explicit validation/local environment and
+endpoint. The Process VOD workflow defaults to the existing processor. Streamer
+reuse additionally requires `SFDE_NEXT_RUN_REUSE_ENABLED=true`; AI requests require
+the validation Worker's separate `SFDE_AI_ENABLED=true` switch.
+
+The new path retains full source frames, bounds neighboring-frame selection, and
+publishes nullable names with independent field evidence. Clock values come from
+owned pre-intro sources with a verified introduction anchor; a later result-screen
+clock cannot supply a pre-fight value. No temporal day reconciliation is performed.
+Win counting uses collective row geometry and color quality, not a guarantee that
+every individual box is unobstructed. Unsupported/glowing rows remain unknown.
+
+Reuse requires observed dynamic player-state continuity and the next supported
+day in the same claim/chunk. Inventory or distributed skill textures can persist
+through ordinary gameplay; bounded occlusions require matching returning state.
+Sampling gaps, blackouts and run/day resets invalidate continuity. Inherited hero
+evidence keeps the original pixels/time; backend reference checks fence the root
+and preceding encounter. This cannot prove the absence of indistinguishable edits.
+
+Hero probability guards are exploratory, not calibrated accuracy. The known
+overlaid-layout hero error and incomplete all-eight coverage remain broader-rollout
+gates. Passing protocol tests or a bounded canary does not close those gaps.
