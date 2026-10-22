@@ -73,9 +73,8 @@ def test_integer_rounded_catalog_end_keeps_supported_final_partial_sample():
 
 @pytest.mark.parametrize('source_pts,match', [
     (list(range(40)), 'tail reaches'),  # A whole missing tail interval for a 6s request.
-    ([*range(20), *range(40, 60)], 'gap reaches'),
     ([*range(20), 18, *range(20, 60)], 'do not advance'),
-    (list(range(2, 60)), 'opening frame'),
+    (list(range(20, 60)), 'opening frame'),
 ])
 def test_synthetic_sample_grid_cannot_hide_source_loss(source_pts, match):
     with pytest.raises(RuntimeError, match=match):
@@ -97,13 +96,37 @@ def test_duplicate_source_instant_does_not_discard_valid_coverage_or_inflate_it(
     assert summary['last_source_frame_seconds'] == 3.9
 
 
+@pytest.mark.parametrize('held_duration,gaps', [(20, 0), (1, 1), (0, 1)])
+def test_recorded_gaps_are_reported_while_declared_held_frames_are_covered(held_duration, gaps):
+    # Actual validation source: frame at 390s declares 2s duration, next at 392s.
+    # Model it after an 8s decode lead, before setpts can erase frame durations.
+    logs = config('bg_source') + config('bg_sample', '2/1', '1/2')
+    logs += frame('bg_source', 0, 80).replace(' fmt:', f' duration: {held_duration} duration_time:0 fmt:')
+    logs += ''.join(frame('bg_source', n+1, pts) for n, pts in enumerate(range(100, 120)))
+    logs += frame('bg_sample', 0, 0) + frame('bg_sample', 1, 1)
+    timeline = SourceTimeline(4, 2, start_offset=8)
+    output = timestamped_frames(io.BytesIO(JPEG*2), io.BytesIO(logs.encode()),
+                                logging.getLogger('test'), source_timeline=timeline)
+    assert [pts for _, pts in output] == [0, 2]
+    assert timeline.summary(3600)['first_source_frame_seconds'] == 3600
+    assert timeline.summary(3600)['last_source_frame_seconds'] == 3603.9
+    assert timeline.summary(3600)['max_source_gap_seconds'] == 2
+    assert timeline.summary(3600)['source_gap_count'] == gaps
+
+
+def test_vfr_seek_variation_uses_sampling_cadence_without_rebasing_source_time():
+    frames,timeline = decode(diagnostics(range(49,4000,33),base='1/1000',rate='30/1'),2)
+    assert [pts for _,pts in frames] == [0,2]
+    assert timeline.summary(1800)['first_source_frame_seconds'] == 1800.049
+
+
 def test_repeated_source_instant_cannot_cover_a_missing_tail():
     with pytest.raises(RuntimeError, match='final sampling tick'):
         decode(diagnostics([*range(10), *([9] * 100)], (0, 1)), 2)
 
 
 @pytest.mark.parametrize('records,match', [
-    (config('bg_source') + frame('bg_source', 0, 0) + frame('bg_source', 1, 20), 'gap reaches'),
+    (config('bg_source') + frame('bg_source', 0, 0) + frame('bg_source', 1, -1), 'do not advance'),
     (config('bg_source') + frame('bg_source', 0, 0) + frame('bg_source', 2, 1), 'sequence'),
     (config('bg_source', rate='0/0'), 'timing metadata'),
 ])
@@ -207,7 +230,7 @@ def test_source_aggregates_remain_constant_space_for_a_long_timeline():
 
 @pytest.mark.skipif(shutil.which('ffmpeg') is None, reason='FFmpeg is required')
 @pytest.mark.parametrize('drop_source_frames', [False, True])
-def test_real_ffmpeg_named_diagnostics_reject_a_gap_before_fps_can_fill_it(drop_source_frames):
+def test_real_ffmpeg_reports_a_source_gap_even_when_fps_fills_the_grid(drop_source_frames):
     filters = 'select=not(between(t\\,4\\,5.9)),' if drop_source_frames else ''
     filters += 'showinfo@bg_source=checksum=0,fps=0.5:eof_action=pass,showinfo@bg_sample=checksum=0'
     proc = subprocess.Popen([
@@ -218,13 +241,10 @@ def test_real_ffmpeg_named_diagnostics_reject_a_gap_before_fps_can_fill_it(drop_
     timeline = SourceTimeline(8, 2)
     try:
         frames = timestamped_frames(proc.stdout, proc.stderr, logging.getLogger('test'), source_timeline=timeline)
-        if drop_source_frames:
-            with pytest.raises(RuntimeError, match='gap reaches'):
-                list(frames)
-        else:
-            assert [pts for _, pts in frames] == [0, 2, 4, 6]
-            assert timeline.summary(0)['source_frames'] == 80
-            assert proc.wait(timeout=10) == 0
+        assert [pts for _, pts in frames] == [0, 2, 4, 6]
+        assert timeline.summary(0)['source_frames'] == (60 if drop_source_frames else 80)
+        assert timeline.summary(0)['source_gap_count'] == int(drop_source_frames)
+        assert proc.wait(timeout=10) == 0
     finally:
         if proc.poll() is None:
             proc.kill()

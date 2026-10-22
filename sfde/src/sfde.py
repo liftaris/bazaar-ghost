@@ -676,12 +676,17 @@ class SFDEProcessor:
         # decoder can splice a multi-part warning into a showinfo record,
         # losing its filter prefix. Keep decoding on one thread and disable
         # progress output rather than accepting unattributed timestamps.
+        # HLS seeks can land on the next keyframe, even with accurate_seek.
+        # Decode a bounded lead then trim on decoded timestamps. Direct seeks
+        # at the owned boundary lost up to ~2s on real validation recordings.
+        decode_start = max(0, start_time - 8)
+        seek_lead = start_time - decode_start
         cmd = ['ffmpeg', '-nostdin', '-nostats', '-hide_banner', '-loglevel', 'info',
                '-threads', '1',
-               '-t', str(end_time - start_time)]
+               '-t', str(end_time - decode_start)]
         # Read the opening chunk directly. FFmpeg 5's HLS input seek at zero
         # can skip opening frames when the transport timestamp origin is nonzero.
-        seek = ['-ss', str(start_time)] if start_time > 0 else []
+        seek = ['-ss', str(decode_start)] if decode_start > 0 else []
         if self.test_mode:
             directory = self.config['test_mode']['data_directory']
             if not os.path.isabs(directory):
@@ -699,7 +704,10 @@ class SFDEProcessor:
         width, height = QUALITY_RESOLUTIONS[self.quality]
         w, h, x, y = self._combined_crop
         geometry = '' if self.next_enabled else f'scale={width}:{height},crop={w}:{h}:{x}:{y}:exact=1,'
-        filters = (f'showinfo@bg_source=checksum=0,fps={self.config["processing"]["frame_rate"]}:eof_action=pass,'
+        trim = f'trim=start={seek_lead},' if seek_lead else ''
+        shift = f'setpts=PTS-{seek_lead}/TB,' if seek_lead else ''
+        filters = (trim + 'showinfo@bg_source=checksum=0,' + shift
+                   + f'fps={self.config["processing"]["frame_rate"]}:eof_action=pass,'
                    + geometry + 'showinfo@bg_sample=checksum=0')
         cmd += [
             '-map', '0:v:0', '-an', '-vf', filters,
@@ -718,7 +726,7 @@ class SFDEProcessor:
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
         interval = 1 / self.config['processing']['frame_rate']
-        source_timeline = SourceTimeline(end_time - start_time, interval)
+        source_timeline = SourceTimeline(end_time - start_time, interval, start_offset=seek_lead)
         tolerance = max(0.001, interval * 1e-6)
         sample_count, first_pts, last_pts = 0, None, None
         diagnostics = []
@@ -792,7 +800,9 @@ class SFDEProcessor:
             'sampled_frames': sample_count,
             'minimum_expected_frames': minimum_samples,
             'requested_expected_frames': requested_samples,
-            'completion_reason': 'verified_video_eof' if endpoint else 'requested_range',
+            'completion_reason': ('verified_video_eof' if endpoint else
+                                  'requested_range_with_source_gaps' if source_timeline.source_gap_count else
+                                  'requested_range'),
             'video_endpoint': endpoint,
             'effective_video_end_seconds': start_time + duration,
             'unobserved_catalog_tail_seconds': end_time - start_time - duration,
@@ -806,6 +816,10 @@ class SFDEProcessor:
             self.preroll_coverage = coverage
         else:
             self.decode_coverage = coverage
+        if source_timeline.source_gap_count:
+            self.logger.warning('Source recording has timestamp gaps; processing usable footage',
+                                extra={'source_gap_count': source_timeline.source_gap_count,
+                                       'max_source_gap_seconds': float(source_timeline.max_gap)})
         self.logger.info('decode_coverage_verified', extra={
             'event': 'decode_coverage_verified', 'preroll': preroll, **coverage,
         })

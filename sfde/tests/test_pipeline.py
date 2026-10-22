@@ -148,6 +148,7 @@ def test_clean_early_eof_cannot_complete_requested_range(processor, monkeypatch,
 @pytest.mark.parametrize('duration,start,end,rate', [
     (8,0,8,0.5), (12,5,9,0.5), (7,0,7,0.5),
     (7,6,7,0.5), (11,5,11,0.5), (7,0,7,1), (7,0,7,0.2),
+    (20,13,19,0.5),
 ])
 def test_real_decode_covers_bounded_and_final_ranges(processor, monkeypatch, tmp_path, duration, start, end, rate):
     video = tmp_path / 'complete.mp4'
@@ -326,7 +327,7 @@ def test_hls_transport_origin_does_not_shift_vod_frames(processor, monkeypatch, 
     assert processor.decode_coverage['last_sample_seconds'] == ticks[-1]
 
 
-def test_source_gap_cannot_be_hidden_by_fps_repeated_frames(processor, monkeypatch, tmp_path):
+def test_source_gap_is_reported_without_losing_the_rest_of_the_chunk(processor, monkeypatch, tmp_path):
     video = tmp_path / 'gap.mkv'
     subprocess.run([
         'ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error',
@@ -336,9 +337,11 @@ def test_source_gap_cannot_be_hidden_by_fps_repeated_frames(processor, monkeypat
     ], check=True, timeout=30)
     monkeypatch.setenv('TEST_VIDEO', str(video))
     processor.end_time = 8
-    with pytest.raises(RuntimeError, match='source coverage: gap'):
-        processor.process_vod_chunk()
-    assert processor.backend.update_chunk.call_args.args[1] == 'failed'
+    result = processor.process_vod_chunk()
+    assert result['status'] == 'completed'
+    assert result['decode_coverage']['source_gap_count'] == 1
+    assert result['decode_coverage']['completion_reason'] == 'requested_range_with_source_gaps'
+    assert result['decode_coverage']['max_source_gap_seconds'] == pytest.approx(2.1)
 
 
 def test_missing_initial_video_is_not_rebased_to_zero(processor, monkeypatch, tmp_path):

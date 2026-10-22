@@ -1,5 +1,45 @@
 # NEXT processing time and encounter scheduling
 
+## 2026-10-22: chunk-boundary failures and recorded freezes
+
+A read-only validation snapshot contained 44 contemporary failed chunks across
+17 VODs/11 streamers: 41 rejected opening timestamps and three rejected a
+two-second interval between source frames. Historical preparation failures were
+excluded. Examples explain why neighbouring chunks of the same VOD differed:
+
+- Yosi14jp `2906665850`: opening chunk completed; all six later chunks failed.
+- Christofermorn `2907000824`: opening chunk completed; three later chunks failed.
+- The_moistbread `2907124267`: only the chunk containing the source freeze failed.
+
+Direct HLS input seeks can begin at the next keyframe. At Yosi's 3600s boundary,
+the original command began at 3600.991333s. Decoding eight seconds earlier and
+trimming on decoded timestamps recovered the opening frame at 3600.025333s.
+The decoder now uses this bounded seek lead, preserving the requested timeline
+rather than rebasing the first available frame to zero. The existing pre-intro
+buffer remains separate from chunk ownership.
+
+The old opening assertion allowed only one nominal 30/60fps source frame. Actual
+VFR boundaries also showed harmless 32–50ms variation. Opening support now uses
+the nearest-frame sampling cadence; the sampled timestamp grid remains checked.
+
+The_moistbread and Rahresh's two-second intervals were explicitly declared held
+frames, not missing video. Source timing now reads frame duration before setpts
+can erase it. Merimides had a real two-second source gap. Per the user's decision,
+gaps in the recording are reported without failing/retrying the entire chunk:
+`source_gap_count`, `max_source_gap_seconds`, and
+`completion_reason=requested_range_with_source_gaps` identify this output.
+Decoder errors, invalid/nonmonotonic timestamps and unsupported premature EOF
+still fail. FPS may repeat a source frame over a recorded freeze, as playback does.
+
+Validation: all 44 exact failure locations passed read-only source replays,
+including the separate pre-intro ranges. Three full formerly failing 30-minute
+chunks (Yosi, Christofer, Moistbread) produced all 900 expected samples each.
+These were decoder-only checks, with no backend mutations or paid requests.
+The complete offline suite passed 810 tests with one opt-in skip.
+
+Detailed logs, source timing, initial failures and replay manifests are retained
+under `.ignore/sfde-next/failure-name-investigation/`.
+
 ## 2026-10-22: readable clocks after the intro
 
 The user confirmed that clock readings during the associated fight are useful;

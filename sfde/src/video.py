@@ -18,6 +18,7 @@ CONTEXT_ADDRESS = re.compile(r' @ 0x[0-9a-f]+\]')
 NAMED_FILTER = re.compile(r'^\[showinfo@(bg_source|bg_sample)\s+@[^\]]+\]\s*(.*)$')
 CONFIG_PATTERN = re.compile(r'^config in time_base:\s*(\d+)/(\d+),\s*frame_rate:\s*(\d+)/(\d+)\s*$')
 FRAME_PATTERN = re.compile(r'^n:\s*(\d+)\s+pts:\s*(-?\d+)\s+pts_time:')
+DURATION_PATTERN = re.compile(r'\bduration:\s*(\d+)\s')
 MAX_DIAGNOSTIC_LINE = 16_384
 MAX_PENDING_TIMESTAMPS = 32
 
@@ -31,19 +32,22 @@ class SourceTimeline:
     claim continuous coverage through an integer-rounded catalog duration.
     """
 
-    def __init__(self, duration: float, sample_interval: float):
+    def __init__(self, duration: float, sample_interval: float, *, start_offset: float = 0):
         for value in (duration, sample_interval):
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
                 raise ValueError('Positive finite source duration and sample interval required')
         self.duration = Fraction(str(duration))
         self.sample_interval = Fraction(str(sample_interval))
+        self.start_offset = Fraction(str(start_offset))
         self.time_base = None
         self.frame_interval = None
         self.count = 0
         self.duplicate_frames = 0
         self.first_pts = None
         self.last_pts = None
+        self.last_duration = Fraction(0)
         self.max_gap = Fraction(0)
+        self.source_gap_count = 0
 
     def configure(self, time_base: Fraction, frame_rate: Fraction) -> None:
         if time_base <= 0 or frame_rate <= 0:
@@ -53,11 +57,16 @@ class SourceTimeline:
             raise ValueError('Decoded source timing changed during the chunk')
         self.time_base, self.frame_interval = time_base, frame_interval
 
-    def observe(self, pts: int) -> None:
+    def observe(self, pts: int, duration: int = 0) -> None:
         if self.time_base is None:
             raise ValueError('Decoded source frame has no timing metadata')
+        # Source showinfo runs before setpts so FFmpeg's declared frame duration
+        # survives. Subtract the explicit seek lead, never the first frame PTS.
+        pts = pts - self.start_offset / self.time_base
         timestamp = pts * self.time_base
-        tolerance = math.ceil(self.frame_interval / self.time_base) * self.time_base
+        # FPS samples the nearest source instant. Real VFR boundaries can be
+        # 32–50ms from the requested tick despite a nominal 30/60fps rate.
+        tolerance = self.sample_interval / 2
         if self.last_pts is None:
             if timestamp < -self.time_base or timestamp > tolerance:
                 raise RuntimeError(f'Incomplete source coverage: opening frame at {float(timestamp):.6f}s '
@@ -75,10 +84,14 @@ class SourceTimeline:
                 self.duplicate_frames += 1
                 return
             self.max_gap = max(self.max_gap, gap)
-            if gap >= self.sample_interval:
-                raise RuntimeError(f'Incomplete source coverage: gap reaches a sampling interval '
-                                   f'({float(gap):.6f}s ending at {float(timestamp):.6f}s)')
+            # VFR recordings can explicitly hold a frame for a whole sampling
+            # interval. That is source coverage, not FPS inventing missing video.
+            if gap >= self.sample_interval and gap > self.last_duration:
+                # A gap present in the recording cannot be repaired by retrying
+                # the chunk. Process its usable footage and report the gap.
+                self.source_gap_count += 1
         self.last_pts = pts
+        self.last_duration = duration * self.time_base
         self.count += 1
 
     def validate(self, *, duration=None) -> None:
@@ -109,6 +122,7 @@ class SourceTimeline:
             'first_source_frame_seconds': start_seconds + float(first) if first is not None else None,
             'last_source_frame_seconds': start_seconds + float(last) if last is not None else None,
             'max_source_gap_seconds': float(self.max_gap),
+            'source_gap_count': self.source_gap_count,
             'source_frame_interval_seconds': float(self.frame_interval) if self.frame_interval is not None else None,
             'source_timestamp_quantum_seconds': float(self.time_base) if self.time_base is not None else None,
             'tail_unobserved_seconds': float(max(Fraction(0), self.duration - last)) if last is not None else float(self.duration),
@@ -214,7 +228,8 @@ def timestamped_frames(stdout: BinaryIO, stderr: BinaryIO, logger: logging.Logge
                             sequence[name] += 1
                             if name == 'bg_source':
                                 if source_timeline is not None:
-                                    source_timeline.observe(pts)
+                                    duration = DURATION_PATTERN.search(body)
+                                    source_timeline.observe(pts, int(duration[1]) if duration else 0)
                             else:
                                 put(float(pts * timing[name]))
                     elif source_timeline is None and (match := PTS_PATTERN.search(line)):
