@@ -210,7 +210,7 @@ def test_preroll_owns_intro_and_retry_identity_ignores_chunk_or_best_frame():
     assert again.flush()[0]['id'] == result[0]['id']
 
 
-def test_clock_has_independent_three_read_evidence_and_keeps_zero_false():
+def test_clock_keeps_first_readable_evidence_and_zero_false():
     p = pipeline([LOCATION, None, None, None], clocks=[clock(visible=False), clock(), clock(), clock()])
     for at_ms in (1250, 3250, 5250, 7250):
         p.consume(image(), at_ms)
@@ -219,9 +219,8 @@ def test_clock_has_independent_three_read_evidence_and_keeps_zero_false():
     assert result['field_evidence']['username']['at_ms'] == 1250
     for field in ('igd', 'wins_remaining', 'lethal'):
         evidence = result['field_evidence'][field]
-        assert evidence['at_ms'] == 7250 and evidence['phase'] == 'pre_fight'
-        assert [s['at_ms'] for s in evidence['samples']] == [3250, 5250, 7250]
-    assert result['_images'][7250]['kind'] == 'clock'
+        assert evidence['at_ms'] == 3250 and evidence['phase'] == 'pre_fight'
+    assert result['_images'][3250]['kind'] == 'clock'
 
 
 def test_one_clock_field_failure_cannot_erase_other_fields():
@@ -234,25 +233,42 @@ def test_one_clock_field_failure_cannot_erase_other_fields():
     assert result['_clock_fallback_ms'] == 6000
 
 
-def test_counter_change_before_consensus_cannot_leak_post_result_values():
+def test_later_counter_change_does_not_replace_first_reading():
     readings = [clock(visible=False),clock(wins=1),clock(wins=0),clock(wins=0),clock(wins=0)]
     p = pipeline([LOCATION]+[None]*4,clocks=readings)
     for index in range(5):
         p.consume(image(),index*2000)
     result = p.flush()[0]
-    assert result['wins_remaining'] is None and result['igd'] is None
+    assert result['wins_remaining'] == 1 and result['igd'] == 8
+    assert result['field_evidence']['wins_remaining']['at_ms'] == 2000
     assert '_clock_fallback_ms' not in result
 
 
-def test_unphased_post_intro_clock_cannot_be_promoted_to_prefight_even_if_stable():
-    # ClockReader's real interface has no phase. Stability is not phase proof.
-    p = pipeline([LOCATION,None,None,None],clocks=[clock(visible=False)]+[clock(phase=None)]*3)
-    for at_ms in (0,2000,4000,6000):
+def test_real_reader_without_phase_accepts_single_combat_clock_reading():
+    # ClockReader's real interface has no phase; readable combat values count.
+    observation = clock()
+    observation.pop('phase')
+    p = pipeline([LOCATION, None], clocks=[clock(visible=False), observation])
+    for at_ms in (0, 2000):
         p.consume(image(),at_ms)
     result = p.flush()[0]
-    assert all(result[field] is None for field in ('igd','wins_remaining','lethal'))
+    assert (result['igd'], result['wins_remaining'], result['lethal']) == (8, 0, False)
     assert '_clock_fallback_ms' not in result
     assert result['field_evidence']['wins_remaining']['phase'] == 'unknown'
+    assert result['field_evidence']['igd']['at_ms'] == 2000
+
+
+def test_combat_clock_can_fill_a_field_missing_from_pre_intro_evidence():
+    before = clock(day=None, wins=4, phase=None)
+    after = clock(day=8, wins=4, phase=None)
+    p = pipeline([None, None, LOCATION, None],
+                 clocks=[before, before, clock(visible=False), after])
+    for at_ms in (0, 2000, 4000, 6000):
+        p.consume(image(), at_ms)
+    result = p.flush()[0]
+    assert result['igd'] == 8 and result['wins_remaining'] == 4
+    assert result['field_evidence']['igd']['at_ms'] == 6000
+    assert result['field_evidence']['wins_remaining']['at_ms'] == 2000
 
 
 def test_owned_pre_intro_context_proves_clock_phase_at_its_true_time():
@@ -316,7 +332,6 @@ def test_invalid_or_oversized_sample_fails_without_inventing_evidence():
 
 
 @pytest.mark.parametrize('observations', [
-    [clock(visible=False), clock(), clock(), clock(visible=False), clock(), clock(), clock()],
     [clock(visible=False)]*6 + [clock(), clock(), clock()],
     [clock(visible=False), clock(phase='post_fight'), clock(), clock(), clock()],
 ])
@@ -529,8 +544,7 @@ def test_new_retry_uploads_ms_sources_and_preserves_exact_payload_identity(monke
     assert 'timestamp_ms=4000&kind=intro' in record['storage_path']
     assert record['field_evidence']['encounter']['image_path'] == record['storage_path']
     assert 'timestamp_ms=2000&kind=intro' in record['field_evidence']['rank']['image_path']
-    assert 'timestamp_ms=10000&kind=clock' in record['field_evidence']['igd']['image_path']
-    assert all('image_path' in row for row in record['field_evidence']['igd']['samples'])
+    assert 'timestamp_ms=6000&kind=clock' in record['field_evidence']['igd']['image_path']
     assert uploads[:len(uploads)//2] == uploads[len(uploads)//2:]
 
 
@@ -848,14 +862,14 @@ def test_two_sided_transition_proof_rejects_one_sided_stale_scene_then_cut():
     assert ObservedRun.bridge_proof(a,[scene(3).astype(np.float32)],b) is None
 
 
-def test_unknown_phase_evidence_does_not_block_later_explicit_valid_consensus():
+def test_later_phase_label_does_not_relabel_an_earlier_clock_reading():
     p = pipeline([LOCATION]+[None]*4,clocks=[clock(visible=False),clock(phase=None)]+[clock()]*3)
     for i in range(5):
         p.consume(image(),i*2000)
     result = p.flush()[0]
     assert result['igd'] == 8 and result['wins_remaining'] == 0 and result['lethal'] is False
-    assert result['field_evidence']['igd']['phase'] == 'pre_fight'
-    assert [r['at_ms'] for r in result['field_evidence']['igd']['samples']] == [4000,6000,8000]
+    assert result['field_evidence']['igd']['phase'] == 'unknown'
+    assert result['field_evidence']['igd']['at_ms'] == 2000
 
 
 def test_single_quality_owned_preintro_field_independent_of_other_unknown_fields():

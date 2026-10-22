@@ -1,5 +1,26 @@
 # NEXT processing time and encounter scheduling
 
+## 2026-10-22: readable clocks after the intro
+
+The user confirmed that clock readings during the associated fight are useful;
+day does not require pre-fight phase proof. The normal single-frame ClockReader
+does not classify phase, so requiring `phase=pre_fight` had discarded readable
+combat values. Twelve reviewed saved pictures showed battle reveal/combat, not
+reward/shop screens, with visually consistent day readings.
+
+The selector now keeps the first valid local reading of each missing clock
+field within its existing encounter window. It records the original picture,
+region, reading method and value, and retains `phase=unknown` when the reader
+has not classified phase. It does not relabel combat evidence as pre-fight,
+require three repeating reads, or introduce additional clock-model requests.
+Existing accepted values are retained. Pre-intro selection remains available.
+
+Local verification: 800 tests passed, one opt-in test skipped. A source-overlay
+cached-video smoke test with real FFmpeg/CV/PaddleOCR retained the same two
+encounters and four independent hero requests, taking 7.67s processor wall time.
+HTTP/model responses were mocked; no paid requests were made. Detailed evidence
+and the captured-image recovery audit live in `.ignore/sfde-next/clock-recovery/`.
+
 ## 2026-10-22: measured cooldown
 
 Read-only analysis of 24 successful production (`main`) workflow runs yielded

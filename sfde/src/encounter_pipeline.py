@@ -89,8 +89,6 @@ class EncounterPipeline:
         if event.get('_clock_fallback_ms') is not None:
             references.add(event['_clock_fallback_ms'])
             references.update(s['at_ms'] for s in event.get('_clock_fallback_samples', []))
-        for readings in event['_clock_reads'].values():
-            references.update(row[1]['at_ms'] for row in readings)
         references.update(s['at_ms'] for s in event['_visible_clock_reads'])
         for e in event['field_evidence'].values():
             references.update(s['at_ms'] for s in e.get('samples', []))
@@ -118,9 +116,8 @@ class EncounterPipeline:
             '_images': {}, '_intro_ms': at_ms, '_intro_reads': 0, '_last_intro_ms': at_ms,
             '_hero_ms': None, '_hero_previous': None, '_hero_quality': None, '_hero_seen': 0,
             '_name_quality': (-1, -1.), '_rank_score': -1.,
-            '_clock_reads': {f: deque(maxlen=3) for f in FIELDS},
             '_visible_clock_reads': deque(maxlen=3),
-            '_clock_initial_values': {}, '_first_clock_ms': None,
+            '_first_clock_ms': None,
             '_clock_started': False, '_clock_closed': False, '_epoch': self.continuity_epoch,
             '_continuity_ambiguous': not self.run_observation.intro_supported,
         }
@@ -182,7 +179,6 @@ class EncounterPipeline:
             if len(supported) == 1 and (quality is None or quality < .90):
                 continue
             event[field] = obs[field]
-            event['_clock_initial_values'][field] = obs[field]
             method = str(info.get('method','local-clock'))[:128]
             event['field_evidence'][field] = self._evidence(selected,info['region'],method,'pre_fight',
                 'owned_pre_intro_field;verified_intro_phase_anchor;'+('repeated_agreement' if len(supported)>1 else 'single_quality_ge_090'),
@@ -285,8 +281,6 @@ class EncounterPipeline:
             event['_clock_closed'] = True
             return
         if not visible:
-            for readings in event['_clock_reads'].values():
-                readings.clear()
             event['_visible_clock_reads'].clear()
             if event['_clock_started']:
                 event['_clock_closed'] = True
@@ -306,43 +300,18 @@ class EncounterPipeline:
             return
         if len(event['_images']) >= 15 and source['at_ms'] not in event['_images']:
             return  # Bound optional evidence retention, never discard an encounter.
-        if observation.get('phase') != 'pre_fight':
-            # The single-frame reader deliberately does not claim phase. Do not
-            # turn a stable *post-result* clock into fresh pre-fight observations.
-            # A preceding pre-intro proof already carries any accepted values.
-            if not event.get('_prefight_proven'):
-                infos = observation.get('evidence', {})
-                infos = infos if isinstance(infos,dict) else {}
-                for field in FIELDS:
-                    if valid_field(field,event[field]):
-                        continue
-                    info = infos.get(field,{})
-                    if isinstance(info,dict) and self._valid_region(info.get('region'),source):
-                        self._remember(source)
-                        event['field_evidence'][field] = self._evidence(source,info['region'],
-                            'local-clock-phase-unknown','unknown','visible_clock_without_prefight_phase_proof',
-                            raw_text=json.dumps({'observed_value':observation.get(field)},default=str)[:1024])
-                self._prune()
-            return
-        # A changed accepted counter indicates a later state, not missing intro
-        # evidence. Never fill another field from this post-fight transition.
-        for field in FIELDS:
-            value = observation.get(field)
-            if not valid_field(field, value):
-                continue
-            if field in event['_clock_initial_values'] and value != event['_clock_initial_values'][field]:
-                # Even a change *before* consensus may be a battle result. Do
-                # not restart consensus on a newly increased win/day counter.
-                event['_clock_closed'] = True
-                return
-            event['_clock_initial_values'].setdefault(field, value)
+        # Readable clocks during this fight are useful too. Keep each field's
+        # first valid local reading; phase classification is not a prerequisite.
+        # "unknown" is honest metadata when the reader does not classify phase.
+        phase = observation.get('phase') or 'unknown'
         visible_reads = event['_visible_clock_reads']
         if visible_reads and (source['at_ms'] - visible_reads[-1]['at_ms'] > 4000
                 or max(abs(a-b) for a, b in zip(visible_reads[-1]['region'], region)) > source['source_height']*.03):
             visible_reads.clear()
         visible_reads.append({'at_ms': source['at_ms'], 'region': region})
-        # Fallback requires repeated registered visibility, not a single OCR miss.
-        if len(visible_reads) == 3 and event['igd'] is None:
+        # Preserve the existing paid fallback scope; accepting local combat
+        # readings must not introduce additional clock-model requests.
+        if phase == 'pre_fight' and len(visible_reads) == 3 and event['igd'] is None:
             event['_clock_fallback_ms'] = source['at_ms']
             event['_clock_region'] = region
             event['_clock_fallback_samples'] = [{'at_ms': r['at_ms']} for r in visible_reads]
@@ -357,22 +326,14 @@ class EncounterPipeline:
             info = field_info.get(field, {})
             if not isinstance(info, dict):
                 info = {}
-            readings = event['_clock_reads'][field]
             if not valid_field(field, value) or not self._valid_region(info.get('region'), source):
-                readings.clear()
                 continue
-            if readings and (readings[-1][0] != value or source['at_ms'] - readings[-1][1]['at_ms'] > 4000):
-                readings.clear()
             method = str(info.get('method', 'local-clock'))[:128]
-            evidence = self._evidence(source, info['region'], method,
-                                      'pre_fight', 'three_agreeing_visible_reads_after_intro',
-                                      self._confidence(info.get('confidence')) if method.startswith('paddle') else None)
-            readings.append((value, evidence))
-            if len(readings) == 3 and not valid_field(field,event[field]):
-                event[field] = value
-                evidence['samples'] = [{'at_ms': e['at_ms']} for _, e in readings]
-                event['field_evidence'][field] = evidence
-                readings.clear()
+            event[field] = value
+            event['field_evidence'][field] = self._evidence(
+                source, info['region'], method, phase, 'first_readable_clock_after_intro',
+                self._confidence(info.get('confidence')) if method.startswith('paddle') else None,
+                raw_text=json.dumps({'observed_value': value}))
         if event['igd'] is not None:
             event.pop('_clock_fallback_ms', None)
             event.pop('_clock_fallback_samples', None)
@@ -488,7 +449,6 @@ class EncounterPipeline:
         # Continuity is snapshotted at the introduction, not at a later OCR
         # timeout/result. A run ending after this fight affects the NEXT event.
         event['_continuity_supported'] = bool(event.get('_prefight_proven') and not event.get('_continuity_ambiguous'))
-        event['_clock_reads'] = {}  # Deques/working observations never enter the queue.
         event['_visible_clock_reads'] = []
         event.pop('_hero_previous',None)
         return [event]
