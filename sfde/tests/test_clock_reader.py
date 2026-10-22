@@ -82,12 +82,12 @@ def test_real_tiny_bili_cells_and_bottom_crown(file, wins, lethal):
     assert result['lethal'] is lethal
 
 
-def test_dim_bili_cells_are_unknown_not_an_invented_count():
-    # Pixel-reviewed earned8/remaining2. Two dim cells do not meet the strict
-    # colour support rule: retain the known recall gap instead of guessing.
+def test_dim_bili_cells_match_previously_reviewed_pixels_after_alignment_repair():
+    # The frozen label was always earned8/remaining2. The old saturated-blue
+    # gate abstained; cool chroma and consistent bounded row alignment now read it.
     result = ClockReader(None).observe(bili('cracked.png'))
     assert result['visible'] is True
-    assert result['wins_remaining'] is None
+    assert result['wins_remaining'] == 2
     assert result['lethal'] is True
 
 
@@ -316,3 +316,247 @@ def test_frozen_native_source_labels_and_asset_size():
     negative = json.loads((ASSETS / 'fixture-provenance.json').read_text())['natural_negative']
     assert hashlib.sha256((ASSETS / negative['file']).read_bytes()).hexdigest() == negative['sha256']
     assert sum(p.stat().st_size for p in ASSETS.rglob('*') if p.is_file()) <= 2_000_000
+
+
+def preintro(case):
+    frame = np.zeros((480, 852, 3), dtype=np.uint8)
+    frame[180:309,80:176] = cv2.imread(str(ASSETS / 'fixtures' / f'preintro-{case}.png'))
+    return frame
+
+
+@pytest.mark.parametrize('case,expected', [('m10',3), ('m12',1)])
+def test_actual_preintro_teal_cells_are_counted_without_day_or_phase(case, expected):
+    frame = preintro(case)
+    reader = ClockReader(None)
+    result = reader.observe(frame)
+    assert result['visible'] is True
+    assert result['wins_remaining'] == expected
+    assert result['igd'] is None
+    assert 'phase' not in result  # Counts never claim pre-fight eligibility.
+    x,y,w,h = result['evidence']['wins_remaining']['region']
+    assert 80 <= x < x+w <= 176 and 180 <= y < y+h <= 309
+
+
+@pytest.mark.parametrize('case', ['m10','m12'])
+@pytest.mark.parametrize('kind', ['black_row','black_cell','grey_cell','blur','desaturate'])
+def test_preintro_missing_blurred_or_neutral_cells_are_unknown(case, kind):
+    frame = preintro(case)
+    if kind == 'black_row':
+        frame[188:213,110:170] = 0
+    elif kind in ('black_cell','grey_cell'):
+        frame[192:206,141:147] = 0 if kind == 'black_cell' else 50
+    elif kind == 'blur':
+        frame[183:220,103:176] = cv2.GaussianBlur(frame[183:220,103:176],(0,0),2.5)
+    else:
+        frame[188:213,110:170] = cv2.cvtColor(cv2.cvtColor(frame[188:213,110:170],cv2.COLOR_BGR2GRAY),cv2.COLOR_GRAY2BGR)
+    assert ClockReader(None).observe(frame)['wins_remaining'] is None
+
+
+def test_preintro_crop_provenance_and_labels_are_not_predicted_truth():
+    source = json.loads((ASSETS / 'preintro-provenance.json').read_text())
+    for case in source['cases']:
+        assert hashlib.sha256((ASSETS/case['file']).read_bytes()).hexdigest() == case['sha256']
+        assert len(case['reviewed_cells']) == 10
+        assert case['wins_remaining'] == case['reviewed_cells'].count('D')
+
+
+def test_desaturated_empty_row_is_not_assumed_ten_remaining():
+    frame = native('m13')
+    frame[188:213,110:170] = cv2.cvtColor(cv2.cvtColor(frame[188:213,110:170],cv2.COLOR_BGR2GRAY),cv2.COLOR_GRAY2BGR)
+    assert ClockReader(None).observe(frame)['wins_remaining'] is None
+
+
+# Exactly18 unique derived controls: both cases x three JPEG qualities x gray50,
+# row-desaturation, and a stratified extra gray brightness (30 on m10,70 on m12).
+# These are development safety regressions, not18 independent source images.
+@pytest.mark.parametrize('quality', [75,90,95])
+@pytest.mark.parametrize('case,kind', [
+    ('m10','grey50'), ('m10','grey30'), ('m10','desaturate_row'),
+    ('m12','grey50'), ('m12','grey70'), ('m12','desaturate_row'),
+])
+def test_jpeg_compressed_uncertain_cell_or_desaturated_row_is_unknown(case, kind, quality):
+    frame = preintro(case)
+    if kind.startswith('grey'):
+        frame[192:206,141:147] = int(kind[4:])
+    else:
+        frame[188:213,110:170] = cv2.cvtColor(cv2.cvtColor(frame[188:213,110:170],cv2.COLOR_BGR2GRAY),cv2.COLOR_GRAY2BGR)
+    encoded_ok, encoded = cv2.imencode('.jpg',frame,[cv2.IMWRITE_JPEG_QUALITY,quality])
+    assert encoded_ok
+    decoded = cv2.imdecode(encoded,cv2.IMREAD_COLOR)
+    result = ClockReader(None).observe(decoded)
+    assert result['visible'] is True  # Actual cell abstention, not lost locator.
+    assert result['wins_remaining'] is None
+    assert result['evidence']['wins_remaining']['confidence'] is None
+
+
+def local_border_jpeg(case, kind):
+    """The same four frozen structural sanity controls; no new source pixels."""
+    frame = preintro(case)
+    location = ClockReader(None)._location(frame)
+    geometry = cv2.imread(str(ASSETS / 'geometry.png'))
+    dark = cv2.inRange(cv2.cvtColor(geometry,cv2.COLOR_BGR2HSV),(90,65,10),(130,255,100))
+    window = np.zeros_like(dark)
+    window[15:65,60:185] = 255
+    count, components, stats, _ = cv2.connectedComponentsWithStats(dark & window)
+    ids = sorted([i for i in range(1,count) if stats[i,4] > 30],key=lambda i:stats[i,0])
+    box = 2 if kind == 'half_rim' else 8
+    support = cv2.dilate((components == ids[box]).astype(np.uint8),np.ones((7,7),np.uint8))
+    y, x = np.nonzero(support)
+    scale = location['scale']
+    left = int(np.floor(location['x']+x.min()*scale))
+    right = int(np.ceil(location['x']+(x.max()+1)*scale))
+    top = int(np.floor(location['y']+y.min()*scale))
+    bottom = int(np.ceil(location['y']+(y.max()+1)*scale))
+    if kind == 'half_rim':
+        left = (left+right+1)//2
+    patch = frame[top:bottom,left:right]
+    if kind == 'half_rim':
+        patch[:] = 50
+    else:
+        patch[:] = np.rint(.2*patch.astype(np.float32)+.8*50).astype(np.uint8)
+    ok, encoded = cv2.imencode('.jpg',frame,[cv2.IMWRITE_JPEG_QUALITY,90])
+    assert ok
+    return cv2.imdecode(encoded,cv2.IMREAD_COLOR), encoded
+
+
+@pytest.mark.parametrize('case', ['m10','m12'])
+@pytest.mark.parametrize('kind', ['half_rim','transparent_box'])
+def test_existing_partial_or_transparent_local_border_jpeg_abstains(case, kind):
+    frame, _ = local_border_jpeg(case,kind)
+    result = ClockReader(None).observe(frame)
+    assert result['visible'] is True
+    assert result['wins_remaining'] is None
+    assert result['evidence']['wins_remaining']['confidence'] is None
+    assert result['evidence']['wins_remaining']['method'] == 'clock_cells_native_row_structure_unknown'
+
+
+def bounds_frame(case):
+    if case == 'native':
+        return native('m12')
+    if case == 'native-shifted':
+        frame = native('m12')
+        return cv2.warpAffine(frame,np.float32([[1,0,7],[0,1,9]]),(852,480))
+    if case.startswith('preintro-'):
+        return preintro(case.split('-')[1])
+    if case == 'bili':
+        return bili('cracked.png')
+    if case == 'shifted1080':
+        return clock_crop('shifted.png',(185,440))
+    frame = clock_crop('geometry.png')
+    if case.startswith('scale-'):
+        scale = float(case.split('-')[1])
+        frame = cv2.resize(frame,(round(1920*scale),round(1080*scale)))
+    return frame
+
+
+def contains(outer, inner):
+    x,y,w,h = outer
+    a,b,c,d = inner
+    return x <= a and y <= b and a+c <= x+w and b+d <= y+h
+
+
+@pytest.mark.parametrize('case', [
+    'native','native-shifted','preintro-m10','preintro-m12','bili',
+    'geometry1080','shifted1080','scale-0.6','scale-0.8','scale-1.2',
+])
+def test_win_evidence_contains_actual_all_offset_native_reads_and_bilinear_taps(case, monkeypatch):
+    from clock_reader import _canonical
+
+    frame = bounds_frame(case)
+    reader = ClockReader(None)
+    location = reader._location(frame)
+    assert location is not None
+    actual_reads, box_calls, quality_reads, gold_calls = [], [], [], []
+
+    class RecordingGold(np.ndarray):
+        def __getitem__(self, key):
+            # Capture real source array slicing in the quality implementation,
+            # not a parallel copy of the evidence-union calculation.
+            if self.shape == frame.shape[:2] and isinstance(key,tuple) and len(key) == 2:
+                y,x = key
+                if isinstance(y,slice) and isinstance(x,slice):
+                    actual_reads.append([x.start,y.start,x.stop-x.start,y.stop-y.start])
+            return np.asarray(super().__getitem__(key))
+
+    original_gold = reader._native_gold
+    original_boxes = reader._box_row_structure
+    original_quality = reader._wins_quality
+
+    def gold(source):
+        gold_calls.append(1)
+        return original_gold(source).view(RecordingGold)
+
+    def boxes(signal, loc, offset):
+        records = original_boxes(signal,loc,offset)
+        box_calls.append((tuple(offset),[r['region'] for r in records]))
+        assert all('visible' not in r and 'structure_supported' in r for r in records)
+        return records
+
+    def quality(crop):
+        assert np.shares_memory(crop,frame)
+        address = crop.__array_interface__['data'][0] - frame.__array_interface__['data'][0]
+        y, row_bytes = divmod(address,frame.strides[0])
+        x = row_bytes // frame.strides[1]
+        quality_reads.append([x,y,crop.shape[1],crop.shape[0]])
+        return original_quality(crop)
+
+    monkeypatch.setattr(reader,'_native_gold',gold)
+    monkeypatch.setattr(reader,'_box_row_structure',boxes)
+    monkeypatch.setattr(reader,'_wins_quality',quality)
+    result = reader.observe(frame)
+    evidence = result['evidence']['wins_remaining']['region']
+    assert len(gold_calls) == 1  # Hoisted once, not25 full-frame conversions.
+    assert len(box_calls) == 25 and all(len(regions) == 10 for _,regions in box_calls)
+    assert {offset for offset,_ in box_calls} == {(x,y) for y in range(-2,3) for x in range(-2,3)}
+    assert actual_reads == [r for _,regions in box_calls for r in regions]
+    assert len(actual_reads) == 250 and len(quality_reads) == 1
+    assert all(contains(evidence,r) for r in actual_reads + quality_reads)
+    assert contains([0,0,frame.shape[1],frame.shape[0]],evidence)
+    # Observe OpenCV's real interpolation of coordinate labels through the actual
+    # canonical warp. This does not mirror the source-bound estimation helper.
+    sy,sx = np.indices(frame.shape[:2],dtype=np.float32)
+    coordinates = _canonical(np.dstack((sx,sy,np.ones_like(sx))),location)
+    left,top,w,h = evidence
+    for offset,_ in box_calls:
+        dx,dy = offset
+        for y,x in reader._slot_pixels:
+            taps = np.floor(coordinates[y+dy,x+dx,:2]).astype(np.int32)
+            assert (taps[:,0] >= left).all() and (taps[:,0]+1 < left+w).all()
+            assert (taps[:,1] >= top).all() and (taps[:,1]+1 < top+h).all()
+
+
+@pytest.mark.parametrize('side', ['left','top','right','bottom'])
+def test_clipped_any_required_row_support_abstains_with_bounded_evidence(side, monkeypatch):
+    from clock_reader import _canonical
+
+    frame = preintro('m10')
+    reader = ClockReader(None)
+    location = reader._location(frame)
+    details = reader._win_details(_canonical(frame,location),frame,location)
+    regions = [b['region'] for a in details['alignments'] for b in a['borders']]
+    source_x = min(r[0] for r in regions)
+    source_y = min(r[1] for r in regions)
+    source_right = max(r[0]+r[2] for r in regions)
+    source_bottom = max(r[1]+r[3] for r in regions)
+    clipped_location = dict(location)
+    if side == 'left':
+        frame = frame[:,source_x+1:]
+        clipped_location['x'] -= source_x+1
+    elif side == 'top':
+        frame = frame[source_y+1:]
+        clipped_location['y'] -= source_y+1
+    elif side == 'right':
+        frame = frame[:,:source_right-1]
+    else:
+        frame = frame[:source_bottom-1]
+    # Unit-test clipping after an actual registration, without claiming that a
+    # mostly cropped annulus remains detectable. No replay/phase response is faked.
+    monkeypatch.setattr(reader,'_location',lambda source:clipped_location)
+    structural_calls = Mock(side_effect=reader._box_row_structure)
+    monkeypatch.setattr(reader,'_box_row_structure',structural_calls)
+    result = reader.observe(frame)
+    evidence = result['evidence']['wins_remaining']
+    assert result['wins_remaining'] is None and evidence['confidence'] is None
+    assert evidence['method'] == 'clock_cells_native_row_structure_unknown'
+    assert contains([0,0,frame.shape[1],frame.shape[0]],evidence['region'])
+    structural_calls.assert_not_called()  # No synthetic border pixels scored.

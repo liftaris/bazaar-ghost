@@ -18,6 +18,7 @@ ASSET_DIR = Path(__file__).resolve().parent.parent / 'assets' / 'clock'
 _SCALES = (0.42, 4 / 9, 0.46, 0.48, 0.6, 0.8, 1.0, 1.2)
 _CROWN = (34, 214, 63, 242)
 _WINS = (66, 20, 176, 60)
+_ROW_OFFSETS = tuple((dx, dy) for dy in range(-2, 3) for dx in range(-2, 3))
 
 
 def _correlation(a, b):
@@ -106,6 +107,49 @@ def _assets():
     return anchor, support, tuple(slots), crowns
 
 
+@lru_cache(maxsize=1)
+def _box_geometry():
+    """Local neighborhoods from the original ten template components."""
+    geometry = cv2.imread(str(ASSET_DIR / 'geometry.png'))
+    dark = cv2.inRange(cv2.cvtColor(geometry, cv2.COLOR_BGR2HSV),
+                       (90, 65, 10), (130, 255, 100))
+    window = np.zeros_like(dark)
+    window[15:65, 60:185] = 255
+    count, components, stats, _ = cv2.connectedComponentsWithStats(dark & window)
+    ids = sorted((i for i in range(1, count) if stats[i, cv2.CC_STAT_AREA] > 30),
+                 key=lambda i: stats[i, cv2.CC_STAT_LEFT])
+    if len(ids) != 10:
+        raise ValueError('Ten actual box components required')
+    gold = (geometry[:, :, 2].astype(np.float32) + geometry[:, :, 1]
+            - 2 * geometry[:, :, 0].astype(np.float32))
+    grid_x = np.indices(dark.shape)[1]
+    boxes = []
+    for component in ids:
+        full = (components == component).astype(np.uint8)
+        inside = cv2.erode(full, np.ones((3, 3), np.uint8))
+        rim = cv2.dilate(full, np.ones((5, 5), np.uint8)) - full
+        support = cv2.dilate(full, np.ones((7, 7), np.uint8)) - inside
+        y, x = np.nonzero(support)
+        centre = float(np.nonzero(full)[1].mean())
+        boxes.append({
+            'bounds': (int(x.min()), int(y.min()), int(x.max()+1), int(y.max()+1)),
+            'rim': rim.astype(np.float32), 'inside': inside.astype(np.float32),
+            'left': (rim * (grid_x < centre)).astype(np.float32),
+            'right': (rim * (grid_x >= centre)).astype(np.float32),
+            'support': support.astype(np.float32), 'gold': gold,
+        })
+    return tuple(boxes)
+
+
+@lru_cache(maxsize=8)
+def _native_box_geometry(scale):
+    # Only EXPECTED masks are prefiltered. Source texture is never sharpened or
+    # upscaled for collective row quality. A box score is not physical visibility.
+    sigma = max(.01, .5 / scale)
+    return tuple({key: (value if key == 'bounds' else cv2.GaussianBlur(value, (0, 0), sigma))
+                  for key, value in box.items()} for box in _box_geometry())
+
+
 class ClockReader:
     """Read one full processed BGR frame; caller owns OCR, phase and consensus.
 
@@ -119,6 +163,8 @@ class ClockReader:
         self.reader = reader
         self.profile = dict(profile) if isinstance(profile, dict) else {}
         self._anchor, self._mask, self._slots, self._crowns = _assets()
+        self._slot_pixels = tuple(np.nonzero(slot) for slot in self._slots)
+        self._boxes = _box_geometry()
 
     @staticmethod
     def _valid(frame):
@@ -156,6 +202,46 @@ class ClockReader:
             return None
         return self._region(frame, location, (0, 0, 205, 275))[0]
 
+    @staticmethod
+    def _source_box(location, box, offset=(0, 0)):
+        """Unclipped integer source slice, including its exclusive right/bottom."""
+        x1, y1, x2, y2 = box
+        dx, dy = offset
+        scale = location['scale']
+        left = math.floor(location['x'] + (x1+dx)*scale)
+        top = math.floor(location['y'] + (y1+dy)*scale)
+        right = math.ceil(location['x'] + (x2+dx)*scale)
+        bottom = math.ceil(location['y'] + (y2+dy)*scale)
+        return left, top, right, bottom
+
+    def _wins_evidence_region(self, frame, location):
+        """Bound ALL row support, not just the selected alignment's interiors.
+
+        Native quality and structural slices are exact source slices. Canonical
+        color samples additionally need bilinear source taps and a conservative
+        one-pixel rounding margin. Missing any required source support abstains.
+        Template interpolation does not read extra source pixels.
+        """
+        regions = [self._source_box(location, _WINS)]
+        x1 = min(int(x.min()) for y, x in self._slot_pixels)
+        y1 = min(int(y.min()) for y, x in self._slot_pixels)
+        x2 = max(int(x.max()) for y, x in self._slot_pixels)
+        y2 = max(int(y.max()) for y, x in self._slot_pixels)
+        for offset in _ROW_OFFSETS:
+            regions.extend(self._source_box(location, box['bounds'], offset)
+                           for box in self._boxes)
+            left, top, right, bottom = self._source_box(location, (x1, y1, x2, y2), offset)
+            regions.append((left-1, top-1, right+2, bottom+2))
+        left = min(r[0] for r in regions)
+        top = min(r[1] for r in regions)
+        right = max(r[2] for r in regions)
+        bottom = max(r[3] for r in regions)
+        h, w = frame.shape[:2]
+        complete = 0 <= left < right <= w and 0 <= top < bottom <= h
+        left, top = max(0, min(w, left)), max(0, min(h, top))
+        right, bottom = max(left, min(w, right)), max(top, min(h, bottom))
+        return [left, top, right-left, bottom-top], complete
+
     def observe(self, frame):
         output = {'visible': False, 'igd': None, 'wins_remaining': None,
                   'lethal': None, 'evidence': {}, 'clock_region': None}
@@ -167,20 +253,27 @@ class ClockReader:
         crown_region, crown_complete = self._region(frame, location, _CROWN)
         x, y, w, h = crown_region
         crown_readable = crown_complete and self._crown_quality(frame[y:y+h, x:x+w])
+        quality_region, quality_complete = self._region(frame, location, _WINS)
+        x, y, w, h = quality_region
+        wins_region, wins_complete = self._wins_evidence_region(frame, location)
+        wins_readable = (wins_complete and quality_complete
+                         and self._wins_quality(frame[y:y+h, x:x+w]))
         # Gate on original source pixels before creating any enlarged view.
         registered = _canonical(frame, location)
         for field, box in [('wins_remaining', _WINS), ('lethal', _CROWN)]:
             region, complete = self._region(frame, location, box)
+            if field == 'wins_remaining':
+                region, complete = wins_region, wins_complete
             value, confidence = (None, None)
             if complete:
-                if field == 'wins_remaining':
-                    value, confidence = self._wins(registered)
-                elif crown_readable:
+                if field == 'wins_remaining' and wins_readable:
+                    value, confidence = self._wins(registered, frame, location)
+                elif field == 'lethal' and crown_readable:
                     value, confidence = self._crown(registered)
             output[field] = value
             output['evidence'][field] = {
                 'region': region, 'confidence': confidence,
-                'method': ('clock_cells_colour' if field == 'wins_remaining'
+                'method': ('clock_cells_native_row_structure' if field == 'wins_remaining'
                            else 'clock_crown_shape_native_quality') + ('_unknown' if value is None else '')}
         region = self._day_region(frame, location)
         if region is not None:
@@ -203,33 +296,130 @@ class ClockReader:
                                          'method': 'day_medallion_not_readable'}
         return output
 
-    def _wins(self, image):
+    @staticmethod
+    def _wins_quality(native):
+        """Measure actual source texture, never sharpened/upscaled cell edges."""
+        if min(native.shape[:2]) < 8:
+            return False
+        gray = cv2.cvtColor(native, cv2.COLOR_BGR2GRAY)
+        return float(cv2.Laplacian(gray, cv2.CV_32F).var()) >= 250
+
+    @staticmethod
+    def _native_gold(native):
+        return (native[:, :, 2].astype(np.float32) + native[:, :, 1]
+                - 2 * native[:, :, 0].astype(np.float32))
+
+    def _box_row_structure(self, gold, location, offset):
+        """Contributions to a COLLECTIVE ten-cell/shared-separator quality gate.
+
+        Scores are not independent physical box-visibility proofs: a covered box
+        can score positively while its shared neighbor supplies negative evidence.
+        No general obstruction recognition or reconstruction is claimed.
+        """
+        scale = location['scale']
+        dx, dy = offset
+        records = []
+        for box in _native_box_geometry(scale):
+            left, top, right, bottom = self._source_box(location, box['bounds'], offset)
+            record = {'region': [left, top, right-left, bottom-top],
+                      'structure_supported': False}
+            if not (0 <= left < right <= gold.shape[1] and 0 <= top < bottom <= gold.shape[0]):
+                record['reason'] = 'clipped'
+                records.append(record)
+                continue
+            transform = np.array([[scale, 0, location['x']+dx*scale-left],
+                                  [0, scale, location['y']+dy*scale-top]], np.float32)
+            # Resample expected geometry only, never source quality evidence.
+            projected = {}
+            for key in ['rim', 'inside', 'left', 'right', 'support', 'gold']:
+                projected[key] = cv2.warpAffine(box[key], transform, (right-left, bottom-top),
+                                                flags=cv2.INTER_LINEAR)
+            signal = gold[top:bottom, left:right]
+            weight = projected['support']
+
+            def mean(values, weights):
+                return float((values*weights).sum() / max(1e-9, float(weights.sum())))
+
+            def effective(weights):
+                return float(weights.sum()**2 / max(1e-9, float((weights**2).sum())))
+
+            a = signal - mean(signal, weight)
+            b = projected['gold'] - mean(projected['gold'], weight)
+            denominator = float(np.sqrt((weight*a*a).sum() * (weight*b*b).sum()))
+            correlation = float((weight*a*b).sum()/denominator) if denominator > 1e-9 else 0.0
+            inside = mean(signal, projected['inside'])
+            contrast = mean(signal, projected['rim']) - inside
+            halves = [mean(signal, projected[side])-inside for side in ['left', 'right']]
+            support_pixels = effective(weight)
+            half_pixels = [effective(projected[side]) for side in ['left', 'right']]
+            supported = (support_pixels >= 6 and min(half_pixels) >= 1.5 and correlation >= .35
+                         and contrast >= 8 and min(halves) >= 4)
+            record.update({'structure_supported': bool(supported), 'correlation': correlation,
+                           'rim_contrast': contrast, 'half_contrasts': halves,
+                           'effective_source_pixels': support_pixels,
+                           'effective_half_pixels': half_pixels,
+                           'reason': 'supported' if supported else 'row_structure_not_supported'})
+            records.append(record)
+        return records
+
+    def _win_details(self, image, native=None, location=None):
+        """Bounded shared row alignment; diagnostic scores are not probabilities.
+
+        Native480 pre-intro fills are muted teal, not the saturated combat blue.
+        Keep chromatic evidence (never brightness alone), sample the same ten
+        separate interiors, and reject disagreeing plausible row alignments.
+        """
         b, g, r = (image[:, :, i].astype(np.int16) for i in range(3))
-        blue = (b - r > 18) & (g - r > 8) & (b >= 80)
+        blue = (b+g-2*r > 12) & (b >= .8*g) & (np.minimum(b,g) >= 80)
         value = image.max(axis=2)
-        # Empty interiors can be dark brown in compressed/native480 captures.
-        # Black occlusion is NOT an empty cell, and gold is NOT a blue interior.
-        # Mid-brightness desaturated blue (notably Bili3300) is ambiguous,
-        # not an empty cell merely because its blue chroma is weak.
+        # Restore the frozen candidate's interior classifier; near-neutral dark
+        # cells can be read only alongside the collective row-structure gate.
         dark = (value >= 12) & (value < 90) & ~blue
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         glare = (hsv[:, :, 1] < 55) & (hsv[:, :, 2] > 220)
-        states, confidence = [], []
-        for slot in self._slots:
-            filled, empty = float(blue[slot].mean()), float(dark[slot].mean())
-            if float(glare[slot].mean()) > 0.15:
-                return None, None
-            if filled >= 0.65:
-                states.append(True)
-                confidence.append(filled)
-            elif empty >= 0.65:
-                states.append(False)
-                confidence.append(empty)
-            else:
-                return None, None
-        if states != sorted(states, reverse=True):
-            return None, None
-        return 10 - sum(states), min(confidence)
+        neutral = value-image.min(axis=2) <= 1
+        # Do not translate masks away from an animated/glared original target.
+        obscured = any(float(glare[y,x].mean()) > .15 for y,x in self._slot_pixels)
+        has_native = native is not None and location is not None
+        source_complete = has_native and self._wins_evidence_region(native, location)[1]
+        # Same float32 expression as the frozen candidate, computed ONCE rather
+        # than once per offset. No other numerical/threshold optimization.
+        gold = self._native_gold(native) if has_native else None
+        alignments = []
+        for dx, dy in _ROW_OFFSETS:
+            cells = []
+            for index, (y,x) in enumerate(self._slot_pixels):
+                filled = float(blue[y+dy,x+dx].mean())
+                empty = float(dark[y+dy,x+dx].mean())
+                white = float(glare[y+dy,x+dx].mean())
+                grey = float(neutral[y+dy,x+dx].mean())
+                state = ('B' if filled >= .65 else 'D' if empty >= .65 else '?') if white <= .15 and grey <= .65 else '?'
+                cells.append({'cell': index+1, 'blue': filled, 'dark': empty,
+                              'glare': white, 'neutral': grey, 'state': state})
+            states = [cell['state'] for cell in cells]
+            valid = '?' not in states and states == sorted(states)
+            borders = self._box_row_structure(gold, location, [dx, dy]) if has_native else []
+            structure = len(borders) == 10 and all(box['structure_supported'] for box in borders)
+            alignments.append({'offset': [dx,dy], 'cells': cells,
+                'support': min(max(c['blue'],c['dark']) for c in cells),
+                'colour_remaining': states.count('D') if valid else None,
+                'borders': borders, 'structure': structure,
+                'remaining': states.count('D') if valid and structure else None})
+        accepted = [a for a in alignments if a['remaining'] is not None]
+        counts = sorted({a['remaining'] for a in accepted})
+        best = max(accepted or alignments, key=lambda a: (a['support'], -sum(abs(v) for v in a['offset'])))
+        reason = ('native_source_incomplete' if not source_complete else
+                  'white_glare' if obscured else 'alignment_ambiguous' if len(counts)>1
+                  else 'insufficient_cell_support' if len(accepted)<2 else 'supported')
+        return {'wins_remaining': counts[0] if reason == 'supported' else None,
+                'confidence': best['support'] if reason == 'supported' else None,
+                'offset': best['offset'], 'cells': best['cells'], 'reason': reason,
+                'valid_alignments': len(accepted), 'candidate_counts': counts,
+                'borders': best['borders'], 'alignments': alignments}
+
+    def _wins(self, image, native=None, location=None):
+        details = self._win_details(image, native, location)
+        return details['wins_remaining'], details['confidence']
 
     @staticmethod
     def _crown_quality(native):

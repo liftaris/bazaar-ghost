@@ -152,6 +152,19 @@ class FrameProcessor:
         # Current-frame scene evidence is separate from saved-matchup deduplication.
         self.emblem_visible = False
 
+    def locate_full_frame(self, frame):
+        """Lazy next-path helpers share the already configured native OCR reader."""
+        if not hasattr(self, '_full_locator'):
+            from ui_locator import UILocator
+            self._full_locator = UILocator(profile=self.profile)
+        return self._full_locator.locate(frame)
+
+    def read_full_name(self, frame, location):
+        if not hasattr(self, '_full_name_reader'):
+            from name_reader import NameReader
+            self._full_name_reader = NameReader(self.reader, self.ocr_confidence_threshold)
+        return self._full_name_reader.read(frame, location)
+
     def process_frame(
         self, frame_data: bytes, timestamp: int, vod_id: str, chunk_id: str
     ) -> Optional[Dict[str, Any]]:

@@ -1,0 +1,44 @@
+{
+  "method": "Lossless source-pixel crops from two of the16 already selected replay JPEGs; necessary portable regression fixtures, not new media or appearance templates. Restored into852x480 canvas at source coordinates for automatic registration; no answer locations passed to decoder. Labels frozen in development/labels.json before fixed-code evaluation. Same-source development, not independent validation.",
+  "frozen_labels_sha256": "47d6ef206be408e61eb02dbe20555b46e1baa5aa8afd446a52387039109bfc11",
+  "cases": [
+    {
+      "file": "fixtures/preintro-m10.png",
+      "source_file": ".ignore/sfde-next/processor-replay/images/m10/2807000.jpg",
+      "source_sha256": "8bd92214335b5ad1f5ce3bb479204305c8ba84c1ed27719202d5343f2f6b9530",
+      "source_xywh": [
+        80,
+        180,
+        96,
+        129
+      ],
+      "source_dimensions": [
+        852,
+        480
+      ],
+      "at_ms": 2807000,
+      "reviewed_cells": "BBBBBBBDDD",
+      "wins_remaining": 3,
+      "sha256": "02df1ed848ea63c0db6a27db819ecac723b2a554e856e0a7316d56b676cf77ea"
+    },
+    {
+      "file": "fixtures/preintro-m12.png",
+      "source_file": ".ignore/sfde-next/processor-replay/images/m12/3197000.jpg",
+      "source_sha256": "f6e326b5b98f9f85e6a799a7b0e1ddbe09e2bd4fab8d2d696e65b0b6725159a9",
+      "source_xywh": [
+        80,
+        180,
+        96,
+        129
+      ],
+      "source_dimensions": [
+        852,
+        480
+      ],
+      "at_ms": 3197000,
+      "reviewed_cells": "BBBBBBBBBD",
+      "wins_remaining": 1,
+      "sha256": "d63b025054a985608b51ab85fc5b5d675405ef2b4cf8741b26cc5568737e382c"
+    }
+  ]
+}

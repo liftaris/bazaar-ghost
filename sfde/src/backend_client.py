@@ -32,6 +32,7 @@ class BackendClient:
         self.claims = {}
         self.quality, self.streamer = quality, streamer
         self.logger = logging.getLogger('sfde.backend')
+        self.inference_attempts = {}
 
     def set_streamer(self, streamer):
         self.streamer = streamer
@@ -76,12 +77,62 @@ class BackendClient:
         return self._request(f'chunks/{chunk_id}', 'PATCH', {'status': status, **kwargs}, chunk_id)
 
     def delete_chunk_detections(self, chunk_id):
+        # Existing wire call now begins a replacement. It must retain published
+        # rows/social anchors until successful completion; never assume deletion.
         return self._request(f'chunks/{chunk_id}/detections', 'DELETE', chunk_id=chunk_id)['deleted']
 
     def _upload_image(self, matchup, field, kind):
         query = urlencode({'timestamp': matchup['timestamp'], 'kind': kind})
         return self._request(f"chunks/{matchup['chunk_id']}/images?{query}", 'PUT',
                              base64.b64decode(matchup[field], validate=True), matchup['chunk_id'], raw=True)['storage_path']
+
+    def infer(self, chunk_id, *, request_id, task, at_ms, image_base64):
+        """Exactly ONE submission. Server reservations own ambiguous duplicates.
+
+        This method deliberately does not use upload_batch's safe persistence retry.
+        Failed requests still consume the independent client-side chunk allowance.
+        """
+        if task not in ('ghost_hero', 'streamer_hero', 'clock_day'):
+            raise ValueError('Unsupported inference task')
+        attempts = getattr(self, 'inference_attempts', {})
+        self.inference_attempts = attempts
+        if attempts.get(chunk_id, 0) >= 64:
+            raise ValueError('Chunk inference attempt limit reached')
+        attempts[chunk_id] = attempts.get(chunk_id, 0) + 1
+        return self._request(f'chunks/{chunk_id}/inference', 'POST', {
+            'request_id': request_id, 'task': task, 'at_ms': at_ms, 'image_base64': image_base64,
+        }, chunk_id)
+
+    def _next_record(self, matchup):
+        """Upload *all* source images before publishing schema 2, including unknowns."""
+        from encounter_pipeline import detection_id
+        chunk_id = matchup['chunk_id']
+        images = matchup['_images']
+        if not images or matchup['_intro_ms'] not in images:
+            raise ValueError('A detection requires its full intro screenshot')
+        for at_ms, source in sorted(images.items()):
+            query = urlencode({'timestamp_ms': at_ms, 'kind': source['kind']})
+            source['image_path'] = self._request(f'chunks/{chunk_id}/images?{query}', 'PUT',
+                                                source['jpeg'], chunk_id, raw=True)['storage_path']
+        evidence = matchup['field_evidence']
+        for field in evidence.values():
+            # Inherited fields refer to an actual earlier upload in the same chunk.
+            if 'inherited_from' not in field:
+                field['image_path'] = images[field['at_ms']]['image_path']
+                for sample in field.get('samples', []):
+                    sample['image_path'] = images[sample['at_ms']]['image_path']
+            elif not field.get('image_path'):
+                raise ValueError('Inherited evidence has no original image path')
+        record = {key: matchup.get(key) for key in (
+            'username', 'confidence', 'name_state', 'encounter_confidence', 'igd',
+            'ghost_hero', 'streamer_hero', 'wins_remaining', 'lethal')}
+        record.update(schema_version=2,
+                      id=detection_id(matchup['recording_identity'], matchup['anchor_ms']),
+                      timestamp=matchup['timestamp'], frame_time_seconds=matchup['timestamp'],
+                      rank=matchup.get('detected_rank'),
+                      storage_path=images[matchup['_intro_ms']]['image_path'], field_evidence=evidence)
+        matchup['storage_path'] = record['storage_path']
+        return record
 
     def upload_batch(self, matchups):
         started = time.monotonic()
@@ -91,6 +142,10 @@ class BackendClient:
                 try:
                     grouped = {}
                     for matchup in matchups:
+                        if matchup.get('schema_version') == 2:
+                            record = self._next_record(matchup)
+                            grouped.setdefault(matchup['chunk_id'], []).append(record)
+                            continue
                         if not matchup.get('username'):
                             continue
                         if not matchup.get('frame_base64'):

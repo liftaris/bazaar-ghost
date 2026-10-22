@@ -14,6 +14,7 @@ import time
 import json
 import logging
 import math
+from urllib.parse import urlparse
 from typing import Optional, Dict, Any, Tuple, List, Callable
 from opentelemetry import context as otel_context
 import yaml
@@ -50,6 +51,19 @@ QUALITY_RESOLUTIONS = {
 }
 
 
+def next_enabled():
+    """Two explicit fences: opt in AND validation/local environment and endpoint."""
+    if os.getenv('SFDE_NEXT_ENABLED') != 'true':
+        return False
+    target = urlparse(os.getenv('BAZAARGHOST_API_URL', ''))
+    host = target.hostname or ''
+    local = host in ('localhost', '127.0.0.1', '::1', 'host.docker.internal')
+    validation = host == 'bazaarghost-validation.kaio-8df.workers.dev' and target.scheme == 'https'
+    if os.getenv('ENVIRONMENT') not in ('validation', 'local') or not (local or validation):
+        raise ValueError('SFDE_NEXT_ENABLED requires an explicit validation/local target')
+    return True
+
+
 
 class MediaReadError(RuntimeError):
     """A progressive HTTP read that failed mid-stream; a fresh read usually succeeds.
@@ -74,6 +88,7 @@ class SFDEProcessor:
     def __init__(self, config: Dict[str, Any]) -> None:
         """Initialize SFDE processor with configuration"""
         self.chunk_id = config["chunk_id"]
+        self.next_enabled = next_enabled()
         self.test_mode = config.get("test_mode", False)
         requested_quality = config.get('quality', '480p')
         self.quality = processing_quality(requested_quality)
@@ -117,8 +132,8 @@ class SFDEProcessor:
         self.backend.set_streamer(self.streamer)
 
         # Initialize components
-        self.frame_queue = queue.Queue(maxsize=self.config["processing"]["queue_size"])
-        self.result_queue = queue.Queue(maxsize=self.config["processing"]["queue_size"])
+        self.frame_queue = queue.Queue(maxsize=4 if self.next_enabled else self.config["processing"]["queue_size"])
+        self.result_queue = queue.Queue(maxsize=2 if self.next_enabled else self.config["processing"]["queue_size"])
         self.shutdown = threading.Event()  # Cancellation/failure only; EOF uses done events.
         self.frames_done = threading.Event()
         self.results_done = threading.Event()
@@ -129,6 +144,8 @@ class SFDEProcessor:
         self.streamlink_proc: Optional[subprocess.Popen] = None
         self.ffmpeg_proc: Optional[subprocess.Popen] = None
         self.frames_processed = 0
+        self.preroll_frames_processed = 0
+        self.preroll_coverage = None
         self.decode_coverage: Optional[Dict[str, Any]] = None
         self.matchups_found = 0
         self.result_batch = []  # Current batch being accumulated
@@ -150,6 +167,8 @@ class SFDEProcessor:
             profile=self.profile,
             streamer=self.streamer,
         )
+        if self.next_enabled:
+            self._init_next_pipeline()
 
         # Register signal handlers
         signal.signal(signal.SIGTERM, self._handle_shutdown)
@@ -184,6 +203,28 @@ class SFDEProcessor:
 
         # Return in FFmpeg format [width, height, x, y]
         return [w, h, x, y]
+
+    def _init_next_pipeline(self):
+        from encounter_pipeline import EncounterPipeline, EncounterEnricher
+        clock = None
+        try:
+            from clock_reader import ClockReader
+        except ImportError:
+            self.logger.warning('SFDE next clock module unavailable: clock fields remain unknown')
+        else:
+            try:
+                clock = ClockReader(self.frame_processor.reader, profile=self.profile)
+            except Exception:
+                self.logger.warning('Optional clock initialization failed; retaining encounters', exc_info=True)
+        self.encounters = EncounterPipeline(self.frame_processor, recording=f'{self.source}:{self.vod_pk or self.vod_id}',
+            vod_id=self.vod_id, chunk_id=self.chunk_id, start_ms=round(self.start_time*1000),
+            end_ms=round(self.end_time*1000), clock=clock)
+        # Keep the paid-attempt budget across in-process media retries.
+        if not hasattr(self, 'enricher'):
+            self.enricher = EncounterEnricher(self.backend,
+                allow_run_reuse=os.getenv('SFDE_NEXT_RUN_REUSE_ENABLED') == 'true')
+        else:
+            self.enricher.run.invalidate('media_retry')
 
     def _load_config(self) -> Dict[str, Any]:
         """Load configuration from YAML file"""
@@ -451,6 +492,8 @@ class SFDEProcessor:
                     raise RuntimeError('Decoder produced no frames')
                 if self.decode_coverage is not None and self.frames_processed != self.decode_coverage['sampled_frames']:
                     raise RuntimeError('Decoded coverage was not fully processed')
+                if self.preroll_coverage is not None and self.preroll_frames_processed != self.preroll_coverage['sampled_frames']:
+                    raise RuntimeError('Preroll coverage was not fully processed')
                 status = 'completed'
 
                 # Record telemetry metrics
@@ -550,8 +593,8 @@ class SFDEProcessor:
         """Start the chunk over under the same claim; the caller stopped every worker."""
         # Uploaded detections belong to the failed attempt; the retry republishes.
         self.backend.delete_chunk_detections(self.chunk_id)
-        self.frame_queue = queue.Queue(maxsize=self.config["processing"]["queue_size"])
-        self.result_queue = queue.Queue(maxsize=self.config["processing"]["queue_size"])
+        self.frame_queue = queue.Queue(maxsize=4 if self.next_enabled else self.config["processing"]["queue_size"])
+        self.result_queue = queue.Queue(maxsize=2 if self.next_enabled else self.config["processing"]["queue_size"])
         self.shutdown = threading.Event()
         self.frames_done = threading.Event()
         self.results_done = threading.Event()
@@ -559,11 +602,15 @@ class SFDEProcessor:
         self.threads = []
         self.ffmpeg_proc = None
         self.frames_processed = 0
+        self.preroll_frames_processed = 0
+        self.preroll_coverage = None
         self.decode_coverage = None
         self.matchups_found = 0
         self.result_batch = []
         self.all_detections = []
         self.frame_processor.reset_state()
+        if self.next_enabled:
+            self._init_next_pipeline()
 
     def _run_worker(self, worker: Callable[[], None], done: Optional[threading.Event] = None) -> None:
         """Report worker exceptions to the orchestrator and always signal EOF."""
@@ -604,6 +651,16 @@ class SFDEProcessor:
 
     def ffmpeg_worker(self) -> None:
         """Decode frames and enqueue each image together with its timestamp."""
+        if self.next_enabled and self.start_time > 0:
+            # A separate bounded read retains the owned sampling/coverage contract.
+            # Align preroll to the owned grid; never relocate a prior chunk's anchor.
+            interval = 1 / self.config['processing']['frame_rate']
+            ticks = min(math.floor(self.start_time / interval), math.floor(8 / interval))
+            if ticks:
+                self._decode_range(self.start_time - ticks * interval, self.start_time, preroll=True)
+        self._decode_range(self.start_time, self.end_time)
+
+    def _decode_range(self, start_time, end_time, *, preroll=False):
         # Limit demuxing before sampling. An output -t is rounded to the encoder's
         # coarse FPS time base and can discard a valid final partial interval.
         # showinfo is our timestamp protocol. FFmpeg 5's threaded H.264
@@ -612,10 +669,10 @@ class SFDEProcessor:
         # progress output rather than accepting unattributed timestamps.
         cmd = ['ffmpeg', '-nostdin', '-nostats', '-hide_banner', '-loglevel', 'info',
                '-threads', '1',
-               '-t', str(self.end_time - self.start_time)]
+               '-t', str(end_time - start_time)]
         # Read the opening chunk directly. FFmpeg 5's HLS input seek at zero
         # can skip opening frames when the transport timestamp origin is nonzero.
-        seek = ['-ss', str(self.start_time)] if self.start_time > 0 else []
+        seek = ['-ss', str(start_time)] if start_time > 0 else []
         if self.test_mode:
             directory = self.config['test_mode']['data_directory']
             if not os.path.isabs(directory):
@@ -632,10 +689,9 @@ class SFDEProcessor:
             locator, input_args = url, self._media_input_args
         width, height = QUALITY_RESOLUTIONS[self.quality]
         w, h, x, y = self._combined_crop
-        filters = (
-            f'showinfo@bg_source=checksum=0,fps={self.config["processing"]["frame_rate"]}:eof_action=pass,'
-            f'scale={width}:{height},crop={w}:{h}:{x}:{y}:exact=1,showinfo@bg_sample=checksum=0'
-        )
+        geometry = '' if self.next_enabled else f'scale={width}:{height},crop={w}:{h}:{x}:{y}:exact=1,'
+        filters = (f'showinfo@bg_source=checksum=0,fps={self.config["processing"]["frame_rate"]}:eof_action=pass,'
+                   + geometry + 'showinfo@bg_sample=checksum=0')
         cmd += [
             '-map', '0:v:0', '-an', '-vf', filters,
             # An empty, independently verified audio-only tail still initializes
@@ -649,7 +705,7 @@ class SFDEProcessor:
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
         interval = 1 / self.config['processing']['frame_rate']
-        source_timeline = SourceTimeline(self.end_time - self.start_time, interval)
+        source_timeline = SourceTimeline(end_time - start_time, interval)
         tolerance = max(0.001, interval * 1e-6)
         sample_count, first_pts, last_pts = 0, None, None
         diagnostics = []
@@ -657,8 +713,8 @@ class SFDEProcessor:
             self.ffmpeg_proc.stdout, self.ffmpeg_proc.stderr, self.logger,
             source_timeline=source_timeline, validate_end=False, diagnostics=diagnostics,
         ):
-            timestamp = self.start_time + int(pts)
-            if 0 <= pts < self.end_time - self.start_time:
+            timestamp = start_time + int(pts)
+            if 0 <= pts < end_time - start_time:
                 # Validate the sampled timeline before integer conversion for storage.
                 # Missing/duplicate samples must not be hidden by a plausible total count.
                 if last_pts is None:
@@ -669,7 +725,13 @@ class SFDEProcessor:
                     raise RuntimeError(f'Incomplete decoder coverage: sample gap {pts - last_pts:g}s, expected {interval:g}s')
                 last_pts = pts
                 sample_count += 1
-                self._put(self.frame_queue, (frame_data, timestamp))
+                if self.next_enabled:
+                    from encounter_pipeline import MAX_JPEG_BYTES
+                    if len(frame_data) > MAX_JPEG_BYTES:
+                        raise ValueError('Sampled full-frame JPEG exceeds 2 MiB bound')
+                    self._put(self.frame_queue, (frame_data, round((start_time + pts) * 1000), not preroll))
+                else:
+                    self._put(self.frame_queue, (frame_data, timestamp))
                 record_gauge("queue_depth", 1, {"streamer": self.streamer or "unknown", "quality": self.formatted_quality})
         code = self.ffmpeg_proc.wait(timeout=10)
         progressive = bool(getattr(self, '_media_progressive_args', None)) and not self.test_mode
@@ -679,7 +741,7 @@ class SFDEProcessor:
         # Normally every requested tick must exist. A recording can end with
         # audio after its final video frame; only a separate probe of this same
         # finalized source may establish a shorter terminal video interval.
-        duration = self.end_time - self.start_time
+        duration = end_time - start_time
         requested_samples = math.ceil(duration / interval - 1e-8)
         endpoint = None
         try:
@@ -689,8 +751,8 @@ class SFDEProcessor:
         except RuntimeError as coverage_error:
             try:
                 endpoint = verify_video_endpoint(
-                    locator, input_args, requested_start=self.start_time, requested_end=self.end_time,
-                    last_decoded_seconds=(self.start_time + float(source_timeline.last_pts * source_timeline.time_base)
+                    locator, input_args, requested_start=start_time, requested_end=end_time,
+                    last_decoded_seconds=(start_time + float(source_timeline.last_pts * source_timeline.time_base)
                                           if source_timeline.count else None),
                     frame_interval_seconds=float(source_timeline.frame_interval) if source_timeline.frame_interval else None,
                     timestamp_quantum_seconds=float(source_timeline.time_base) if source_timeline.time_base else None,
@@ -703,32 +765,36 @@ class SFDEProcessor:
                 raise (MediaReadError if truncated else RuntimeError)(
                     f'Incomplete decoder coverage: {coverage_error}; endpoint verification: {error}'
                     + (f'; FFmpeg: {diagnostics[0]}' if diagnostics else '')) from None
-            duration = max(0, min(self.end_time, endpoint['video_end_seconds']) - self.start_time)
+            duration = max(0, min(end_time, endpoint['video_end_seconds']) - start_time)
             source_timeline.validate(duration=duration)
         minimum_samples = math.ceil(duration / interval - 1e-8)
         if sample_count != minimum_samples:
             raise RuntimeError(
                 f'Incomplete decoder coverage: {sample_count} samples, expected at least '
-                f'{minimum_samples} for [{self.start_time},{self.end_time}) at '
+                f'{minimum_samples} for [{start_time},{end_time}) at '
                 f'{self.config["processing"]["frame_rate"]:g} fps; last offset {last_pts}'
             )
-        self.decode_coverage = {
-            **source_timeline.summary(self.start_time, duration=duration),
+        coverage = {
+            **source_timeline.summary(start_time, duration=duration),
             'sampled_frames': sample_count,
             'minimum_expected_frames': minimum_samples,
             'requested_expected_frames': requested_samples,
             'completion_reason': 'verified_video_eof' if endpoint else 'requested_range',
             'video_endpoint': endpoint,
-            'effective_video_end_seconds': self.start_time + duration,
-            'unobserved_catalog_tail_seconds': self.end_time - self.start_time - duration,
+            'effective_video_end_seconds': start_time + duration,
+            'unobserved_catalog_tail_seconds': end_time - start_time - duration,
             'sample_interval_seconds': interval,
-            'first_sample_seconds': self.start_time + first_pts if first_pts is not None else None,
-            'last_sample_seconds': self.start_time + last_pts if last_pts is not None else None,
-            'requested_start_seconds': self.start_time,
-            'requested_end_seconds': self.end_time,
+            'first_sample_seconds': start_time + first_pts if first_pts is not None else None,
+            'last_sample_seconds': start_time + last_pts if last_pts is not None else None,
+            'requested_start_seconds': start_time,
+            'requested_end_seconds': end_time,
         }
+        if preroll:
+            self.preroll_coverage = coverage
+        else:
+            self.decode_coverage = coverage
         self.logger.info('decode_coverage_verified', extra={
-            'event': 'decode_coverage_verified', **self.decode_coverage,
+            'event': 'decode_coverage_verified', 'preroll': preroll, **coverage,
         })
 
     def _decode_jpeg(self, frame_data: bytes) -> Optional[np.ndarray]:
@@ -771,6 +837,8 @@ class SFDEProcessor:
 
     def opencv_worker(self) -> None:
         """Worker to process frames with OpenCV (runs in parallel, consumes from frame queue)"""
+        if self.next_enabled:
+            return self._next_opencv_worker()
         self.logger.info("OpenCV worker starting...")
         metric_attrs = {
             "streamer": self.streamer or "unknown",
@@ -887,6 +955,26 @@ class SFDEProcessor:
             self._enqueue_detection(pending_detection, metric_attrs)
 
 
+    def _next_opencv_worker(self):
+        attrs = {'streamer': self.streamer or 'unknown', 'quality': self.formatted_quality}
+        while not self.shutdown.is_set():
+            try:
+                jpeg, at_ms, owned = self.frame_queue.get(timeout=.1)
+            except queue.Empty:
+                if self.frames_done.is_set() and self.frame_queue.empty():
+                    break
+                continue
+            for event in self.encounters.consume(jpeg, at_ms):
+                self._enqueue_detection(event, attrs)
+            if owned:
+                self.frames_processed += 1
+                record_counter('frames_processed', 1, attrs)
+            else:
+                self.preroll_frames_processed += 1
+        if not self.shutdown.is_set():
+            for event in self.encounters.flush():
+                self._enqueue_detection(event, attrs)
+
     def _enqueue_detection(
         self, result: Dict[str, Any], metric_attrs: Dict[str, str]
     ) -> None:
@@ -923,6 +1011,12 @@ class SFDEProcessor:
                     break
                 continue
             self.result_batch.append(result)
+            if result.get('schema_version') == 2:
+                self.enricher.enrich(result)
+                # Publish before observing the next result, so inherited evidence
+                # always references an uploaded original image, never a fake read.
+                self._flush_results()
+                continue
             if len(self.result_batch) >= self.config['backend']['batch_size']:
                 self._flush_results()
         if not self.shutdown.is_set():
@@ -933,6 +1027,14 @@ class SFDEProcessor:
             return
         self.backend.upload_batch(self.result_batch)
         for result in self.result_batch:
+            if result.get('schema_version') == 2:
+                summary = {key: value for key, value in result.items()
+                           if not key.startswith('_') and key not in ('frame_base64',)}
+                summary['inference_audit'] = result.get('_inference_audit', [])
+                summary['paid_attempts'] = result.get('_paid_attempts', 0)
+                summary['rank'] = result.get('detected_rank')
+                self.all_detections.append(summary)
+                continue
             self.all_detections.append({
                 'timestamp': result['timestamp'], 'username': result['username'],
                 'confidence': result.get('confidence', 0), 'rank': result.get('detected_rank'),
@@ -952,6 +1054,9 @@ class SFDEProcessor:
                     'start_time': self.start_time, 'end_time': self.end_time, 'quality': self.formatted_quality,
                     'frames_processed': self.frames_processed, 'matchups_found': len(self.all_detections),
                     'decode_coverage': self.decode_coverage,
+                    'preroll_coverage': self.preroll_coverage,
+                    'preroll_frames_processed': self.preroll_frames_processed,
+                    'sfde_next_enabled': self.next_enabled,
                     'detections': self.all_detections,
                 }, destination, indent=2)
         except OSError:
