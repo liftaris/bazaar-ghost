@@ -72,8 +72,12 @@ class UILocator:
 
         region, complete, state = None, False, 'unreadable'
         method = 'spatial-masked-rank-480'
+        # Edge matching supplies the right boundary, not the glyph baseline:
+        # smaller edge matches can sit too low and clip the tops of letters.
         if edge[0] >= .65:
-            region = source([left, edge[2], edge[1] - left, edge[3]])
+            strip_top = min(edge[2], y + round(h * .24))
+            strip_height = edge[2] + edge[3] - strip_top
+            region = source([left, strip_top, edge[1] - left, strip_height])
             complete, method = True, method + '+verified-right-edge'
         else:
             # Same fixed layout and verified emblem, but unknown right boundary.

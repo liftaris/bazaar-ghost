@@ -5,7 +5,7 @@ from numbers import Real
 import cv2
 
 
-def tokens(reader, image, **predict_options):
+def tokens(reader, image, *, boxes=None, **predict_options):
     results = reader.predict(image, **predict_options)
     if not results or len(results) != 1:
         return []
@@ -14,9 +14,29 @@ def tokens(reader, image, **predict_options):
     texts, scores = data.get('rec_texts', []), data.get('rec_scores', [])
     if len(texts) != len(scores):
         return []
-    return [(text, float(score)) for text, score in zip(texts, scores)
-            if isinstance(text, str) and isinstance(score, Real) and not isinstance(score, bool)
-            and math.isfinite(score) and 0 <= score <= 1]
+    polygons = data.get('rec_polys', [])
+    observed = []
+    for index, (text, score) in enumerate(zip(texts, scores)):
+        if (isinstance(text, str) and isinstance(score, Real) and not isinstance(score, bool)
+                and math.isfinite(score) and 0 <= score <= 1):
+            observed.append((text, float(score)))
+            if boxes is not None:
+                boxes.append(polygons[index] if index < len(polygons) else None)
+    return observed
+
+
+def name_line_indices(boxes):
+    """Select the large name line, not smaller chat lines above/below it.
+
+    Keep every fragment on that row. Without box geometry, preserve the original
+    observations rather than guessing which token is the name.
+    """
+    if not boxes or any(box is None for box in boxes):
+        return list(range(len(boxes)))
+    spans = [(min(point[1] for point in box), max(point[1] for point in box)) for box in boxes]
+    top, bottom = max(spans, key=lambda span: span[1] - span[0])
+    center = (top + bottom) / 2
+    return [index for index, (top, bottom) in enumerate(spans) if top <= center <= bottom]
 
 
 class NameReader:
@@ -37,7 +57,9 @@ class NameReader:
         crop = frame[y:y+h, x:x+w]
         # Collect observations, including fragments. The configured threshold
         # labels uncertainty below; it must not filter text inside PaddleOCR.
-        ordinary = tokens(self.reader, crop, text_rec_score_thresh=0.)
+        boxes = []
+        ordinary = tokens(self.reader, crop, boxes=boxes, text_rec_score_thresh=0.)
+        selected = name_line_indices(boxes) if boxes else list(range(len(ordinary)))
         # This branch is *only* for masks; normal names keep native preprocessing.
         # The edge template includes bottom plaque ornament. Mask-only text strip:
         # retain the upper glyph margin, inset the two border caps, exclude the
@@ -60,12 +82,14 @@ class NameReader:
             result['region'] = [x, mask_y, w, y+h-mask_y]
             result['ocr_regions']['mask'] = mask_region
         result['raw_text'] = json.dumps({'native': ordinary, 'mask': mask,
+                                         'name_line_indices': selected,
                                          'regions': result['ocr_regions']}, ensure_ascii=False)
         if len(mask) == 1 and mask[0][0].strip() == '******' and mask[0][1] >= .90:
             result.update(name_state='masked', confidence=mask[0][1],
                           method='mask-binary65-linear4x-english-ocr')
             return result
-        observed = [(text, confidence) for text, confidence in ordinary if text.strip()]
+        observed = [(text, confidence) for index, (text, confidence) in enumerate(ordinary)
+                    if index in selected and text.strip()]
         uncertain = (not location.get('complete')
                      or location.get('name_state') in ('partial', 'obstructed')
                      or any('*' in text for text, _ in ordinary + mask))

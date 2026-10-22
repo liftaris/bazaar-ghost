@@ -367,6 +367,7 @@ def test_name_whole_tokens_mask_before_cleanup(monkeypatch, raw, mask, state, us
     read = NameReader(Mock()).read(np.zeros((36, 64, 3), np.uint8), LOCATION)
     assert (read['name_state'], read['username']) == (state, username)
     assert json.loads(read['raw_text']) == {'native': [list(r) for r in raw], 'mask': [list(r) for r in mask],
+                                          'name_line_indices': list(range(len(raw))),
                                           'regions': read['ocr_regions']}
 
 

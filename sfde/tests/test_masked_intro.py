@@ -140,7 +140,9 @@ def test_real_shared_paddle_masked_intro_emits_one_source_proven_encounter(nativ
             assert proof['confidence'] is None  # Similarity is not field confidence.
     assert event['field_evidence']['rank']['at_ms'] == 106000
     proof = event['field_evidence']['username']
-    assert proof['at_ms'] == labels['nameEvidenceAtMs'] == 110000
+    # The crop correction changes OCR scores, not ownership or mask semantics.
+    # Evidence must refer to the strongest actually observed masked source.
+    assert proof['at_ms'] == max(observed_reads, key=lambda row: row[1]['confidence'])[0]
     actual = dict(observed_reads)[proof['at_ms']]
     assert proof['raw_text'] == actual['raw_text']
     assert proof['confidence'] == actual['confidence']

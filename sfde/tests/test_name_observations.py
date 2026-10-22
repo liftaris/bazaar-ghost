@@ -55,6 +55,21 @@ def test_multi_box_native_output_preserves_every_token_and_marks_uncertainty():
     assert json.loads(result['raw_text'])['native'] == [list(t) for t in native]
 
 
+def test_name_row_retains_fragments_and_raw_chat_without_appending_chat_to_name():
+    reader = SimpleNamespace(predict=Mock(side_effect=[[
+        {'rec_texts': ['Main', 'Frame', 'chat overlay'], 'rec_scores': [.98,.97,.99],
+         'rec_polys': [[[0,5],[35,5],[35,23],[0,23]],
+                       [[38,6],[70,6],[70,24],[38,24]],
+                       [[75,0],[99,0],[99,6],[75,6]]]}
+    ], [{'rec_texts': [], 'rec_scores': []}]]))
+    result = NameReader(reader).read(np.zeros((64,160,3),np.uint8), LOCATION)
+    assert result['username'] == 'Main\nFrame'
+    assert result['name_state'] == 'obstructed'
+    raw = json.loads(result['raw_text'])
+    assert raw['native'][-1][0] == 'chat overlay'
+    assert raw['name_line_indices'] == [0,1]
+
+
 def test_threshold_only_labels_obstruction_without_erasing_text():
     for threshold, state in ((.5, 'complete'), (.8, 'obstructed')):
         result = NameReader(reader_with([('Native!', .65)]), threshold).read(
@@ -189,3 +204,23 @@ def test_existing_reviewed_ordinary_crops_keep_native_name_and_case(native_name_
     trim = int(h * .24)
     result = native_name_reader.read(frame, dict(LOCATION, name_region=[0, trim, w, h - 2*trim]))
     assert (result['username'], result['name_state']) == (expected, 'complete')
+
+
+@pytest.mark.parametrize('filename,expected,state', [
+    ('ikarus_-1544.jpg', 'TimWolle', 'complete'),
+    ('ikarus_-8686.jpg', 'Shasou19', 'complete'),
+    ('layzyn-11914.jpg', 'Brockolis', 'obstructed'),
+    ('layzyn-4368.jpg', 'SoloCupiu', 'obstructed'),
+    ('layzyn-6548.jpg', 'akb209', 'obstructed'),
+    ('loustache-2039.jpg', 'emir_2garin', 'complete'),
+    ('yosi14jp-1702.jpg', 'bloddywolf', 'complete'),
+])
+def test_captured_validation_name_rows(locator, native_name_reader, filename, expected, state):
+    # These are observed regressions, not held-out accuracy certification.
+    # SoloCupiu remains the observed OCR miss; don't reconstruct SoloCupid.
+    frame = cv2.imread(str(ROOT.parent / 'name-regressions' / filename))
+    result = native_name_reader.read(frame, locator.locate(frame))
+    assert (result['username'], result['name_state']) == (expected, state)
+    if filename == 'layzyn-11914.jpg':
+        raw = json.loads(result['raw_text'])
+        assert len(raw['native']) > len(raw['name_line_indices'])
