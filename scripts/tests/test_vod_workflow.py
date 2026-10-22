@@ -1,6 +1,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -10,6 +11,28 @@ spec.loader.exec_module(workflow)
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_summary_handles_masked_unreadable_and_legacy_detections(self):
+        data = {'chunk_id': 'chunk', 'frames_processed': 20, 'matchups_found': 3,
+                'detections': [
+                    {'timestamp': 150, 'username': None, 'name_state': 'masked',
+                     'confidence': None, 'rank': 'silver', 'igd': 1},
+                    {'timestamp': 160, 'username': None, 'name_state': 'unreadable',
+                     'confidence': None, 'rank': 'gold', 'igd': None},
+                    {'timestamp': 170, 'username': 'Exact.Case|Name',
+                     'confidence': .98, 'rank': 'diamond', 'igd': 2},
+                ]}
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'summary.md'
+            with patch.dict(workflow.os.environ, {'CHUNK_ID': 'chunk', 'GITHUB_STEP_SUMMARY': str(output)}), \
+                    patch.object(Path, 'exists', return_value=True), \
+                    patch.object(Path, 'read_text', return_value=json.dumps(data)):
+                workflow.summarize()
+            text = output.read_text()
+            self.assertIn('| 150 | Masked opponent |  | silver | 1 |', text)
+            self.assertIn('| 160 | Unreadable opponent |  | gold |  |', text)
+            self.assertIn('| 170 | Exact.Case\\|Name | 98% | diamond | 2 |', text)
+            self.assertNotIn('None', text)
+
     def test_respects_requested_quality(self):
         self.assertEqual(workflow.select_quality({'480p': {}, '720p60': {}}, '720p', False), '720p60')
 

@@ -176,8 +176,12 @@ def summarize() -> None:
         destination.write(f"### Chunk {summary['chunk_id']}\n\n{summary['frames_processed']} frames; {summary['matchups_found']} matchups.\n\n")
         destination.write('| Second | Username | Confidence | Rank | Day |\n|---|---|---|---|---|\n')
         for item in summary['detections']:
-            username = str(item['username']).replace('|', '\\|').replace('\n', ' ')
-            destination.write(f"| {item['timestamp']} | {username} | {item['confidence']:.0%} | {item['rank']} | {item.get('igd') or ''} |\n")
+            name = item['username']
+            if name is None:
+                name = 'Masked opponent' if item.get('name_state') == 'masked' else 'Unreadable opponent'
+            username = name.replace('|', '\\|').replace('\n', ' ')
+            confidence = '' if item['confidence'] is None else f"{item['confidence']:.0%}"
+            destination.write(f"| {item['timestamp']} | {username} | {confidence} | {item['rank']} | {item.get('igd') or ''} |\n")
 
 
 def main() -> None:
