@@ -698,8 +698,12 @@ class SFDEProcessor:
             # the encoder. FFmpeg 8 cannot infer JPEG's full range from frames
             # that do not exist, so make its normal JPEG pixel format explicit.
             '-fps_mode', 'passthrough', '-f', 'image2pipe', '-vcodec', 'mjpeg',
-            '-pix_fmt', 'yuvj420p', 'pipe:1',
+            '-pix_fmt', 'yuvj420p',
         ]
+        if self.next_enabled:
+            # Preserve native evidence detail; leave legacy JPEG rate control unchanged.
+            cmd += ['-q:v', '2']
+        cmd += ['pipe:1']
         self.ffmpeg_proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,

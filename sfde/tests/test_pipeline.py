@@ -11,7 +11,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from sfde import SFDEProcessor
+from sfde import QUALITY_RESOLUTIONS, SFDEProcessor
 from video import read_jpegs, timestamped_frames
 
 
@@ -265,9 +265,11 @@ def test_hls_coverage_preserves_seek_boundaries_and_rejects_short_playlist(proce
 
 
 @pytest.mark.parametrize('start', [0, 5])
-def test_hls_transport_origin_does_not_shift_vod_frames(processor, monkeypatch, tmp_path, start):
+@pytest.mark.parametrize('next_enabled', [False, True], ids=['legacy', 'native_next'])
+def test_hls_transport_origin_does_not_shift_vod_frames(processor, monkeypatch, tmp_path, start, next_enabled):
     import cv2
     import numpy as np
+    from PIL import Image
 
     # Nonzero MPEG-TS origin reproduces FFmpeg 5's input -ss 0 bug. Keep
     # recognizable pixels so a fabricated zero-based PTS sequence cannot pass.
@@ -283,21 +285,45 @@ def test_hls_transport_origin_does_not_shift_vod_frames(processor, monkeypatch, 
     ], check=True, timeout=30)
     monkeypatch.setenv('TEST_VIDEO', str(playlist))
     processor.start_time, processor.end_time = start, 9
+    processor.next_enabled = next_enabled
+    processor._combined_crop, _, _ = processor._compute_combined_crop(*QUALITY_RESOLUTIONS[processor.quality])
+    processor.frame_queue = queue.Queue()  # Inspect real decoder output without OCR.
+    processor._decode_range(start, 9)
+    command = processor.ffmpeg_proc.args
+    assert command[command.index('-pix_fmt') + 1] == 'yuvj420p'
+    filters = command[command.index('-vf') + 1]
+    if next_enabled:
+        assert command[-3:] == ['-q:v', '2', 'pipe:1']
+        assert 'scale=' not in filters and 'crop=' not in filters
+    else:
+        assert '-q:v' not in command
+        assert command[-9:] == ['-fps_mode', 'passthrough', '-f', 'image2pipe',
+                                '-vcodec', 'mjpeg', '-pix_fmt', 'yuvj420p', 'pipe:1']
+        assert 'scale=' in filters and 'crop=' in filters
     observed = []
-
-    def observe(frame, timestamp, *_):
+    while not processor.frame_queue.empty():
+        item = processor.frame_queue.get_nowait()
+        if next_enabled:
+            frame, timestamp_ms, owned = item
+            assert owned is True
+            assert timestamp_ms % 1000 == 0
+            timestamp = timestamp_ms // 1000
+        else:
+            frame, timestamp = item
         pixels = cv2.imdecode(np.frombuffer(frame, np.uint8), cv2.IMREAD_COLOR)
+        expected_shape = (90, 160) if next_enabled else (processor._combined_crop[1], processor._combined_crop[0])
+        assert pixels.shape[:2] == expected_shape
+        with Image.open(io.BytesIO(frame)) as jpeg:
+            assert jpeg.layer == [(1, 2, 2, 0), (2, 1, 1, 0), (3, 1, 1, 0)]  # 4:2:0.
         blue, _, red = pixels.mean(axis=(0, 1))
         observed.append((timestamp, 'red' if red > blue else 'blue'))
-
-    processor.frame_processor.process_frame = observe
-    result = processor.process_vod_chunk()
     ticks = list(range(start, 9, 2))
     assert observed == [(tick, 'red' if tick < 6 else 'blue') for tick in ticks]
-    assert result['status'] == 'completed'
-    assert result['frames_processed'] == len(ticks)
-    assert result['decode_coverage']['first_sample_seconds'] == ticks[0]
-    assert result['decode_coverage']['last_sample_seconds'] == ticks[-1]
+    assert processor.ffmpeg_proc.returncode == 0
+    assert processor.decode_coverage['sampled_frames'] == len(ticks)
+    assert processor.decode_coverage['sample_interval_seconds'] == 2
+    assert processor.decode_coverage['first_sample_seconds'] == ticks[0]
+    assert processor.decode_coverage['last_sample_seconds'] == ticks[-1]
 
 
 def test_source_gap_cannot_be_hidden_by_fps_repeated_frames(processor, monkeypatch, tmp_path):

@@ -12,6 +12,8 @@ The orchestrator runs three workers:
 
 The two bounded queues apply backpressure. EOF signals and cancellation are separate: normal EOF drains everything; any worker failure, zero-frame decode, cancellation, or processing deadline fails the chunk. A worker claims a pending/queued chunk atomically before replacing old detections. A 35-minute lease allows the scheduler to recover abandoned workers; the processing deadline must remain shorter than that lease.
 
+With `SFDE_NEXT_ENABLED=true`, the decoder retains native full-frame geometry and fixes MJPEG encoding to `-q:v 2` to preserve evidence detail, not to guarantee detection accuracy or recover pixels already lost upstream. JPEGs can be larger; the existing 2 MiB bound, 4:2:0 chroma, sampling and timestamps are unchanged. Legacy decoding keeps its existing scale/crop and default JPEG rate control; CV and field-acceptance rules are unchanged.
+
 ## Profiles and templates
 
 `SFDE_PROFILE` is required JSON. `crop_region` and optional `igd_crop_region` are `[x, y, width, height]` fractions of the full video dimensions. `custom_edge` is a fraction of nameplate width; `opaque_edge` selects the overlay boundary. Regions must be finite, positive in size, and fit within the frame.
