@@ -9,18 +9,17 @@ import numpy as np
 
 
 class UILocator:
-    def __init__(self, templates_dir=None):
+    def __init__(self, templates_dir=None, *, old_templates=False):
         root = Path(templates_dir or Path(__file__).resolve().parent.parent / 'templates')
         self.bank = []
-        for old in (False, True):
-            for rank in ('bronze', 'silver', 'gold', 'diamond', 'legend'):
-                raw = cv2.imread(str(root / f'{"_" if old else ""}{rank}_480p.png'), -1)
-                if raw is None or raw.ndim != 3 or raw.shape[2] != 4:
-                    raise ValueError('Missing RGBA rank template')
-                for scale in (.85, 1., 1.15):
-                    im = cv2.resize(raw, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-                    self.bank.append((rank, im[:, :, :3], (im[:, :, 3] > 0).astype('uint8'),
-                                      f'{"_" if old else ""}{rank}_480p.png', scale))
+        # Frames are normalized by height once. The recording's template era is
+        # already known; searching both eras and three extra sizes was redundant.
+        for rank in ('bronze', 'silver', 'gold', 'diamond', 'legend'):
+            filename = f'{"_" if old_templates else ""}{rank}_480p.png'
+            raw = cv2.imread(str(root / filename), -1)
+            if raw is None or raw.ndim != 3 or raw.shape[2] != 4:
+                raise ValueError('Missing RGBA rank template')
+            self.bank.append((rank, raw[:, :, :3], (raw[:, :, 3] > 0).astype('uint8'), filename, 1.))
         raw = cv2.imread(str(root / 'right_edge_480p.png'), -1)
         if raw is None:
             raise ValueError('Missing right-edge template')
@@ -41,9 +40,7 @@ class UILocator:
 
     def locate(self, frame):
         H, W = frame.shape[:2]
-        # Only the frozen full-game 16:9 geometry is supported automatically.
-        if abs(W / H - 16 / 9) > .025:
-            return None
+        # Preserve native aspect and source coordinates, including 896x480 VODs.
         factor = 480 / H
         small = cv2.resize(frame, (round(W * factor), 480), interpolation=cv2.INTER_AREA)
         width = small.shape[1]

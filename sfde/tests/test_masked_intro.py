@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 import pytest
 
-from encounter_pipeline import EncounterPipeline, detection_id
+from encounter_pipeline import EncounterPipeline, BufferedEncounterPipeline, detection_id
 from frame_processor import FrameProcessor
 from ocr_runtime import create_ocr_reader
 
@@ -32,6 +32,7 @@ def native_processor():
     # Avoid constructing unrelated legacy detectors; one OCR model instance.
     processor = FrameProcessor.__new__(FrameProcessor)
     processor.profile = {}
+    processor.old_templates = False
     processor.ocr_confidence_threshold = .5
     processor.reader = create_ocr_reader()
     return processor
@@ -73,7 +74,8 @@ def test_native_fixture_integrity_provenance_and_saved_actual_output():
     assert saved['event']['username'] is None and saved['event']['confidence'] is None
 
 
-def test_real_shared_paddle_masked_intro_emits_one_source_proven_encounter(native_processor):
+@pytest.mark.parametrize('pipeline_type', [EncounterPipeline, BufferedEncounterPipeline])
+def test_real_shared_paddle_masked_intro_emits_one_source_proven_encounter(native_processor, pipeline_type):
     observed_reads, observed_locations = [], []
     current_ms = None
 
@@ -91,7 +93,7 @@ def test_real_shared_paddle_masked_intro_emits_one_source_proven_encounter(nativ
     # capability to prevent unrelated day-interstitial OCR on the two neighbors.
     processor = SimpleNamespace(locate_full_frame=locate,read_full_name=read)
     source, span, labels = MANIFEST['source'],MANIFEST['span'],MANIFEST['labels']
-    pipeline = EncounterPipeline(processor,recording=source['recordingIdentity'],
+    pipeline = pipeline_type(processor,recording=source['recordingIdentity'],
         vod_id=source['sourceId'],chunk_id='natural-masked-intro-regression',
         start_ms=span['startMs'],end_ms=span['endMsExclusive'],clock=None)
     pixels = {}

@@ -408,6 +408,10 @@ class EncounterPipeline:
         if W > 3840 or H > 2160:
             raise ValueError('Full-context source exceeds supported dimensions')
         location = self.processor.locate_full_frame(frame)
+        return self._analyze(jpeg, at_ms, frame, location)
+
+    def _analyze(self, jpeg, at_ms, frame, location):
+        H, W = frame.shape[:2]
         observation = {}
         if self.clock is not None:
             try:
@@ -488,6 +492,84 @@ class EncounterPipeline:
         event['_visible_clock_reads'] = []
         event.pop('_hero_previous',None)
         return [event]
+
+
+class BufferedEncounterPipeline(EncounterPipeline):
+    """Locate intros continuously; read clock fields only around an encounter.
+
+    Retain at most four raw pre-intro samples (eight seconds at 0.5fps), then
+    replay them through the same evidence selector. No clock search/OCR or run
+    tracking is needed during idle gameplay. After the 30s evidence window,
+    skip CV until 90s from the first owned intro, not 90s from publication.
+    The decoder still validates every source timestamp and drains every sample.
+    """
+    COOLDOWN_MS = 90000
+    PREFIGHT_MS = 8000
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.pending_frames = deque(maxlen=4)
+        self.last_input_ms = None
+        self.resume_ms = 0
+        self.stats = {'samples': 0, 'cooldown_samples': 0, 'locator_samples': 0,
+                      'evidence_samples': 0, 'buffer_replays': 0}
+
+    def _reset_window(self):
+        self.pre_clock.clear()
+        self.pre_scene.clear()
+        self.run_observation = ObservedRun()
+        self.continuity_epoch = 0
+        self.intro_present = False
+        self.misses = 0
+
+    def _selected(self, jpeg, at_ms, frame, location):
+        self.stats['evidence_samples'] += 1
+        return self._analyze(jpeg, at_ms, frame, location)
+
+    def consume(self, jpeg, at_ms):
+        if type(at_ms) is not int or at_ms < 0 or len(jpeg) > MAX_JPEG_BYTES:
+            raise ValueError('Sample exceeds timestamp/JPEG bounds')
+        if self.last_input_ms is not None and at_ms <= self.last_input_ms:
+            raise ValueError('Sample timestamps must strictly advance')
+        self.last_input_ms = at_ms
+        self.stats['samples'] += 1
+        output = []
+        if self.active and at_ms - self.active['anchor_ms'] > 30000:
+            output.extend(self.flush())
+        if self.active is None and at_ms < self.resume_ms:
+            self.stats['cooldown_samples'] += 1
+            return output
+        frame = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+        if frame is None:
+            raise ValueError('Could not decode full-context JPEG')
+        H, W = frame.shape[:2]
+        if W > 3840 or H > 2160:
+            raise ValueError('Full-context source exceeds supported dimensions')
+        self.stats['locator_samples'] += 1
+        location = self.processor.locate_full_frame(frame)
+        if self.active:
+            output.extend(self._selected(jpeg, at_ms, frame, location))
+        elif location:
+            # Preserve a preroll intro across the ownership boundary, but never
+            # use an unowned introduction to start the cooldown for this chunk.
+            was_intro = self.intro_present
+            self._reset_window()
+            self.intro_present = was_intro
+            for saved, timestamp in self.pending_frames:
+                if at_ms - timestamp <= self.PREFIGHT_MS:
+                    prior = cv2.imdecode(np.frombuffer(saved, np.uint8), cv2.IMREAD_COLOR)
+                    self.stats['buffer_replays'] += 1
+                    output.extend(self._selected(saved, timestamp, prior, None))
+            self.pending_frames.clear()
+            output.extend(self._selected(jpeg, at_ms, frame, location))
+        else:
+            self.misses += 1
+            if self.misses >= 2:
+                self.intro_present = False
+            self.pending_frames.append((jpeg, at_ms))
+        if self.active:
+            self.resume_ms = self.active['anchor_ms'] + self.COOLDOWN_MS
+        return output
 
 
 def _raw_result(response):

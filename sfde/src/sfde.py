@@ -205,7 +205,7 @@ class SFDEProcessor:
         return [w, h, x, y]
 
     def _init_next_pipeline(self):
-        from encounter_pipeline import EncounterPipeline, EncounterEnricher
+        from encounter_pipeline import BufferedEncounterPipeline, EncounterEnricher
         clock = None
         try:
             from clock_reader import ClockReader
@@ -216,7 +216,7 @@ class SFDEProcessor:
                 clock = ClockReader(self.frame_processor.reader)
             except Exception:
                 self.logger.warning('Optional clock initialization failed; retaining encounters', exc_info=True)
-        self.encounters = EncounterPipeline(self.frame_processor, recording=f'{self.source}:{self.vod_pk or self.vod_id}',
+        self.encounters = BufferedEncounterPipeline(self.frame_processor, recording=f'{self.source}:{self.vod_pk or self.vod_id}',
             vod_id=self.vod_id, chunk_id=self.chunk_id, start_ms=round(self.start_time*1000),
             end_ms=round(self.end_time*1000), clock=clock)
         # Keep the paid-attempt budget across in-process media retries.
@@ -987,6 +987,9 @@ class SFDEProcessor:
         if not self.shutdown.is_set():
             for event in self.encounters.flush():
                 self._enqueue_detection(event, attrs)
+            self.logger.info('next_analysis_finished', extra={
+                'event': 'next_analysis_finished', **self.encounters.stats,
+            })
 
     def _enqueue_detection(
         self, result: Dict[str, Any], metric_attrs: Dict[str, str]

@@ -1,0 +1,88 @@
+# NEXT processing time and encounter scheduling
+
+## 2026-10-22: measured cooldown
+
+Read-only analysis of 24 successful production (`main`) workflow runs yielded
+638 detection log entries in 58 completed chunks, and 589 unique within-chunk
+consecutive pairs across 20 VODs/streamers. We did not join unrelated chunks or
+infer elapsed time across different VODs. 545 pairs had different observed names,
+both OCR confidences >= .95, rank evidence, and no truncation flag.
+
+The shortest distinct fights confirmed against source pixels:
+
+| VOD | Streamer | Consecutive anchors | Gap |
+|---|---|---|---|
+| 2907124267 | the_moistbread | 5274 → 5384 | 110s |
+| 2907124267 | the_moistbread | 642 → 756 | 114s |
+| 2907124267 | the_moistbread | 2186 → 2300 | 114s |
+
+Other gaps below 120s were checked rather than rejected solely by OCR score:
+
+- `2907141614`, 484→494 and 816→826: repeated pictures of the same introductions.
+  The second pair changed from `YaBoiThompso` to `YaBoiThompson` in the OCR log;
+  the source still shows the same opponent.
+- `2907070579`, 2576→2642: the second production result has .645 OCR confidence.
+  Source frames 2638–2648 show rewards, fade and menu, not another PvP intro.
+
+Use **90 seconds from the immutable first owned intro**, not from publication
+or the end of its evidence window. This leaves 20 seconds before the shortest
+confirmed next fight, including the eight-second pre-fight buffer. A 180-second
+cooldown would overlap 109 distinct-name, high-confidence pairs in this sample
+(excluding the verified duplicate). This is an observed-data tradeoff, not a
+guarantee that a faster fight can never occur. Cuts, replays and future game
+changes can invalidate it. A new chunk/retry starts without inherited cooldown.
+
+Collected records, log hashes, pair statistics and source screenshots are retained
+under `.ignore/sfde-next/skip-analysis/`. Production runs include `39693829041`,
+`39697080948` and `39706427568`; all source checks are read-only, with no paid AI.
+
+## Implementation
+
+- Search five rank templates from the recording's known template era, at the
+  existing height-normalized size. Do not search both eras at three scales.
+- Remove the aspect-ratio early rejection. Native 896×480 Swordlless evidence
+  now reaches matching without stretching source pixels or changing thresholds.
+- `BufferedEncounterPipeline` retains at most four validated JPEG samples during
+  idle gameplay. When an intro is found, replay the preceding eight seconds
+  through the same local clock/evidence selector. Clock location, day OCR and
+  wins/crown work happen around encounters rather than on every gameplay sample.
+- Keep the existing 30-second evidence window, including independently selected
+  hero/name inputs. Then drain decoded samples without CV until anchor+90s.
+- FFmpeg still decodes and verifies timestamp coverage continuously. There is no
+  dynamic seek/restart or false claim of decoded coverage over a skipped source
+  range. `next_analysis_finished` reports the distinct sampled, cooldown,
+  locator, evidence and buffer-replay counts.
+- Pre-fight phase proof uses current buffered pixels, with fresh local context;
+  neither clock values nor hero results are inherited from previous fights.
+
+The clock's existing multiscale matcher is retained on selected samples.
+`matchTemplate`'s normalized modes are not scale-invariant. Feature-based
+registration such as SIFT would require separate accuracy/performance evidence.
+
+## Matched local wall time
+
+Same cached 480p30 source `2549030240`, range [2630,2820), two CPUs, 3 GiB,
+95 owned samples plus four preroll samples. Packaged before/after runtime;
+network disabled, shared PaddleOCR active, fake backend/model responses.
+Both runs execute decoder, CV and publication threads concurrently.
+
+| Measurement | Before | After |
+|---|---:|---:|
+| Processor elapsed wall time | 32.40s | 7.39s |
+| Runtime including processor initialization | 33.62s | 8.39s |
+
+Processor wall time improved 4.39× (77% reduction) on this clip. These are **not
+summed chunk durations** and do not predict hosted workflow wall time: real API,
+download, runner scheduling and image-build costs are excluded or mocked.
+
+Both runs retain the same two anchors, usernames, name states, local day/wins/
+lethal values and selected evidence timestamps. Four independent hero requests
+are still made (fake responses here, not hero-accuracy evidence). Full source
+coverage checks pass. After: 99 input samples, 29 cooldown samples, 70 locator
+samples, 30 evidence samples including eight buffered replays.
+
+Thirty existing frozen full-frame fixtures retain the same locator outcomes with
+the five-template bank. Native 896×480 positive/negative regressions cover the
+previously rejected rendition. Hosted workflow wall time and ongoing accuracy
+must be observed after validation deployment; this local report is not hosted
+performance evidence.

@@ -110,9 +110,10 @@ def test_next_lazy_locator_does_not_accept_or_read_streamer_profiles(monkeypatch
     factory = Mock(return_value=SimpleNamespace(locate=Mock(return_value={'observed': True})))
     monkeypatch.setattr('ui_locator.UILocator', factory)
     processor = FrameProcessor.__new__(FrameProcessor)
+    processor.old_templates = False
     # Deliberately no `profile` attribute: NEXT must not consult legacy settings.
     assert processor.locate_full_frame(np.zeros((36, 64, 3), np.uint8)) == {'observed': True}
-    factory.assert_called_once_with()
+    factory.assert_called_once_with(old_templates=False)
 
 
 @pytest.fixture(scope='module')
