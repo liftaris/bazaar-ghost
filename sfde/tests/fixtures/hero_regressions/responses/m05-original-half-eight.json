@@ -1,0 +1,105 @@
+{
+  "request_sha256": "53c516f41f69d44276dc18ace2bf557205db633eae4e99b444e83f1ad0775bfc",
+  "request": {
+    "model": "clef-flash",
+    "state": "The image is the full-height RIGHT HALF of a PvP matchup introduction from The Bazaar. It contains the ghost hero artwork and its identity-color glow or blur at the BOTTOM-RIGHT corner. Identify the ONE illustrated hero using the character descriptions and the identity glow. Ignore the real webcam person, usernames, titles and rank badges. Identify the underlying hero, allowing cosmetic skins. Never infer identity from the person, username or game items. Corner identity glow colors: Dooley = orange; Vanessa = red; The Dragons = teal; Pygmalien = blue; Jules = pink; Mak = green; Stelle = yellow; Karnok = magenta. The corner glow is a UI identity cue, distinct from clothing color and the central background. If the corner is covered by a webcam or overlay, use visible character artwork; do not invent a hidden glow.",
+    "questions": {
+      "hero": {
+        "type": "choice",
+        "instructions": "Which underlying hero is depicted in this single screen half? Select one hero. Cosmetic skins preserve hero identity.",
+        "criteria": {
+          "Dooley": "A small, rounded robot with a single large circular eye, mechanical limbs, and orange and grey coloring.",
+          "Vanessa": "A female pirate with dark hair, sharp facial features, a slim athletic build, and red coloring.",
+          "The Dragons": "Two youthful, horned, pointed-eared humanoid musicians, a singer and a guitarist, with purple and pink coloring.",
+          "Pygmalien": "A large, broad-built humanoid boar with a pig snout, protruding lower tusks, pointed ears, facial hair, and blue coloring.",
+          "Jules": "A four-armed, pointed-eared female chef with long hair and pink coloring.",
+          "Mak": "A male alchemist with an angular face, a full beard, thick eyebrows, and green coloring.",
+          "Stelle": "A dark-skinned female engineer and aviator with reddish-brown hair, goggles, and yellow coloring.",
+          "Karnok": "A rugged male hunter with an angular face and dark fur, also appearing as a large, shaggy, fanged beast. His primary colors are magenta and black."
+        }
+      }
+    },
+    "images": [
+      {
+        "id": "m05",
+        "side": "ghost",
+        "path": "../screen-halves/images/m05-ghost.png",
+        "sha256": "cea77078f7b290e8e9f9c388c04f3d74dce48058aac20c48913071849030bc4a",
+        "crop_xyxy": [
+          960,
+          0,
+          1920,
+          1080
+        ],
+        "source_path": "../screen-halves/../../clairic-pvp-2026-10-20/frames/m05-intro.jpg",
+        "source_sha256": "5187011b23493a46f93615de4d458c83f38073786ec90f5acaf5ab26886f2759"
+      }
+    ]
+  },
+  "attempts": [
+    {
+      "http_status": 200,
+      "elapsed_seconds": 1.427905043005012,
+      "response": {
+        "result": {
+          "model": "clef-flash",
+          "answers": {
+            "hero": {
+              "type": "choice",
+              "choice": "Dooley",
+              "probabilities": {
+                "Dooley": 0.859,
+                "Jules": 0.0117,
+                "Karnok": 0.0185,
+                "Mak": 0.0322,
+                "Pygmalien": 0.0205,
+                "Stelle": 0.0226,
+                "The Dragons": 0.0207,
+                "Vanessa": 0.0148
+              },
+              "confidence": 0.704
+            }
+          },
+          "usage": {
+            "input_tokens": 1614,
+            "output_tokens": 0
+          }
+        },
+        "success": true,
+        "errors": [],
+        "messages": []
+      }
+    }
+  ],
+  "success": true,
+  "response": {
+    "result": {
+      "model": "clef-flash",
+      "answers": {
+        "hero": {
+          "type": "choice",
+          "choice": "Dooley",
+          "probabilities": {
+            "Dooley": 0.859,
+            "Jules": 0.0117,
+            "Karnok": 0.0185,
+            "Mak": 0.0322,
+            "Pygmalien": 0.0205,
+            "Stelle": 0.0226,
+            "The Dragons": 0.0207,
+            "Vanessa": 0.0148
+          },
+          "confidence": 0.704
+        }
+      },
+      "usage": {
+        "input_tokens": 1614,
+        "output_tokens": 0
+      }
+    },
+    "success": true,
+    "errors": [],
+    "messages": []
+  },
+  "elapsed_seconds": 1.427905043005012
+}

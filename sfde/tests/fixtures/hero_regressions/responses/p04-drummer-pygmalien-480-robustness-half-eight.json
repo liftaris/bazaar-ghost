@@ -1,0 +1,53 @@
+{
+  "request_sha256": "e45c44a2087fd2f81d7d113757897a16d9c892ae5b49fc9c2441b1c4b2d6b083",
+  "request": {
+    "id": "p04-drummer-pygmalien-480",
+    "model": "@cf/cloudflare/clef-flash",
+    "side": "ghost",
+    "image_sha256": "3b0c0747f6ac4f8ef96fe360199101d5c3b2904acb2c486a16e8600dd1d6d6f0",
+    "prompts_file_sha256": "8a41051878cdc7a76b43e5bd69c5aa45cfa401fe06bb3897e34738f706803b99"
+  },
+  "attempt": {
+    "number": 4,
+    "id": "p04-drummer-pygmalien-480",
+    "request_sha256": "e45c44a2087fd2f81d7d113757897a16d9c892ae5b49fc9c2441b1c4b2d6b083",
+    "image_sha256": "3b0c0747f6ac4f8ef96fe360199101d5c3b2904acb2c486a16e8600dd1d6d6f0",
+    "started_at": "2026-10-21T22:50:39.422331Z",
+    "status": "success",
+    "reserved_input_tokens": 24576,
+    "reserved_gross_usd": 0.0009338879999999999,
+    "http_status": 200,
+    "input_tokens": 789,
+    "output_tokens": 0,
+    "estimated_gross_usd": 2.9982e-05,
+    "finished_at": "2026-10-21T22:50:40.003535Z",
+    "elapsed_seconds": 0.5806567000108771
+  },
+  "response": {
+    "success": true,
+    "result": {
+      "model": "clef-flash",
+      "answers": {
+        "hero": {
+          "type": "choice",
+          "choice": "Pygmalien",
+          "probabilities": {
+            "Dooley": 0.0319,
+            "Jules": 0.0313,
+            "Karnok": 0.0539,
+            "Mak": 0.0299,
+            "Pygmalien": 0.7598,
+            "Stelle": 0.0218,
+            "The Dragons": 0.0451,
+            "Vanessa": 0.0263
+          },
+          "confidence": 0.5271
+        }
+      },
+      "usage": {
+        "input_tokens": 789,
+        "output_tokens": 0
+      }
+    }
+  }
+}

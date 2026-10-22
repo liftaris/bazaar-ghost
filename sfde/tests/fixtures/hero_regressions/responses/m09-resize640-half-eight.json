@@ -1,0 +1,64 @@
+{
+  "request_sha256": "3d57980aa11e1a5e667347023e2d7a805aa8d3002dab73323b6516fb2635edce",
+  "request": {
+    "model": "@cf/cloudflare/clef-flash",
+    "id": "m09",
+    "side": "ghost",
+    "edge": 640,
+    "image": {
+      "path": "images/m09-ghost-640.png",
+      "sha256": "803d869f5310de0f27060f949c94f0dd1908faf0499f61588977a32d33e1fee8",
+      "width": 569,
+      "height": 640,
+      "bytes": 489025,
+      "content_type": "image/png"
+    },
+    "prompt_sha256": "edaa9e8ddb94fff67347df58b7b9dc5208cd2755fb5b30d342513c8317b03f7a"
+  },
+  "attempt": {
+    "number": 21,
+    "id": "m09",
+    "side": "ghost",
+    "edge": 640,
+    "request_sha256": "3d57980aa11e1a5e667347023e2d7a805aa8d3002dab73323b6516fb2635edce",
+    "image_sha256": "803d869f5310de0f27060f949c94f0dd1908faf0499f61588977a32d33e1fee8",
+    "prompt_sha256": "edaa9e8ddb94fff67347df58b7b9dc5208cd2755fb5b30d342513c8317b03f7a",
+    "started_at": "2026-10-21T22:41:27.262223Z",
+    "status": "success",
+    "reserved_input_tokens": 24576,
+    "reserved_gross_usd": 0.0009338879999999999,
+    "http_status": 200,
+    "input_tokens": 954,
+    "output_tokens": 0,
+    "estimated_gross_usd": 3.6252e-05,
+    "finished_at": "2026-10-21T22:41:27.870078Z",
+    "elapsed_seconds": 0.6076337630511262
+  },
+  "response": {
+    "success": true,
+    "result": {
+      "model": "clef-flash",
+      "answers": {
+        "hero": {
+          "type": "choice",
+          "choice": "Mak",
+          "probabilities": {
+            "Dooley": 0.0636,
+            "Jules": 0.0415,
+            "Karnok": 0.0751,
+            "Mak": 0.5675,
+            "Pygmalien": 0.1247,
+            "Stelle": 0.0386,
+            "The Dragons": 0.0608,
+            "Vanessa": 0.0282
+          },
+          "confidence": 0.2629
+        }
+      },
+      "usage": {
+        "input_tokens": 954,
+        "output_tokens": 0
+      }
+    }
+  }
+}

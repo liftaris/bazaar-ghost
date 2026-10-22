@@ -1,0 +1,1319 @@
+{
+  "version": 1,
+  "corpusId": "bg15-hero-regressions-v1",
+  "previouslySeen": true,
+  "blindHeldout": false,
+  "split": "regression",
+  "sourceTimes": "Nominal saved-file/upload/part/legacy annotation times; original source PTS and Twitch offsets unverified.",
+  "reviewPolicy": "AI provisional labels, not independent human adjudication. Hidden names and unsupported identities remain unknown. Skins are descriptive, not verified catalog IDs.",
+  "guardPolicy": "Replay parse_hero only for original eight-choice task protocols; experimental/ten-choice protocols remain separate. Guard .60/.30 is exploratory, not calibrated.",
+  "gaps": [
+    "No Karnok positive",
+    "Jules ghost is a dissolve, not a stable eligible positive",
+    "Known overlaid Pygmalien-to-Mak error still passes current guard",
+    "No fresh heldout or runtime accuracy claim; no clock/temporal promotion"
+  ],
+  "assets": {
+    "prompts/full-ten.json": {
+      "file": "prompts/full-ten.json",
+      "sha256": "375536c565ec58142ac63c693cf91fb837b892675c28287dd1c08cc0505a7e26",
+      "bytes": 16045,
+      "kind": "json",
+      "originalSha256": "375536c565ec58142ac63c693cf91fb837b892675c28287dd1c08cc0505a7e26",
+      "transformation": "none; byte-identical copy"
+    },
+    "prompts/half-ten.json": {
+      "file": "prompts/half-ten.json",
+      "sha256": "3f23cac2416d0215a1cf4aa41237667f58c603bd83ed93b166a0fc4ade7d0f2a",
+      "bytes": 5439,
+      "kind": "json",
+      "originalSha256": "3f23cac2416d0215a1cf4aa41237667f58c603bd83ed93b166a0fc4ade7d0f2a",
+      "transformation": "none; byte-identical copy"
+    },
+    "prompts/half-eight.json": {
+      "file": "prompts/half-eight.json",
+      "sha256": "8a41051878cdc7a76b43e5bd69c5aa45cfa401fe06bb3897e34738f706803b99",
+      "bytes": 4347,
+      "kind": "json",
+      "originalSha256": "8a41051878cdc7a76b43e5bd69c5aa45cfa401fe06bb3897e34738f706803b99",
+      "transformation": "none; byte-identical copy"
+    },
+    "prompts/cues.json": {
+      "file": "prompts/cues.json",
+      "sha256": "861a010fab0655724c666038077e987e5a1ba924cdf67b720493cf45c0d608c9",
+      "bytes": 6052,
+      "kind": "json",
+      "originalSha256": "861a010fab0655724c666038077e987e5a1ba924cdf67b720493cf45c0d608c9",
+      "transformation": "none; byte-identical copy"
+    },
+    "prompts/visibility.json": {
+      "file": "prompts/visibility.json",
+      "sha256": "d8b4552e2cde57b023ec5a8ba5fb23a21feeee1e366d2523c09a9becb48be938",
+      "bytes": 9559,
+      "kind": "json",
+      "originalSha256": "d8b4552e2cde57b023ec5a8ba5fb23a21feeee1e366d2523c09a9becb48be938",
+      "transformation": "none; byte-identical copy"
+    },
+    "images/m01-full.jpg": {
+      "file": "images/m01-full.jpg",
+      "sha256": "2f1f38972ba21406ba62b973998fff686098a335b5299c5e0d01956facbef817",
+      "bytes": 300567,
+      "kind": "image",
+      "originalSha256": "2f1f38972ba21406ba62b973998fff686098a335b5299c5e0d01956facbef817",
+      "transformation": "none; byte-identical copy",
+      "dimensions": [
+        1920,
+        1080
+      ]
+    },
+    "images/m01-ghost-original.png": {
+      "file": "images/m01-ghost-original.png",
+      "sha256": "93ac31edf3a292af916837d988324ffd149a14b819d6a42426e4b56514c1c73c",
+      "bytes": 1069673,
+      "kind": "image",
+      "originalSha256": "93ac31edf3a292af916837d988324ffd149a14b819d6a42426e4b56514c1c73c",
+      "transformation": "none; byte-identical copy",
+      "dimensions": [
+        960,
+        1080
+      ]
+    },
+    "images/m01-ghost-640.png": {
+      "file": "images/m01-ghost-640.png",
+      "sha256": "8c8a60b2148af8691939735124b92bed3f4980cfa7393720353d752df99759a1",
+      "bytes": 485270,
+      "kind": "image",
+      "originalSha256": "8c8a60b2148af8691939735124b92bed3f4980cfa7393720353d752df99759a1",
+      "transformation": "none; byte-identical copy",
+      "dimensions": [
+        569,
+        640
+      ]
+    },
+    "responses/m01-original-full-ten.json": {
+      "file": "responses/m01-original-full-ten.json",
+      "sha256": "cd243f92269fb7bed6d296fdff6322765176160179c9fd8eb8d9b2b198bcf2ea",
+      "bytes": 11079,
+      "kind": "json",
+      "originalSha256": "cd243f92269fb7bed6d296fdff6322765176160179c9fd8eb8d9b2b198bcf2ea",
+      "transformation": "none; byte-identical copy"
+    },
+    "responses/m01-original-half-eight.json": {
+      "file": "responses/m01-original-half-eight.json",
+      "sha256": "e0e4ca8ec121b47fbb04c9c372386f79408e0fef4173384c322f4feda8c1949f",
+      "bytes": 4328,
+      "kind": "json",
+      "originalSha256": "e0e4ca8ec121b47fbb04c9c372386f79408e0fef4173384c322f4feda8c1949f",
+      "transformation": "none; byte-identical copy"
+    },
+    "responses/m01-resize640-half-eight.json": {
+      "file": "responses/m01-resize640-half-eight.json",
+      "sha256": "4277d8f2fdc4be79a2f9705e9673afe40ed7f3413e1195abb864499194cd05eb",
+      "bytes": 1871,
+      "kind": "json",
+      "originalSha256": "4277d8f2fdc4be79a2f9705e9673afe40ed7f3413e1195abb864499194cd05eb",
+      "transformation": "none; byte-identical copy"
+    },
+    "images/m05-full.jpg": {
+      "file": "images/m05-full.jpg",
+      "sha256": "5187011b23493a46f93615de4d458c83f38073786ec90f5acaf5ab26886f2759",
+      "bytes": 309419,
+      "kind": "image",
+      "originalSha256": "5187011b23493a46f93615de4d458c83f38073786ec90f5acaf5ab26886f2759",
+      "transformation": "none; byte-identical copy",
+      "dimensions": [
+        1920,
+        1080
+      ]
+    },
+    "images/m05-ghost-original.png": {
+      "file": "images/m05-ghost-original.png",
+      "sha256": "cea77078f7b290e8e9f9c388c04f3d74dce48058aac20c48913071849030bc4a",
+      "bytes": 1064031,
+      "kind": "image",
+      "originalSha256": "cea77078f7b290e8e9f9c388c04f3d74dce48058aac20c48913071849030bc4a",
+      "transformation": "none; byte-identical copy",
+      "dimensions": [
+        960,
+        1080
+      ]
+    },
+    "images/m05-ghost-640.png": {
+      "file": "images/m05-ghost-640.png",
+      "sha256": "ff7f84bd3658d581d39f5077faf6534e5f772e259bf12b6813d1963d4140f763",
+      "bytes": 484880,
+      "kind": "image",
+      "originalSha256": "ff7f84bd3658d581d39f5077faf6534e5f772e259bf12b6813d1963d4140f763",
+      "transformation": "none; byte-identical copy",
+      "dimensions": [
+        569,
+        640
+      ]
+    },
+    "responses/m05-original-full-ten.json": {
+      "file": "responses/m05-original-full-ten.json",
+      "sha256": "5e183964507af0d50ae06edbe25d4c359f9cd5794d17bea0fdd55634b765409e",
+      "bytes": 11072,
+      "kind": "json",
+      "originalSha256": "5e183964507af0d50ae06edbe25d4c359f9cd5794d17bea0fdd55634b765409e",
+      "transformation": "none; byte-identical copy"
+    },
+    "responses/m05-original-half-eight.json": {
+      "file": "responses/m05-original-half-eight.json",
+      "sha256": "671d7bdd791e3ce1e379a05d071cfd5ec3f159321ad8fee14837b3e74483b843",
+      "bytes": 4330,
+      "kind": "json",
+      "originalSha256": "671d7bdd791e3ce1e379a05d071cfd5ec3f159321ad8fee14837b3e74483b843",
+      "transformation": "none; byte-identical copy"
+    },
+    "responses/m05-resize640-half-eight.json": {
+      "file": "responses/m05-resize640-half-eight.json",
+      "sha256": "6c4cd4919a01567f6f0e81ac76d86462c7987276ee94b21fddbc8098bf60f7eb",
+      "bytes": 1869,
+      "kind": "json",
+      "originalSha256": "6c4cd4919a01567f6f0e81ac76d86462c7987276ee94b21fddbc8098bf60f7eb",
+      "transformation": "none; byte-identical copy"
+    },
+    "images/m09-full.jpg": {
+      "file": "images/m09-full.jpg",
+      "sha256": "15df4239c21422c2fd36acfb7ad75bea20378a1616bfb0a6c9a7ea351fd5d109",
+      "bytes": 308348,
+      "kind": "image",
+      "originalSha256": "15df4239c21422c2fd36acfb7ad75bea20378a1616bfb0a6c9a7ea351fd5d109",
+      "transformation": "none; byte-identical copy",
+      "dimensions": [
+        1920,
+        1080
+      ]
+    },
+    "images/m09-ghost-original.png": {
+      "file": "images/m09-ghost-original.png",
+      "sha256": "64401260943cfd443b6afe597aaa3e914b822e9c3777c6eb5467f2bd0e308406",
+      "bytes": 1079234,
+      "kind": "image",
+      "originalSha256": "64401260943cfd443b6afe597aaa3e914b822e9c3777c6eb5467f2bd0e308406",
+      "transformation": "none; byte-identical copy",
+      "dimensions": [
+        960,
+        1080
+      ]
+    },
+    "images/m09-ghost-640.png": {
+      "file": "images/m09-ghost-640.png",
+      "sha256": "803d869f5310de0f27060f949c94f0dd1908faf0499f61588977a32d33e1fee8",
+      "bytes": 489025,
+      "kind": "image",
+      "originalSha256": "803d869f5310de0f27060f949c94f0dd1908faf0499f61588977a32d33e1fee8",
+      "transformation": "none; byte-identical copy",
+      "dimensions": [
+        569,
+        640
+      ]
+    },
+    "responses/m09-original-full-ten.json": {
+      "file": "responses/m09-original-full-ten.json",
+      "sha256": "54e42c2c077c6eb9688fef49fd71245afd7a8d92a7ea3c5990b148301624a705",
+      "bytes": 11070,
+      "kind": "json",
+      "originalSha256": "54e42c2c077c6eb9688fef49fd71245afd7a8d92a7ea3c5990b148301624a705",
+      "transformation": "none; byte-identical copy"
+    },
+    "responses/m09-original-half-eight.json": {
+      "file": "responses/m09-original-half-eight.json",
+      "sha256": "a3c5fdf754cd4db7a9c38580170f3cd9f16781d4b10b24b219702547f1d6be47",
+      "bytes": 4322,
+      "kind": "json",
+      "originalSha256": "a3c5fdf754cd4db7a9c38580170f3cd9f16781d4b10b24b219702547f1d6be47",
+      "transformation": "none; byte-identical copy"
+    },
+    "responses/m09-resize640-half-eight.json": {
+      "file": "responses/m09-resize640-half-eight.json",
+      "sha256": "1fdb25dcbd6cad6329d4a201776defd778dde91d5ed3eddb0f402e9fbd570ff9",
+      "bytes": 1867,
+      "kind": "json",
+      "originalSha256": "1fdb25dcbd6cad6329d4a201776defd778dde91d5ed3eddb0f402e9fbd570ff9",
+      "transformation": "none; byte-identical copy"
+    },
+    "images/m15-full.jpg": {
+      "file": "images/m15-full.jpg",
+      "sha256": "58aca671b223eeb1331639810adcb500ba53dff67a64ad72a38ff4221edb300a",
+      "bytes": 301772,
+      "kind": "image",
+      "originalSha256": "58aca671b223eeb1331639810adcb500ba53dff67a64ad72a38ff4221edb300a",
+      "transformation": "none; byte-identical copy",
+      "dimensions": [
+        1920,
+        1080
+      ]
+    },
+    "images/m15-ghost-original.png": {
+      "file": "images/m15-ghost-original.png",
+      "sha256": "5f4e6531cdc0fe87a2d4de9c8b6406d9ef250c09315d576d2caa6187edae5ff7",
+      "bytes": 1090615,
+      "kind": "image",
+      "originalSha256": "5f4e6531cdc0fe87a2d4de9c8b6406d9ef250c09315d576d2caa6187edae5ff7",
+      "transformation": "none; byte-identical copy",
+      "dimensions": [
+        960,
+        1080
+      ]
+    },
+    "images/m15-ghost-640.png": {
+      "file": "images/m15-ghost-640.png",
+      "sha256": "a73ed859c51cf366649419325ce45164d1afbce526b93df5a862001fce187562",
+      "bytes": 494572,
+      "kind": "image",
+      "originalSha256": "a73ed859c51cf366649419325ce45164d1afbce526b93df5a862001fce187562",
+      "transformation": "none; byte-identical copy",
+      "dimensions": [
+        569,
+        640
+      ]
+    },
+    "responses/m15-original-full-ten.json": {
+      "file": "responses/m15-original-full-ten.json",
+      "sha256": "dadb3f3730de3fa3b925da799ca935f4c8de2da6d210a8e2ab2f5aea62b13527",
+      "bytes": 11076,
+      "kind": "json",
+      "originalSha256": "dadb3f3730de3fa3b925da799ca935f4c8de2da6d210a8e2ab2f5aea62b13527",
+      "transformation": "none; byte-identical copy"
+    },
+    "responses/m15-original-half-eight.json": {
+      "file": "responses/m15-original-half-eight.json",
+      "sha256": "62eb1e2ed07754d71ba10d2bfb7b1eb1c12f14af1287ab5fefb47570d0ed32e2",
+      "bytes": 4336,
+      "kind": "json",
+      "originalSha256": "62eb1e2ed07754d71ba10d2bfb7b1eb1c12f14af1287ab5fefb47570d0ed32e2",
+      "transformation": "none; byte-identical copy"
+    },
+    "responses/m15-resize640-half-eight.json": {
+      "file": "responses/m15-resize640-half-eight.json",
+      "sha256": "ba948e8e0cba5b7945931a4248da65235be3fb3c151d48a513214155b370cb9f",
+      "bytes": 1868,
+      "kind": "json",
+      "originalSha256": "ba948e8e0cba5b7945931a4248da65235be3fb3c151d48a513214155b370cb9f",
+      "transformation": "none; byte-identical copy"
+    },
+    "responses/m15-earlier-half-ten.json": {
+      "file": "responses/m15-earlier-half-ten.json",
+      "sha256": "e5b91be11430cc476b29381607bdaa88c94454f3f87c5a348b5c6bb419a30f4e",
+      "bytes": 4988,
+      "kind": "json",
+      "originalSha256": "e5b91be11430cc476b29381607bdaa88c94454f3f87c5a348b5c6bb419a30f4e",
+      "transformation": "none; byte-identical copy"
+    },
+    "images/p01-youtube-dragons-360-full.png": {
+      "file": "images/p01-youtube-dragons-360-full.png",
+      "sha256": "7b87191d851f392a798e8d8666a4cfaff28942802a006df440fa78a0d9651037",
+      "bytes": 457433,
+      "kind": "image",
+      "originalSha256": "7b87191d851f392a798e8d8666a4cfaff28942802a006df440fa78a0d9651037",
+      "transformation": "none; byte-identical copy",
+      "dimensions": [
+        640,
+        360
+      ]
+    },
+    "images/p01-youtube-dragons-360-ghost.png": {
+      "file": "images/p01-youtube-dragons-360-ghost.png",
+      "sha256": "4413ed90fed7563937b0b90f9e415a4ed8548bf857717024c8afc99008a7e821",
+      "bytes": 157884,
+      "kind": "image",
+      "originalSha256": "4413ed90fed7563937b0b90f9e415a4ed8548bf857717024c8afc99008a7e821",
+      "transformation": "none; byte-identical copy",
+      "dimensions": [
+        320,
+        360
+      ]
+    },
+    "responses/p01-youtube-dragons-360-robustness-half-eight.json": {
+      "file": "responses/p01-youtube-dragons-360-robustness-half-eight.json",
+      "sha256": "983f23439e768fa07246db51f031b28bd8036fa38c6a24daa56a316597f27061",
+      "bytes": 1629,
+      "kind": "json",
+      "originalSha256": "983f23439e768fa07246db51f031b28bd8036fa38c6a24daa56a316597f27061",
+      "transformation": "none; byte-identical copy"
+    },
+    "images/p03-overlay-pygmalien-480-full.png": {
+      "file": "images/p03-overlay-pygmalien-480-full.png",
+      "sha256": "b8b42fe6346226924025f64b36ab549581f03c37b9ff53238c7a488fc0a3d3c7",
+      "bytes": 566829,
+      "kind": "image",
+      "originalSha256": "b8b42fe6346226924025f64b36ab549581f03c37b9ff53238c7a488fc0a3d3c7",
+      "transformation": "none; byte-identical copy",
+      "dimensions": [
+        852,
+        480
+      ]
+    },
+    "images/p03-overlay-pygmalien-480-ghost.png": {
+      "file": "images/p03-overlay-pygmalien-480-ghost.png",
+      "sha256": "15bf88057fd27966f59cfbce46bbb3bead2f015d31cd0a7f65373746a34b97ad",
+      "bytes": 283351,
+      "kind": "image",
+      "originalSha256": "15bf88057fd27966f59cfbce46bbb3bead2f015d31cd0a7f65373746a34b97ad",
+      "transformation": "none; byte-identical copy",
+      "dimensions": [
+        426,
+        480
+      ]
+    },
+    "responses/p03-overlay-pygmalien-480-robustness-half-eight.json": {
+      "file": "responses/p03-overlay-pygmalien-480-robustness-half-eight.json",
+      "sha256": "411f82893642bad9bd05cc8a4ef3305976396543fc631efd934ab4b55a8f4859",
+      "bytes": 1612,
+      "kind": "json",
+      "originalSha256": "411f82893642bad9bd05cc8a4ef3305976396543fc631efd934ab4b55a8f4859",
+      "transformation": "none; byte-identical copy"
+    },
+    "responses/p03-overlay-pygmalien-480-experimental-cues.json": {
+      "file": "responses/p03-overlay-pygmalien-480-experimental-cues.json",
+      "sha256": "a4f8f7051a18f579a5fece525a0e67eb2827c9da7a384d6b9b44aff2520954e9",
+      "bytes": 2345,
+      "kind": "json",
+      "originalSha256": "a4f8f7051a18f579a5fece525a0e67eb2827c9da7a384d6b9b44aff2520954e9",
+      "transformation": "none; byte-identical copy"
+    },
+    "responses/p03-overlay-pygmalien-480-experimental-visibility.json": {
+      "file": "responses/p03-overlay-pygmalien-480-experimental-visibility.json",
+      "sha256": "95fa3bd16e8bdc62e810eaae658b79c1eff1d2f04e24ee1268e15fc63fddb03c",
+      "bytes": 1945,
+      "kind": "json",
+      "originalSha256": "95fa3bd16e8bdc62e810eaae658b79c1eff1d2f04e24ee1268e15fc63fddb03c",
+      "transformation": "none; byte-identical copy"
+    },
+    "images/p04-drummer-pygmalien-480-full.png": {
+      "file": "images/p04-drummer-pygmalien-480-full.png",
+      "sha256": "713e11d8521189e761689332c2e92bef0247b9bb9b94b3681012401864d797cf",
+      "bytes": 832368,
+      "kind": "image",
+      "originalSha256": "713e11d8521189e761689332c2e92bef0247b9bb9b94b3681012401864d797cf",
+      "transformation": "none; byte-identical copy",
+      "dimensions": [
+        852,
+        480
+      ]
+    },
+    "images/p04-drummer-pygmalien-480-ghost.png": {
+      "file": "images/p04-drummer-pygmalien-480-ghost.png",
+      "sha256": "3b0c0747f6ac4f8ef96fe360199101d5c3b2904acb2c486a16e8600dd1d6d6f0",
+      "bytes": 281501,
+      "kind": "image",
+      "originalSha256": "3b0c0747f6ac4f8ef96fe360199101d5c3b2904acb2c486a16e8600dd1d6d6f0",
+      "transformation": "none; byte-identical copy",
+      "dimensions": [
+        426,
+        480
+      ]
+    },
+    "responses/p04-drummer-pygmalien-480-robustness-half-eight.json": {
+      "file": "responses/p04-drummer-pygmalien-480-robustness-half-eight.json",
+      "sha256": "2d9131d69f9b1ed4d0b61fa62e74bf297bb1e406cacf84b51d45d7dead4eac97",
+      "bytes": 1620,
+      "kind": "json",
+      "originalSha256": "2d9131d69f9b1ed4d0b61fa62e74bf297bb1e406cacf84b51d45d7dead4eac97",
+      "transformation": "none; byte-identical copy"
+    },
+    "images/p06-transition-jules-480-full.png": {
+      "file": "images/p06-transition-jules-480-full.png",
+      "sha256": "a1fe301f71631026e7acd1989d7deffa39a60aa267db36cbbcf723727711eada",
+      "bytes": 666408,
+      "kind": "image",
+      "originalSha256": "a1fe301f71631026e7acd1989d7deffa39a60aa267db36cbbcf723727711eada",
+      "transformation": "none; byte-identical copy",
+      "dimensions": [
+        852,
+        480
+      ]
+    },
+    "images/p06-transition-jules-480-ghost.png": {
+      "file": "images/p06-transition-jules-480-ghost.png",
+      "sha256": "50be11fb9260ed5ab7492a7cbed3d8c16a147585b2d062ec40da42c9c894c011",
+      "bytes": 197642,
+      "kind": "image",
+      "originalSha256": "50be11fb9260ed5ab7492a7cbed3d8c16a147585b2d062ec40da42c9c894c011",
+      "transformation": "none; byte-identical copy",
+      "dimensions": [
+        426,
+        480
+      ]
+    },
+    "responses/p06-transition-jules-480-robustness-half-eight.json": {
+      "file": "responses/p06-transition-jules-480-robustness-half-eight.json",
+      "sha256": "670f72a80f39334245946bf5ac07fd1880c4d2412f7ce533c7a596e2396c012b",
+      "bytes": 1614,
+      "kind": "json",
+      "originalSha256": "670f72a80f39334245946bf5ac07fd1880c4d2412f7ce533c7a596e2396c012b",
+      "transformation": "none; byte-identical copy"
+    }
+  },
+  "protocols": {
+    "original-full-ten": {
+      "promptFile": "prompts/full-ten.json",
+      "promptSelector": "clef-flash",
+      "answerKey": "ghost_hero",
+      "guardCompatible": false,
+      "guardScope": "not evaluated: historical ten-choice or experimental prompt protocol",
+      "preprocessing": "original full native1080 frame"
+    },
+    "original-half-eight": {
+      "promptFile": "prompts/half-eight.json",
+      "promptSelector": "ghost",
+      "answerKey": "hero",
+      "guardCompatible": true,
+      "guardScope": "eight-choice hero parser only; not an end-to-end current-runtime accuracy result",
+      "preprocessing": "full-height native960x1080 ghost half"
+    },
+    "resize640-half-eight": {
+      "promptFile": "prompts/half-eight.json",
+      "promptSelector": "ghost",
+      "answerKey": "hero",
+      "guardCompatible": true,
+      "guardScope": "eight-choice hero parser only; not an end-to-end current-runtime accuracy result",
+      "preprocessing": "full-height half; PIL LANCZOS max640/no upscale; RGB PNG"
+    },
+    "earlier-half-ten": {
+      "promptFile": "prompts/half-ten.json",
+      "promptSelector": "ghost",
+      "answerKey": "hero",
+      "guardCompatible": false,
+      "guardScope": "not evaluated: historical ten-choice or experimental prompt protocol",
+      "preprocessing": "full-height native960x1080 ghost half"
+    },
+    "robustness-half-eight": {
+      "promptFile": "prompts/half-eight.json",
+      "promptSelector": "ghost",
+      "answerKey": "hero",
+      "guardCompatible": true,
+      "guardScope": "eight-choice hero parser only; not an end-to-end current-runtime accuracy result",
+      "preprocessing": "native360/480 ghost half; no upscale; RGB PNG"
+    },
+    "experimental-cues": {
+      "promptFile": "prompts/cues.json",
+      "promptSelector": null,
+      "answerKey": "hero",
+      "guardCompatible": false,
+      "guardScope": "not evaluated: historical ten-choice or experimental prompt protocol",
+      "preprocessing": "same native480 p03 half; experimental three-question prompt"
+    },
+    "experimental-visibility": {
+      "promptFile": "prompts/visibility.json",
+      "promptSelector": "ghost",
+      "answerKey": "hero",
+      "guardCompatible": false,
+      "guardScope": "not evaluated: historical ten-choice or experimental prompt protocol",
+      "preprocessing": "same native480 p03 half; experimental extra visibility question"
+    }
+  },
+  "contexts": [
+    {
+      "id": "m01",
+      "file": "images/m01-full.jpg",
+      "hero": "pygmalien",
+      "side": "ghost",
+      "stableIntro": true,
+      "identityEligible": true,
+      "skinDescription": "cosmetic name unverified",
+      "verifiedSkinId": null,
+      "source": {
+        "platform": "twitch",
+        "recordingId": "2549030240",
+        "partId": null,
+        "nominalSeconds": 812,
+        "timeBasis": "cached_file_seconds",
+        "exactSourcePts": false,
+        "rendition": "1080p"
+      },
+      "recordingGroup": "twitch:2549030240",
+      "partition": "regression:twitch:2549030240",
+      "run": {
+        "id": "kripp-local-A",
+        "observedStartBracketSeconds": null,
+        "endResultSeconds": 3238,
+        "basis": "capture-reviewed same-Stelle result/loading/day1 reset chains; A start unknown"
+      },
+      "labelReview": {
+        "method": "AI provisional pixel review after baseline inference",
+        "independentHuman": false,
+        "sourceLabelsSha256": "8700bb3d75d78a9603da8ce170879236807cf4f70345319cbbf4de3e0140d5a6"
+      },
+      "inputs": [
+        {
+          "file": "images/m01-ghost-original.png",
+          "parentFile": "images/m01-full.jpg",
+          "cropXyxy": [
+            960,
+            0,
+            1920,
+            1080
+          ],
+          "resize": "none"
+        },
+        {
+          "file": "images/m01-ghost-640.png",
+          "parentFile": "images/m01-ghost-original.png",
+          "cropXyxy": [
+            0,
+            0,
+            960,
+            1080
+          ],
+          "resize": "PIL LANCZOS max640; no upscale"
+        }
+      ]
+    },
+    {
+      "id": "m05",
+      "file": "images/m05-full.jpg",
+      "hero": "dooley",
+      "side": "ghost",
+      "stableIntro": true,
+      "identityEligible": true,
+      "skinDescription": "cosmetic name unverified",
+      "verifiedSkinId": null,
+      "source": {
+        "platform": "twitch",
+        "recordingId": "2549030240",
+        "partId": null,
+        "nominalSeconds": 1622,
+        "timeBasis": "cached_file_seconds",
+        "exactSourcePts": false,
+        "rendition": "1080p"
+      },
+      "recordingGroup": "twitch:2549030240",
+      "partition": "regression:twitch:2549030240",
+      "run": {
+        "id": "kripp-local-A",
+        "observedStartBracketSeconds": null,
+        "endResultSeconds": 3238,
+        "basis": "capture-reviewed same-Stelle result/loading/day1 reset chains; A start unknown"
+      },
+      "labelReview": {
+        "method": "AI provisional pixel review after baseline inference",
+        "independentHuman": false,
+        "sourceLabelsSha256": "8700bb3d75d78a9603da8ce170879236807cf4f70345319cbbf4de3e0140d5a6"
+      },
+      "inputs": [
+        {
+          "file": "images/m05-ghost-original.png",
+          "parentFile": "images/m05-full.jpg",
+          "cropXyxy": [
+            960,
+            0,
+            1920,
+            1080
+          ],
+          "resize": "none"
+        },
+        {
+          "file": "images/m05-ghost-640.png",
+          "parentFile": "images/m05-ghost-original.png",
+          "cropXyxy": [
+            0,
+            0,
+            960,
+            1080
+          ],
+          "resize": "PIL LANCZOS max640; no upscale"
+        }
+      ]
+    },
+    {
+      "id": "m09",
+      "file": "images/m09-full.jpg",
+      "hero": "mak",
+      "side": "ghost",
+      "stableIntro": true,
+      "identityEligible": true,
+      "skinDescription": "cosmetic name unverified",
+      "verifiedSkinId": null,
+      "source": {
+        "platform": "twitch",
+        "recordingId": "2549030240",
+        "partId": null,
+        "nominalSeconds": 2638,
+        "timeBasis": "cached_file_seconds",
+        "exactSourcePts": false,
+        "rendition": "1080p"
+      },
+      "recordingGroup": "twitch:2549030240",
+      "partition": "regression:twitch:2549030240",
+      "run": {
+        "id": "kripp-local-A",
+        "observedStartBracketSeconds": null,
+        "endResultSeconds": 3238,
+        "basis": "capture-reviewed same-Stelle result/loading/day1 reset chains; A start unknown"
+      },
+      "labelReview": {
+        "method": "AI provisional pixel review after baseline inference",
+        "independentHuman": false,
+        "sourceLabelsSha256": "8700bb3d75d78a9603da8ce170879236807cf4f70345319cbbf4de3e0140d5a6"
+      },
+      "inputs": [
+        {
+          "file": "images/m09-ghost-original.png",
+          "parentFile": "images/m09-full.jpg",
+          "cropXyxy": [
+            960,
+            0,
+            1920,
+            1080
+          ],
+          "resize": "none"
+        },
+        {
+          "file": "images/m09-ghost-640.png",
+          "parentFile": "images/m09-ghost-original.png",
+          "cropXyxy": [
+            0,
+            0,
+            960,
+            1080
+          ],
+          "resize": "PIL LANCZOS max640; no upscale"
+        }
+      ]
+    },
+    {
+      "id": "m15",
+      "file": "images/m15-full.jpg",
+      "hero": "vanessa",
+      "side": "ghost",
+      "stableIntro": true,
+      "identityEligible": true,
+      "skinDescription": "wrestling/luchadora costume with mask and raised belt",
+      "verifiedSkinId": null,
+      "source": {
+        "platform": "twitch",
+        "recordingId": "2549030240",
+        "partId": null,
+        "nominalSeconds": 4100,
+        "timeBasis": "cached_file_seconds",
+        "exactSourcePts": false,
+        "rendition": "1080p"
+      },
+      "recordingGroup": "twitch:2549030240",
+      "partition": "regression:twitch:2549030240",
+      "run": {
+        "id": "kripp-local-B",
+        "observedStartBracketSeconds": [
+          3274,
+          3275
+        ],
+        "endResultSeconds": 5717,
+        "basis": "capture-reviewed same-Stelle result/loading/day1 reset chains; A start unknown"
+      },
+      "labelReview": {
+        "method": "AI provisional pixel review after baseline inference",
+        "independentHuman": false,
+        "sourceLabelsSha256": "8700bb3d75d78a9603da8ce170879236807cf4f70345319cbbf4de3e0140d5a6"
+      },
+      "inputs": [
+        {
+          "file": "images/m15-ghost-original.png",
+          "parentFile": "images/m15-full.jpg",
+          "cropXyxy": [
+            960,
+            0,
+            1920,
+            1080
+          ],
+          "resize": "none"
+        },
+        {
+          "file": "images/m15-ghost-640.png",
+          "parentFile": "images/m15-ghost-original.png",
+          "cropXyxy": [
+            0,
+            0,
+            960,
+            1080
+          ],
+          "resize": "PIL LANCZOS max640; no upscale"
+        }
+      ]
+    },
+    {
+      "id": "p01-youtube-dragons-360",
+      "file": "images/p01-youtube-dragons-360-full.png",
+      "hero": "the_dragons",
+      "side": "ghost",
+      "stableIntro": true,
+      "identityEligible": true,
+      "skinDescription": "Right side shows two horned pointed-eared figures: pink-clothed singer holding microphone and dark male guitarist with wing-shaped instrument; teal lower-corner glow.",
+      "verifiedSkinId": null,
+      "source": {
+        "platform": "youtube",
+        "recordingId": "0C6bxQsDj-s",
+        "partId": null,
+        "nominalSeconds": 218.0,
+        "exactSourcePts": false,
+        "timeBasis": "upload_seconds",
+        "rendition": "native360p"
+      },
+      "recordingGroup": "youtube:0C6bxQsDj-s",
+      "partition": "regression:youtube:0C6bxQsDj-s",
+      "run": null,
+      "labelReview": {
+        "method": "AI single-reviewer provisional pixel review before this experiment; development labels",
+        "independentHuman": false,
+        "sourceLabelsSha256": "2f38fea72cdb553bc48d36aaabf95a20d37e4f7e1501575ea80dfe482afaf6c6"
+      },
+      "inputs": [
+        {
+          "file": "images/p01-youtube-dragons-360-ghost.png",
+          "parentFile": "images/p01-youtube-dragons-360-full.png",
+          "cropXyxy": [
+            320,
+            0,
+            640,
+            360
+          ],
+          "resize": "none; native no-upscale"
+        }
+      ]
+    },
+    {
+      "id": "p03-overlay-pygmalien-480",
+      "file": "images/p03-overlay-pygmalien-480-full.png",
+      "hero": "pygmalien",
+      "side": "ghost",
+      "stableIntro": true,
+      "identityEligible": true,
+      "skinDescription": "Broad tusked boar lower face and snout, large hands, green jacket and book. Upper-right camera covers top of head, but visible boar face/build remain recognizable; not an identity-obstructed negative.",
+      "verifiedSkinId": null,
+      "source": {
+        "platform": "twitch",
+        "recordingId": "2614792902",
+        "partId": null,
+        "nominalSeconds": 95.5,
+        "exactSourcePts": false,
+        "timeBasis": "cached_file_seconds",
+        "rendition": "native480p"
+      },
+      "recordingGroup": "twitch:2614792902",
+      "partition": "regression:twitch:2614792902",
+      "run": null,
+      "labelReview": {
+        "method": "AI single-reviewer provisional pixel review before this experiment; development labels",
+        "independentHuman": false,
+        "sourceLabelsSha256": "2f38fea72cdb553bc48d36aaabf95a20d37e4f7e1501575ea80dfe482afaf6c6"
+      },
+      "inputs": [
+        {
+          "file": "images/p03-overlay-pygmalien-480-ghost.png",
+          "parentFile": "images/p03-overlay-pygmalien-480-full.png",
+          "cropXyxy": [
+            426,
+            0,
+            852,
+            480
+          ],
+          "resize": "none; native no-upscale"
+        }
+      ]
+    },
+    {
+      "id": "p04-drummer-pygmalien-480",
+      "file": "images/p04-drummer-pygmalien-480-full.png",
+      "hero": "pygmalien",
+      "side": "ghost",
+      "stableIntro": true,
+      "identityEligible": true,
+      "skinDescription": "Large boar drummer with pig snout, protruding tusks, broad arms and blue/purple clothing behind drums. Label derives from facial anatomy, not username or drum item.",
+      "verifiedSkinId": null,
+      "source": {
+        "platform": "bilibili",
+        "recordingId": "BV1FfL5zPEbH",
+        "partId": "29594289602",
+        "nominalSeconds": 1038.0,
+        "exactSourcePts": false,
+        "timeBasis": "part_relative_seconds",
+        "rendition": "native480p"
+      },
+      "recordingGroup": "bilibili:BV1FfL5zPEbH:29594289602",
+      "partition": "regression:bilibili:BV1FfL5zPEbH:29594289602",
+      "run": null,
+      "labelReview": {
+        "method": "AI single-reviewer provisional pixel review before this experiment; development labels",
+        "independentHuman": false,
+        "sourceLabelsSha256": "2f38fea72cdb553bc48d36aaabf95a20d37e4f7e1501575ea80dfe482afaf6c6"
+      },
+      "inputs": [
+        {
+          "file": "images/p04-drummer-pygmalien-480-ghost.png",
+          "parentFile": "images/p04-drummer-pygmalien-480-full.png",
+          "cropXyxy": [
+            426,
+            0,
+            852,
+            480
+          ],
+          "resize": "none; native no-upscale"
+        }
+      ]
+    },
+    {
+      "id": "p06-transition-jules-480",
+      "file": "images/p06-transition-jules-480-full.png",
+      "hero": "jules",
+      "side": "ghost",
+      "stableIntro": false,
+      "identityEligible": false,
+      "skinDescription": "Translucent right-side purple-haired, purple-skinned four-armed chef with white chef hat and spatula silhouette, over a dissolving battle board. Recognizable but transition is not a stable intro gate.",
+      "verifiedSkinId": null,
+      "source": {
+        "platform": "bilibili",
+        "recordingId": "BV1K114BiE7t",
+        "partId": "33726794861",
+        "nominalSeconds": 322.0,
+        "exactSourcePts": false,
+        "timeBasis": "part_relative_seconds",
+        "rendition": "native480p"
+      },
+      "recordingGroup": "bilibili:BV1K114BiE7t:33726794861",
+      "partition": "regression:bilibili:BV1K114BiE7t:33726794861",
+      "run": null,
+      "labelReview": {
+        "method": "AI single-reviewer provisional pixel review before this experiment; development labels",
+        "independentHuman": false,
+        "sourceLabelsSha256": "2f38fea72cdb553bc48d36aaabf95a20d37e4f7e1501575ea80dfe482afaf6c6"
+      },
+      "inputs": [
+        {
+          "file": "images/p06-transition-jules-480-ghost.png",
+          "parentFile": "images/p06-transition-jules-480-full.png",
+          "cropXyxy": [
+            426,
+            0,
+            852,
+            480
+          ],
+          "resize": "none; native no-upscale"
+        }
+      ]
+    }
+  ],
+  "responses": [
+    {
+      "id": "m01-original-full-ten",
+      "contextId": "m01",
+      "protocolId": "original-full-ten",
+      "file": "responses/m01-original-full-ten.json",
+      "inputFile": "images/m01-full.jpg",
+      "rawChoice": "Pygmalien",
+      "requestSha256": "8cd68d3434f39ffbc5c13c00cefd1f814c79b6c7799dc2701042ac33b7f8d474",
+      "expectedGuardHero": null,
+      "guardExpectedKnownFailure": false,
+      "notes": "Historical raw output retained unchanged; a passing guard is not correctness."
+    },
+    {
+      "id": "m01-original-half-eight",
+      "contextId": "m01",
+      "protocolId": "original-half-eight",
+      "file": "responses/m01-original-half-eight.json",
+      "inputFile": "images/m01-ghost-original.png",
+      "rawChoice": "Mak",
+      "requestSha256": "38c1a49f4ea0c1c6e9b61bd48bd1622fdde0a246f8874db8ae717cd39f0352ba",
+      "expectedGuardHero": null,
+      "guardExpectedKnownFailure": false,
+      "notes": "Historical raw output retained unchanged; a passing guard is not correctness."
+    },
+    {
+      "id": "m01-resize640-half-eight",
+      "contextId": "m01",
+      "protocolId": "resize640-half-eight",
+      "file": "responses/m01-resize640-half-eight.json",
+      "inputFile": "images/m01-ghost-640.png",
+      "rawChoice": "Pygmalien",
+      "requestSha256": "c4dd25e6c0ea031d2b920d1afb79ff6bf861a8abccce14de3b15bd34ccab4f2b",
+      "expectedGuardHero": null,
+      "guardExpectedKnownFailure": false,
+      "notes": "Historical raw output retained unchanged; a passing guard is not correctness."
+    },
+    {
+      "id": "m05-original-full-ten",
+      "contextId": "m05",
+      "protocolId": "original-full-ten",
+      "file": "responses/m05-original-full-ten.json",
+      "inputFile": "images/m05-full.jpg",
+      "rawChoice": "Stelle",
+      "requestSha256": "193c53439dbca20eb08e9e0be0e521b94e0eb14aa72d5a5256a6b74e03e5bd13",
+      "expectedGuardHero": null,
+      "guardExpectedKnownFailure": false,
+      "notes": "Historical raw output retained unchanged; a passing guard is not correctness."
+    },
+    {
+      "id": "m05-original-half-eight",
+      "contextId": "m05",
+      "protocolId": "original-half-eight",
+      "file": "responses/m05-original-half-eight.json",
+      "inputFile": "images/m05-ghost-original.png",
+      "rawChoice": "Dooley",
+      "requestSha256": "53c516f41f69d44276dc18ace2bf557205db633eae4e99b444e83f1ad0775bfc",
+      "expectedGuardHero": "dooley",
+      "guardExpectedKnownFailure": false,
+      "notes": "Historical raw output retained unchanged; a passing guard is not correctness."
+    },
+    {
+      "id": "m05-resize640-half-eight",
+      "contextId": "m05",
+      "protocolId": "resize640-half-eight",
+      "file": "responses/m05-resize640-half-eight.json",
+      "inputFile": "images/m05-ghost-640.png",
+      "rawChoice": "Dooley",
+      "requestSha256": "009c47671f013cbf80d05c5efd1dff9bb9da18719d86ddfb3902695bf8125779",
+      "expectedGuardHero": "dooley",
+      "guardExpectedKnownFailure": false,
+      "notes": "Historical raw output retained unchanged; a passing guard is not correctness."
+    },
+    {
+      "id": "m09-original-full-ten",
+      "contextId": "m09",
+      "protocolId": "original-full-ten",
+      "file": "responses/m09-original-full-ten.json",
+      "inputFile": "images/m09-full.jpg",
+      "rawChoice": "Stelle",
+      "requestSha256": "2ea84f504822f3caf4eb82443e283117d211dd299d69e7ee4956e242e0dbd907",
+      "expectedGuardHero": null,
+      "guardExpectedKnownFailure": false,
+      "notes": "Historical raw output retained unchanged; a passing guard is not correctness."
+    },
+    {
+      "id": "m09-original-half-eight",
+      "contextId": "m09",
+      "protocolId": "original-half-eight",
+      "file": "responses/m09-original-half-eight.json",
+      "inputFile": "images/m09-ghost-original.png",
+      "rawChoice": "Mak",
+      "requestSha256": "478b83f3bfa0a3de91ff2bacee5117e91ef11fe1857335fa20a37a25e44ae16b",
+      "expectedGuardHero": "mak",
+      "guardExpectedKnownFailure": false,
+      "notes": "Historical raw output retained unchanged; a passing guard is not correctness."
+    },
+    {
+      "id": "m09-resize640-half-eight",
+      "contextId": "m09",
+      "protocolId": "resize640-half-eight",
+      "file": "responses/m09-resize640-half-eight.json",
+      "inputFile": "images/m09-ghost-640.png",
+      "rawChoice": "Mak",
+      "requestSha256": "3d57980aa11e1a5e667347023e2d7a805aa8d3002dab73323b6516fb2635edce",
+      "expectedGuardHero": null,
+      "guardExpectedKnownFailure": false,
+      "notes": "Historical raw output retained unchanged; a passing guard is not correctness."
+    },
+    {
+      "id": "m15-original-full-ten",
+      "contextId": "m15",
+      "protocolId": "original-full-ten",
+      "file": "responses/m15-original-full-ten.json",
+      "inputFile": "images/m15-full.jpg",
+      "rawChoice": "Stelle",
+      "requestSha256": "879533f4eaf1577e1a14633f387c7bab7a578d1763ce8898adc2ce7750faf5ed",
+      "expectedGuardHero": null,
+      "guardExpectedKnownFailure": false,
+      "notes": "Historical raw output retained unchanged; a passing guard is not correctness."
+    },
+    {
+      "id": "m15-original-half-eight",
+      "contextId": "m15",
+      "protocolId": "original-half-eight",
+      "file": "responses/m15-original-half-eight.json",
+      "inputFile": "images/m15-ghost-original.png",
+      "rawChoice": "Vanessa",
+      "requestSha256": "4556f85c7a49e5d4065a758a78ee6829dc8101c450a452c40a551be62db4c078",
+      "expectedGuardHero": null,
+      "guardExpectedKnownFailure": false,
+      "notes": "Historical raw output retained unchanged; a passing guard is not correctness."
+    },
+    {
+      "id": "m15-resize640-half-eight",
+      "contextId": "m15",
+      "protocolId": "resize640-half-eight",
+      "file": "responses/m15-resize640-half-eight.json",
+      "inputFile": "images/m15-ghost-640.png",
+      "rawChoice": "Vanessa",
+      "requestSha256": "f176fe6fd55c0f112cd944bc52d554979e4210ac6b7092b845be90260a57cb85",
+      "expectedGuardHero": null,
+      "guardExpectedKnownFailure": false,
+      "notes": "Historical raw output retained unchanged; a passing guard is not correctness."
+    },
+    {
+      "id": "m15-earlier-half-ten",
+      "contextId": "m15",
+      "protocolId": "earlier-half-ten",
+      "file": "responses/m15-earlier-half-ten.json",
+      "inputFile": "images/m15-ghost-original.png",
+      "rawChoice": "unknown",
+      "requestSha256": "3344e3e425ca58dacc303ab6ff1dc23314113fb2c35c62f4c11587839450bcd5",
+      "expectedGuardHero": null,
+      "guardExpectedKnownFailure": false,
+      "notes": "Historical raw output retained unchanged; a passing guard is not correctness."
+    },
+    {
+      "id": "p01-youtube-dragons-360-robustness-half-eight",
+      "contextId": "p01-youtube-dragons-360",
+      "protocolId": "robustness-half-eight",
+      "file": "responses/p01-youtube-dragons-360-robustness-half-eight.json",
+      "inputFile": "images/p01-youtube-dragons-360-ghost.png",
+      "rawChoice": "The Dragons",
+      "requestSha256": "1d4875643b3a179e9dbe872623fb6d9b5c48f661a8f15dc1ef793cd9c3dd6747",
+      "expectedGuardHero": "the_dragons",
+      "guardExpectedKnownFailure": false,
+      "notes": "Historical raw output retained unchanged; a passing guard is not correctness."
+    },
+    {
+      "id": "p03-overlay-pygmalien-480-robustness-half-eight",
+      "contextId": "p03-overlay-pygmalien-480",
+      "protocolId": "robustness-half-eight",
+      "file": "responses/p03-overlay-pygmalien-480-robustness-half-eight.json",
+      "inputFile": "images/p03-overlay-pygmalien-480-ghost.png",
+      "rawChoice": "Mak",
+      "requestSha256": "201d85d4c81d9c90cf2935bb00fdf9490db7b22a1630c4d0e1fbc34bdaa04524",
+      "expectedGuardHero": "mak",
+      "guardExpectedKnownFailure": true,
+      "notes": "Historical raw output retained unchanged; a passing guard is not correctness."
+    },
+    {
+      "id": "p03-overlay-pygmalien-480-experimental-cues",
+      "contextId": "p03-overlay-pygmalien-480",
+      "protocolId": "experimental-cues",
+      "file": "responses/p03-overlay-pygmalien-480-experimental-cues.json",
+      "inputFile": "images/p03-overlay-pygmalien-480-ghost.png",
+      "rawChoice": "Mak",
+      "requestSha256": "0be1668a30ef8d1b4b91a0ce11a0745596b7e7d4d089c79e2954d2a72f06c5df",
+      "expectedGuardHero": null,
+      "guardExpectedKnownFailure": false,
+      "notes": "Historical raw output retained unchanged; a passing guard is not correctness."
+    },
+    {
+      "id": "p03-overlay-pygmalien-480-experimental-visibility",
+      "contextId": "p03-overlay-pygmalien-480",
+      "protocolId": "experimental-visibility",
+      "file": "responses/p03-overlay-pygmalien-480-experimental-visibility.json",
+      "inputFile": "images/p03-overlay-pygmalien-480-ghost.png",
+      "rawChoice": "Mak",
+      "requestSha256": "c11accb9af8bdd5fc175b9aefafb3a82c55022b89f7980ee4e3297827a204560",
+      "expectedGuardHero": null,
+      "guardExpectedKnownFailure": false,
+      "notes": "Historical raw output retained unchanged; a passing guard is not correctness."
+    },
+    {
+      "id": "p04-drummer-pygmalien-480-robustness-half-eight",
+      "contextId": "p04-drummer-pygmalien-480",
+      "protocolId": "robustness-half-eight",
+      "file": "responses/p04-drummer-pygmalien-480-robustness-half-eight.json",
+      "inputFile": "images/p04-drummer-pygmalien-480-ghost.png",
+      "rawChoice": "Pygmalien",
+      "requestSha256": "e45c44a2087fd2f81d7d113757897a16d9c892ae5b49fc9c2441b1c4b2d6b083",
+      "expectedGuardHero": "pygmalien",
+      "guardExpectedKnownFailure": false,
+      "notes": "Historical raw output retained unchanged; a passing guard is not correctness."
+    },
+    {
+      "id": "p06-transition-jules-480-robustness-half-eight",
+      "contextId": "p06-transition-jules-480",
+      "protocolId": "robustness-half-eight",
+      "file": "responses/p06-transition-jules-480-robustness-half-eight.json",
+      "inputFile": "images/p06-transition-jules-480-ghost.png",
+      "rawChoice": "Karnok",
+      "requestSha256": "3e0408f49531269807a66ba7e6458e5b3b1646ce6f7125a58a470552028f04a8",
+      "expectedGuardHero": null,
+      "guardExpectedKnownFailure": false,
+      "notes": "Historical raw output retained unchanged; a passing guard is not correctness."
+    }
+  ],
+  "nameVisibility": [
+    {
+      "id": "o01",
+      "file": "../frames/183785_1076.jpg",
+      "sha256": "8d15ce159117d75d1bfd2633963162ff62e80dd650f8e014da728ffbd5624277",
+      "dimensions": [
+        298,
+        54
+      ],
+      "legacyAnnotationKey": "183785/1076.jpg",
+      "historicalUsername": "bobbiaqu",
+      "historicalUsernameCorrected": true,
+      "historicalUsernameIsVisibleTruth": false,
+      "visibleText": null,
+      "searchableUsername": null,
+      "visibility": "partially_covered",
+      "displayForm": "plain_text",
+      "evidence": "Cat graphic intersects right text row with a trailing light glyph fragment at the overlap; right border and suffix unavailable.",
+      "synthetic": false,
+      "source": {
+        "platform": "twitch",
+        "recordingId": "2661076731",
+        "partId": null,
+        "nominalSeconds": 1076,
+        "timeBasis": "legacy_annotation_seconds",
+        "exactSourcePts": false,
+        "rendition": "480p",
+        "fullFrameParentSha256": null,
+        "fullFrameCropXyxy": null
+      },
+      "recordingGroup": "twitch:2661076731",
+      "partition": "regression:twitch:2661076731",
+      "run": null,
+      "labelReview": {
+        "method": "AI provisional pixel visibility review before Clef experiment; historical username not visibility truth",
+        "independentHuman": false,
+        "sourceLabelsSha256": "d127dbf1910d5d2f00dcc87fd14bdf419dd543468e5e66226e8fbdf455702328"
+      }
+    },
+    {
+      "id": "o02",
+      "file": "../frames/183785_1386.jpg",
+      "sha256": "8089526eb196be3699d36a277bd36eded2ca5462ec57e5d1d0574ce7a7a8bd0b",
+      "dimensions": [
+        298,
+        54
+      ],
+      "legacyAnnotationKey": "183785/1386.jpg",
+      "historicalUsername": "QuickFabl",
+      "historicalUsernameCorrected": true,
+      "historicalUsernameIsVisibleTruth": false,
+      "visibleText": null,
+      "searchableUsername": null,
+      "visibility": "uncertain",
+      "displayForm": "plain_text",
+      "evidence": "Cat covers right name field/border; last visible letter looks intact and hidden continuation cannot be decided from pixels. Do not use historical corrected username to declare completeness.",
+      "synthetic": false,
+      "source": {
+        "platform": "twitch",
+        "recordingId": "2661076731",
+        "partId": null,
+        "nominalSeconds": 1386,
+        "timeBasis": "legacy_annotation_seconds",
+        "exactSourcePts": false,
+        "rendition": "480p",
+        "fullFrameParentSha256": null,
+        "fullFrameCropXyxy": null
+      },
+      "recordingGroup": "twitch:2661076731",
+      "partition": "regression:twitch:2661076731",
+      "run": null,
+      "labelReview": {
+        "method": "AI provisional pixel visibility review before Clef experiment; historical username not visibility truth",
+        "independentHuman": false,
+        "sourceLabelsSha256": "d127dbf1910d5d2f00dcc87fd14bdf419dd543468e5e66226e8fbdf455702328"
+      }
+    },
+    {
+      "id": "o03",
+      "file": "../frames/217917_24300.jpg",
+      "sha256": "d8697839d3df5b10ec5f4d46d3c9d4b963fb78a1ca1d5e77cb3290a72d459f3c",
+      "dimensions": [
+        298,
+        54
+      ],
+      "legacyAnnotationKey": "217917/24300.jpg",
+      "historicalUsername": "Always.w",
+      "historicalUsernameCorrected": false,
+      "historicalUsernameIsVisibleTruth": false,
+      "visibleText": null,
+      "searchableUsername": null,
+      "visibility": "partially_covered",
+      "displayForm": "plain_text",
+      "evidence": "Item/board thumbnail overlay cuts a trailing glyph on text row; lower right plate border remains visible below the overlay.",
+      "synthetic": false,
+      "source": {
+        "platform": "twitch",
+        "recordingId": "2696509426",
+        "partId": null,
+        "nominalSeconds": 24300,
+        "timeBasis": "legacy_annotation_seconds",
+        "exactSourcePts": false,
+        "rendition": "480p",
+        "fullFrameParentSha256": null,
+        "fullFrameCropXyxy": null
+      },
+      "recordingGroup": "twitch:2696509426",
+      "partition": "regression:twitch:2696509426",
+      "run": null,
+      "labelReview": {
+        "method": "AI provisional pixel visibility review before Clef experiment; historical username not visibility truth",
+        "independentHuman": false,
+        "sourceLabelsSha256": "d127dbf1910d5d2f00dcc87fd14bdf419dd543468e5e66226e8fbdf455702328"
+      }
+    },
+    {
+      "id": "o04",
+      "file": "../frames/217917_25022.jpg",
+      "sha256": "3b0ae4b20a523a61d0ed7b1d286dbb39f361e166cf496bfef128562026deb178",
+      "dimensions": [
+        298,
+        54
+      ],
+      "legacyAnnotationKey": "217917/25022.jpg",
+      "historicalUsername": "Clooud",
+      "historicalUsernameCorrected": false,
+      "historicalUsernameIsVisibleTruth": false,
+      "visibleText": null,
+      "searchableUsername": null,
+      "visibility": "partially_covered",
+      "displayForm": "plain_text",
+      "evidence": "Thumbnail panel visibly cuts a rightmost character at the same text row; border below panel is still present.",
+      "synthetic": false,
+      "source": {
+        "platform": "twitch",
+        "recordingId": "2696509426",
+        "partId": null,
+        "nominalSeconds": 25022,
+        "timeBasis": "legacy_annotation_seconds",
+        "exactSourcePts": false,
+        "rendition": "480p",
+        "fullFrameParentSha256": null,
+        "fullFrameCropXyxy": null
+      },
+      "recordingGroup": "twitch:2696509426",
+      "partition": "regression:twitch:2696509426",
+      "run": null,
+      "labelReview": {
+        "method": "AI provisional pixel visibility review before Clef experiment; historical username not visibility truth",
+        "independentHuman": false,
+        "sourceLabelsSha256": "d127dbf1910d5d2f00dcc87fd14bdf419dd543468e5e66226e8fbdf455702328"
+      }
+    },
+    {
+      "id": "o05",
+      "file": "../frames/183785_1654.jpg",
+      "sha256": "57f4fcb221fd39cd777594a4d3e217c14ea4bf3ba548c971e5a80f0364bea9f1",
+      "dimensions": [
+        298,
+        54
+      ],
+      "legacyAnnotationKey": "183785/1654.jpg",
+      "historicalUsername": "xclydz",
+      "historicalUsernameCorrected": false,
+      "historicalUsernameIsVisibleTruth": false,
+      "visibleText": null,
+      "searchableUsername": null,
+      "visibility": "uncertain",
+      "displayForm": "plain_text",
+      "evidence": "Short visible word ends before cat overlay with apparent gap, but plate suffix/right boundary is hidden. Neither missing edge nor historical name proves letters are covered.",
+      "synthetic": false,
+      "source": {
+        "platform": "twitch",
+        "recordingId": "2661076731",
+        "partId": null,
+        "nominalSeconds": 1654,
+        "timeBasis": "legacy_annotation_seconds",
+        "exactSourcePts": false,
+        "rendition": "480p",
+        "fullFrameParentSha256": null,
+        "fullFrameCropXyxy": null
+      },
+      "recordingGroup": "twitch:2661076731",
+      "partition": "regression:twitch:2661076731",
+      "run": null,
+      "labelReview": {
+        "method": "AI provisional pixel visibility review before Clef experiment; historical username not visibility truth",
+        "independentHuman": false,
+        "sourceLabelsSha256": "d127dbf1910d5d2f00dcc87fd14bdf419dd543468e5e66226e8fbdf455702328"
+      }
+    }
+  ]
+}

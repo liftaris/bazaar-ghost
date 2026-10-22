@@ -1,0 +1,80 @@
+{
+  "request_sha256": "0be1668a30ef8d1b4b91a0ce11a0745596b7e7d4d089c79e2954d2a72f06c5df",
+  "request": {
+    "id": "p03-overlay-pygmalien-480",
+    "model": "@cf/cloudflare/clef-flash",
+    "prompt_sha256": "861a010fab0655724c666038077e987e5a1ba924cdf67b720493cf45c0d608c9",
+    "image_sha256": "15bf88057fd27966f59cfbce46bbb3bead2f015d31cd0a7f65373746a34b97ad"
+  },
+  "attempt": {
+    "number": 3,
+    "id": "p03-overlay-pygmalien-480",
+    "request_sha256": "0be1668a30ef8d1b4b91a0ce11a0745596b7e7d4d089c79e2954d2a72f06c5df",
+    "image_sha256": "15bf88057fd27966f59cfbce46bbb3bead2f015d31cd0a7f65373746a34b97ad",
+    "started_at": "2026-10-21T23:01:19.557418Z",
+    "status": "success",
+    "reserved_input_tokens": 24576,
+    "reserved_gross_usd": 0.0009338879999999999,
+    "http_status": 200,
+    "input_tokens": 1700,
+    "output_tokens": 0,
+    "estimated_gross_usd": 6.46e-05,
+    "finished_at": "2026-10-21T23:01:20.682175Z",
+    "elapsed_seconds": 1.1246704409713857
+  },
+  "response": {
+    "success": true,
+    "result": {
+      "model": "clef-flash",
+      "answers": {
+        "hero": {
+          "type": "choice",
+          "choice": "Mak",
+          "probabilities": {
+            "Dooley": 0.0239,
+            "Jules": 0.0372,
+            "Karnok": 0.127,
+            "Mak": 0.6376,
+            "Pygmalien": 0.0803,
+            "Stelle": 0.0245,
+            "The Dragons": 0.0448,
+            "Vanessa": 0.0247
+          },
+          "confidence": 0.3534
+        },
+        "identity_glow": {
+          "type": "choice",
+          "choice": "unknown",
+          "probabilities": {
+            "blue": 0.0759,
+            "covered": 0.2886,
+            "green": 0.05,
+            "magenta": 0.0294,
+            "orange": 0.0239,
+            "pink": 0.0222,
+            "red": 0.0088,
+            "teal": 0.0656,
+            "unknown": 0.3939,
+            "yellow": 0.0417
+          },
+          "confidence": 0.1719
+        },
+        "scene": {
+          "type": "choice",
+          "choice": "stable_intro",
+          "probabilities": {
+            "not_intro": 0.124,
+            "obscured": 0.0646,
+            "stable_intro": 0.7484,
+            "transition": 0.063
+          },
+          "confidence": 0.4449
+        }
+      },
+      "usage": {
+        "input_tokens": 1700,
+        "output_tokens": 0
+      }
+    }
+  }
+}

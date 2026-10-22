@@ -1,0 +1,46 @@
+{
+  "model": "clef-flash",
+  "state": "Evaluate this one full-height screen half from The Bazaar. It may be a stable matchup introduction, a transition, ordinary gameplay, or an obscured view; do not assume it is an intro. The target is the illustrated game hero, not a webcam person. Answer the hero, identity_glow, and scene questions independently from visible evidence. Separate persistent anatomy from cosmetic costume, pose, skin, clothing, glove, weapon, item, lighting and background colors. A costume does not change the underlying hero. A legitimate identity-glow band is a broad soft UI glow at the lower outer corner of an introduction, at the bottom left or bottom right of this half. Clothing, gloves, spell effects, central gold lines, board themes and ordinary colored scenery are not this corner glow. Known identity-glow mappings are Dooley=orange, Vanessa=red, The Dragons=teal, Pygmalien=blue, Jules=pink, Mak=green, Stelle=yellow, Karnok=magenta. Visible legitimate glow is allowed hero evidence, including when character artwork is partly hidden, but do not invent a hidden glow or infer its observed color from your hero answer. Conversely, do not force your hero answer to agree with your color answer. Read each visual cue separately; agreement is not proof of correctness. Ignore usernames, streamer identity, titles, patch text and game items as hero identity evidence. The hero choice is forced among eight options and is not by itself an acceptance decision.",
+  "questions": {
+    "hero": {
+      "type": "choice",
+      "instructions": "Which underlying illustrated hero is supported by the visible anatomy and any legitimate visible identity glow? Preserve identity across cosmetics. Boar snout and tusks, robot eye/body, number of arms, human facial anatomy, pointed ears and paired musicians matter more than clothing color. Choose one of the eight heroes. Do not copy another question's answer merely to make the outputs consistent.",
+      "criteria": {
+        "Dooley": "A small rounded mechanical robot with one large central circular eye and mechanical limbs; may wear a costume or hat.",
+        "Vanessa": "A human female pirate, generally dark-haired with sharp human facial features and a slim athletic build; two arms; costumes and poses vary.",
+        "The Dragons": "Two youthful horned, pointed-eared humanoid musicians: a singer and a guitarist, sometimes with wing-like shapes; identify the pair rather than a clothing palette.",
+        "Pygmalien": "A large broad-built humanoid boar with a pig snout, protruding tusks, pointed boar ears and often facial hair; cosmetics can dress the same boar in different occupations.",
+        "Jules": "A four-armed pointed-eared female chef, often with a chef hat, apron, utensils and long hair; chef cosmetics retain her four-armed anatomy.",
+        "Mak": "A human male alchemist with an angular human face, beard and thick eyebrows; often potion or occult themes; a human nose rather than a boar snout and tusks.",
+        "Stelle": "A dark-skinned female engineer or aviator with reddish-brown hair and goggles, often mechanical or aviation gear; costumes vary.",
+        "Karnok": "A rugged male hunter with angular face and dark fur, also appearing as a large shaggy fanged beast; preserve hunter/beast identity across skins."
+      }
+    },
+    "identity_glow": {
+      "type": "choice",
+      "instructions": "What color is the actually visible broad soft INTRO IDENTITY-GLOW band at the lower outer corner? Inspect that UI band independently of hero identity, outfit, glove, hand effect, board palette or central light. Unknown means absent, ambiguous, not established as an intro identity band, or not reliably one color. Covered means the relevant lower-corner region is occluded so the band cannot be read. Do not infer a color from which hero you chose.",
+      "criteria": {
+        "orange": "A clearly visible orange identity-glow band at the lower outer intro corner.",
+        "red": "A clearly visible red identity-glow band at the lower outer intro corner.",
+        "teal": "A clearly visible teal or cyan-green identity-glow band at the lower outer intro corner.",
+        "blue": "A clearly visible blue or blue-violet identity-glow band at the lower outer intro corner.",
+        "pink": "A clearly visible pink or pink-purple identity-glow band at the lower outer intro corner.",
+        "green": "A clearly visible green identity-glow band at the lower outer intro corner.",
+        "yellow": "A clearly visible yellow identity-glow band at the lower outer intro corner.",
+        "magenta": "A clearly visible strong magenta identity-glow band at the lower outer intro corner.",
+        "unknown": "No reliable color: band absent, ambiguous, or not identifiable as an intro identity-glow band.",
+        "covered": "The relevant lower-corner region is hidden by an overlay or obstruction, preventing observation of the identity glow."
+      }
+    },
+    "scene": {
+      "type": "choice",
+      "instructions": "What scene status can be established from this half's visible pixels alone? Do not infer a stable introduction just because a hero or corner color was selected, or because this prompt mentions introductions. A color strip by itself does not establish the whole scene.",
+      "criteria": {
+        "stable_intro": "An established, visually stable matchup-introduction layout with sufficiently coherent intro artwork/UI context; an ordinary localized overlay or masked username need not invalidate an otherwise established intro.",
+        "transition": "Visible dissolve, fade, mixed introduction and gameplay layers, or unstable transition rather than a coherent settled introduction.",
+        "not_intro": "A recognizable different scene such as combat board, item reveal, shopping or other gameplay, not the large-portrait introduction.",
+        "obscured": "The view is mostly hidden, blank, black or insufficient to establish scene context, even if a small UI/color fragment remains visible."
+      }
+    }
+  }
+}

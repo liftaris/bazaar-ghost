@@ -65,8 +65,8 @@ BG-117 staged references plus 20 capture frames and the retained chat negative.
 From the repository root, load `sfde/tests/fixtures/encounters/manifest.json`,
 resolve each `file` relative to its directory, check SHA-256 and decode with
 OpenCV/Pillow at native size. Inspect source groups and nulls before selecting
-task-specific labels. This is **not yet wired into the existing fixture loader**;
-future tests/feature integration require parent approval.
+task-specific labels. This manifest is exercised by `test_next_processor.py`
+for offline locator, mask, fade and reset regressions.
 
 In `../annotations.json`, **only** `219543/5654.jpg` changes:
 `validated: true` → `false`, plus `quarantine_reason` explaining the parent's
