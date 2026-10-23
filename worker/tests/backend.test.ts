@@ -339,11 +339,12 @@ it("searches with a zero threshold, filters confidence, and returns stable pagin
   );
   expect((await (await SELF.fetch("http://local/api/v1/streamers/quality")).json<any>()).items).toEqual([]);
 });
-it("concurrent GitHub dispatches respect the global chunk limit", async () => {
+it("concurrent GitHub dispatches submit all chunks exactly once regardless of the old slot limit", async () => {
   await statement(
     env,
     "INSERT INTO processing_config(key,value) VALUES('max_concurrent_chunks','2')",
   ).run();
+  const pending = await planned();
   vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 204 }));
   await Promise.all([
     dispatch(
@@ -368,7 +369,10 @@ it("concurrent GitHub dispatches respect the global chunk limit", async () => {
   expect(
     (await one(env, "SELECT count(*) AS n FROM chunks WHERE status='queued'"))!
       .n,
-  ).toBe(2);
+  ).toBe(pending.length);
+  const dispatched = vi.mocked(fetch).mock.calls.flatMap(([, init]) =>
+    JSON.parse(JSON.parse(String(init!.body)).inputs.chunk_uuids));
+  expect(dispatched.sort()).toEqual(pending.map(chunk => chunk.id).sort());
   for (const [, init] of vi.mocked(fetch).mock.calls) {
     const data = JSON.parse(String(init!.body));
     expect(data.ref).toBe("dev");
@@ -509,11 +513,31 @@ it('retries failed processing after backoff, fences the old owner, and stops at 
   expect((await one(env, 'SELECT attempt_count FROM chunks WHERE id=?', chunk.id))!.attempt_count).toBe(3);
 });
 
-it('counts expired unclaimed dispatches toward the retry budget', async () => {
+it('leaves GitHub-queued chunks alone until a runner claims them', async () => {
+  const [chunk] = await planned();
+  const queuedAt = '2000-01-01T00:00:00Z';
+  await statement(env, "UPDATE chunks SET status='queued',queued_at=? WHERE id=?", queuedAt, chunk.id).run();
+  for (let sweep = 0; sweep < 3; sweep++) {
+    await recover(env);
+    expect(await one(env, 'SELECT status,attempt_count,lease_expires_at FROM chunks WHERE id=?', chunk.id))
+      .toEqual({ status: 'queued', attempt_count: 0, lease_expires_at: null });
+  }
+  expect((await claim(env, chunk.id, queuedAt)).claimed).toBe(true);
+  const started = await one(env, 'SELECT attempt_count,lease_expires_at FROM chunks WHERE id=?', chunk.id);
+  expect(started!.attempt_count).toBe(1);
+  expect(Date.parse(started!.lease_expires_at)).toBeGreaterThan(Date.now());
+});
+
+it('counts reported pre-claim failures toward the retry budget', async () => {
   const [chunk] = await planned();
   for (let attempt = 1; attempt <= 3; attempt++) {
-    await statement(env, "UPDATE chunks SET status='queued',queued_at='2000-01-01T00:00:00Z' WHERE id=?", chunk.id).run();
+    const queuedAt = `2026-10-23T00:0${attempt}:00Z`;
+    await statement(env, "UPDATE chunks SET status='queued',queued_at=? WHERE id=?", queuedAt, chunk.id).run();
+    const failed = await api('/api/processor/fail-queued', 'POST', { ids: [chunk.id], queued_at: queuedAt });
+    expect((await failed.json<any>()).updated).toBe(1);
+    await statement(env, "UPDATE chunks SET updated_at='2000-01-01T00:00:00Z' WHERE id=?", chunk.id).run();
     await recover(env);
-    expect(await one(env, 'SELECT status,attempt_count FROM chunks WHERE id=?', chunk.id)).toEqual({ status: attempt < 3 ? 'pending' : 'failed', attempt_count: attempt });
+    expect(await one(env, 'SELECT status,attempt_count FROM chunks WHERE id=?', chunk.id))
+      .toEqual({ status: attempt < 3 ? 'pending' : 'failed', attempt_count: attempt });
   }
 });

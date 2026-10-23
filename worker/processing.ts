@@ -163,19 +163,17 @@ export async function recover(env: Env) {
   await statement(
     env,
     `UPDATE chunks SET
-      status=CASE WHEN attempt_count+CASE WHEN status='queued' THEN 1 ELSE 0 END<3 THEN 'pending' ELSE 'failed' END,
-      attempt_count=attempt_count+CASE WHEN status='queued' THEN 1 ELSE 0 END,
+      status=CASE WHEN attempt_count<3 THEN 'pending' ELSE 'failed' END,
       claim_token=NULL,lease_expires_at=NULL,
       last_error=CASE WHEN status='failed' THEN last_error ELSE 'Lease expired' END,updated_at=?
-      WHERE (status='processing' AND lease_expires_at<?) OR (status='queued' AND queued_at<?)
+      WHERE (status='processing' AND lease_expires_at<?)
         OR (status='failed' AND attempt_count<3 AND updated_at<=?)`,
     time,
     time,
-    new Date(Date.now() - 35 * 60_000).toISOString(),
     new Date(Date.now() - 5 * 60_000).toISOString(),
   ).run();
 }
-export async function pendingVideos(env: Env, limit = 3, platformsOnly = false) {
+export async function pendingVideos(env: Env, limit = 100, platformsOnly = false) {
   const time = now();
   return rows(env, `SELECT v.id FROM vod_processing_context v
     WHERE v.processing_enabled=1 AND v.ready_for_processing=1 AND v.availability='available'
@@ -191,22 +189,6 @@ export async function pendingVideos(env: Env, limit = 3, platformsOnly = false) 
 export async function dispatchAutomatic(env: Env, vodId: number) {
   const allowed = await one(env, `SELECT 1 FROM vods v WHERE id=? AND ${automaticVideoPredicate}`, vodId);
   return allowed ? dispatch(env, vodId, true) : [];
-}
-export async function refillProcessing(env: Env, preferredVodId: number) {
-  if (env.ENVIRONMENT !== 'validation' || env.OUTBOUND_ENABLED !== 'true' || !env.GITHUB_TOKEN) return;
-  const configured = await one(env, "SELECT value FROM processing_config WHERE key='max_concurrent_chunks'");
-  const maximum = integer(Number(configured?.value ?? 10), 'max_concurrent_chunks', 1, 256);
-  const available = async () => Number((await one(env,
-    "SELECT count(*) AS n FROM chunks WHERE status IN('queued','processing')"))!.n) < maximum;
-  if (!await available()) return;
-  // Finish the recording that just freed a slot before starting more recordings.
-  // dispatchAutomatic repeats all eligibility checks and reserves slots atomically.
-  await dispatchAutomatic(env, preferredVodId);
-  if (!await available()) return;
-  for (const vod of await pendingVideos(env)) {
-    if (vod.id !== preferredVodId) await dispatchAutomatic(env, vod.id);
-    if (!await available()) break;
-  }
 }
 export async function dispatch(env: Env, vodId: number, automatic = false) {
   const pending = await plan(env, vodId);
@@ -228,16 +210,6 @@ export async function dispatch(env: Env, vodId: number, automatic = false) {
   const profileJoin = next ? '' : 'JOIN sfde_profiles p ON p.id=v.effective_profile_id';
   const profileFence = profile ? `AND p.id=? AND ${profile.sql}` : '';
   const profileArgs = profile ? [details.profile.id, ...profile.args] : [];
-  const configured = await one(
-    env,
-    "SELECT value FROM processing_config WHERE key='max_concurrent_chunks'",
-  );
-  const maxActive = integer(
-    Number(configured?.value ?? 10),
-    "max_concurrent_chunks",
-    1,
-    256,
-  );
   const dispatched: string[] = [];
   for (let offset = 0; offset < pending.length; offset += 256) {
     const queuedAt = now();
@@ -247,14 +219,13 @@ export async function dispatch(env: Env, vodId: number, automatic = false) {
         .map((c) =>
           statement(
             env,
-            `UPDATE chunks SET status='queued',queued_at=?,updated_at=? WHERE id=? AND status='pending' AND (scheduled_for IS NULL OR scheduled_for<=?) AND EXISTS(SELECT 1 FROM vod_processing_context v ${profileJoin} WHERE v.id=chunks.vod_id AND v.processing_enabled=1 AND v.ready_for_processing=1 AND v.availability='available' ${profileFence} AND v.old_templates=? ${automatic ? `AND ${automaticVideoPredicate}` : ''}) AND (SELECT count(*) FROM chunks WHERE status IN('queued','processing'))<? RETURNING id`,
+            `UPDATE chunks SET status='queued',queued_at=?,updated_at=? WHERE id=? AND status='pending' AND (scheduled_for IS NULL OR scheduled_for<=?) AND EXISTS(SELECT 1 FROM vod_processing_context v ${profileJoin} WHERE v.id=chunks.vod_id AND v.processing_enabled=1 AND v.ready_for_processing=1 AND v.availability='available' ${profileFence} AND v.old_templates=? ${automatic ? `AND ${automaticVideoPredicate}` : ''}) RETURNING id`,
             queuedAt,
             queuedAt,
             c.id,
             queuedAt,
             ...profileArgs,
             details.old_templates,
-            maxActive,
           ),
         ),
     );
@@ -374,7 +345,7 @@ export async function updateChunk(
   token: string | null,
   data: Record<string, any>,
 ) {
-  const chunk = await owned(env, id, token);
+  await owned(env, id, token);
   requireValue(
     ["processing", "completed", "failed"].includes(data.status),
     "Invalid chunk status",
@@ -417,12 +388,6 @@ export async function updateChunk(
     now(),
   ).run();
   if (!result.meta.changes) throw new HttpError(409, "Lost chunk claim");
-  if (data.status !== 'processing' && env.ENVIRONMENT === 'validation' && env.OUTBOUND_ENABLED === 'true') {
-    // The completed result is durable before requesting more work. A queue outage
-    // must not turn a successful chunk into a failure; the cron remains a fallback.
-    await env.JOBS.send({ type: 'refill-processing', id: chunk.vod_id }).catch(error =>
-      console.log(JSON.stringify({ event: 'processing_refill_enqueue_failed', chunk_id: id, error: String(error) })));
-  }
   if (data.status === "completed") {
     // A finished Recording may match another Recording; failures are retried by the scheduled sweep.
     const vod = await one(env, "SELECT v.id FROM chunks c JOIN vods v ON v.id=c.vod_id WHERE c.id=? AND v.status='completed'", id);

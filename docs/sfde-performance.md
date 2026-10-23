@@ -164,17 +164,19 @@ model installation or container build on this path. Manual/local workflows
 without a published runtime retain their existing build path.
 
 The prepare job caches Streamlink downloads, installs yt-dlp/Deno only for
-YouTube, and skips resolver installation for local runs. Automatic workflow
-matrices may run all globally reserved chunks concurrently; manual matrices
-retain the four-job limit. The backend's existing atomic queued/processing cap
-is still authoritative.
+YouTube, and skips resolver installation for local runs. GitHub Actions owns
+execution capacity and queues matrix jobs until runners are available.
 
-A terminal validation chunk enqueues a refill message after persisting its
-result. The consumer prioritizes eligible pending chunks of that recording,
-then other automatic candidates, using the same atomic slot reservations and
-operator eligibility checks. Duplicate callbacks/messages cannot exceed the
-global cap. Failed chunks retain the existing retry/backoff policy. The periodic
-sweep remains the recovery path if a queue handoff fails.
+The backend submits eligible chunks in batches of at most 256, without a global
+slot cap or completion-triggered refill. Atomic state transitions prevent
+duplicate dispatch and recheck operator eligibility. The three-minute sweep
+selects up to 100 pending recordings, independently of running or queued work.
+
+Waiting in Actions does not expire a chunk or consume an attempt. The execution
+lease starts when a processor claims its chunk. Failure callbacks and expired
+execution leases retain the existing three-attempt retry policy. A lost callback
+for an unclaimed job needs reconciliation against GitHub before retrying; queue
+age alone is not evidence of failure. Such a job cannot block other recordings.
 
 Each successful chunk adds a `timing_<chunk-id>.json` artifact and job-summary
 section with its runtime identity, image-pull seconds, queue-to-claim seconds,

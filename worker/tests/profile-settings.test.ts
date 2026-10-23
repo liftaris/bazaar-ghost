@@ -62,7 +62,7 @@ function afterDispatchRead(action: () => Promise<unknown>): D1Database {
     get(db, key) {
       if (key === 'prepare') return (sql: string) => {
         const prepared = db.prepare(sql);
-        if (!sql.includes("key='max_concurrent_chunks'")) return prepared;
+        if (!sql.includes('SELECT * FROM sfde_profiles WHERE id=?')) return prepared;
         const wrap = (prepared: D1PreparedStatement): D1PreparedStatement => new Proxy(prepared, {
           get(stmt, method) {
             if (method === 'bind') return (...args: unknown[]) => wrap(stmt.bind(...args));

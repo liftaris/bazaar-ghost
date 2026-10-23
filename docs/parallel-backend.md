@@ -18,7 +18,7 @@ The Cloudflare environment retains its `validation` name and isolated resources 
 - Discovery scans recent Bazaar archives every 15 minutes, including offline creators. Each discovered creator is reconciled immediately.
 - Each known creator is also reconciled hourly, with due times spread across the hour. This catches mixed-game archives absent from Twitch's game-specific discovery feed. Dedicated `stream.offline` subscriptions trigger immediate reconciliation once enrolled.
 - Cataloging uses Helix archive pagination and per-video chapter queries. It stops at the configured start boundary or 100 recent archives. Deleted Twitch accounts do not repeatedly fail the queue.
-- Processing runs every three minutes. D1 limits Cloudflare to eight queued/processing chunks across all workflows, independently of production's capacity. Failed chunks retry after five minutes, up to three attempts; completed chunks are retained.
+- Every three minutes, the backend submits eligible chunks from up to 100 pending recordings. GitHub Actions queues and runs the jobs according to runner capacity. Failed chunks retry after five minutes, up to three attempts; completed chunks are retained. Waiting for a runner does not consume an attempt.
 - Availability reconciliation runs twice daily. YouTube/Bilibili automatic ingestion remains paused because its separate provider-access limitations are unresolved; current Supabase production's automatic VOD pipeline is Twitch.
 
 Cloudflare processing was opened on October 17, 2026, with the fixed boundary `2026-10-16T00:00:00.000Z`. This catches recent recordings while excluding the existing historical catalog. Capacity started at four chunks and was raised to eight after 15 successful chunks with no failures. This is a fixed start date, not a moving expiration window: unfinished eligible recordings remain eligible tomorrow. The boundary is checked by scheduler selection, queued-job handling and atomic dispatch reservation. Missing/invalid publication dates fail closed. An explicit administrator dispatch can deliberately process an older recording.
@@ -34,11 +34,12 @@ The controls live in Cloudflare D1 `processing_config`:
 | Key | Parallel value | Effect |
 |---|---|---|
 | `automatic_vods_since` | `2026-10-16T00:00:00.000Z` | Earliest automatic publication time; also bounds Twitch catalog reads |
-| `max_concurrent_chunks` | `8` | Global Cloudflare chunk capacity |
 | `automatic_vods` | absent | No per-VOD allowlist |
 | `twitch_discovery_streamer_ids` | absent | No per-streamer discovery allowlist |
 
 Per-platform switches live in `platform_settings` (see [processing and platform controls](cloudflare-migration.md#processing-and-platform-controls)). Migration `0010` carried the earlier pause over: Twitch fully on; YouTube and Bilibili ingestion/discovery off, processing on.
+
+The former `max_concurrent_chunks` setting is ignored. GitHub Actions owns execution capacity; queued and processing chunks no longer reserve backend slots.
 
 To pause new automatic OCR dispatch while leaving active jobs to finish, set `automatic_vods` to the JSON text `[]`. Queued processing messages recheck this gate; it also fences atomic reservations. Delete that entry to resume. Preserve the start boundary when resuming, otherwise the older catalog becomes eligible. Streamer-level processing settings and profile changes use the existing administrator API, including active-job conflict protection.
 

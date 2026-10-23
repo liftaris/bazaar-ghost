@@ -207,7 +207,7 @@ it('requires catalog authentication for lifecycle callbacks', async () => {
   expect((await SELF.fetch('http://local/rest/v1/platform_ingestion_dispatch')).status).toBe(401);
 });
 
-it('connects a requested candidate through catalog planning, workflow dispatch, chunk completion and scheduled tail continuation', async () => {
+it('dispatches a requested recording in full and completes its chunks without scheduler refills', async () => {
   const ticket = await queued();
   await startIngestionRunner(runtime(), owner(ticket));
   const job = (await claimJob(runtime(), owner(ticket)))[0];
@@ -219,28 +219,28 @@ it('connects a requested candidate through catalog planning, workflow dispatch, 
     title: 'The Bazaar fixture', duration_seconds: 19800, bazaar_chapters: [0, 19800] }, ...fence });
   await finishJob(env, { id: job.id, token: job.lease_token, status: 'completed' });
   await finishIngestionRunner(runtime(), { ...owner(ticket), outcome: 'success' });
-  // Keep the new account's next poll in the future; test OCR tail independently.
+  // Keep the new account's next poll in the future; test OCR independently.
   await statement(env, "UPDATE platform_ingestion_jobs SET next_attempt_at='2999-01-01T00:00:00Z' WHERE kind='account'").run();
   const pending: any[] = [], context = { ...runtime(), JOBS: { send: async (value: any) => { pending.push(value); } } as unknown as Queue };
   let imagePath: string | undefined;
-  for (const expected of [10, 1]) {
-    await scheduled({ cron: '*/3 * * * *' } as ScheduledController, context);
-    expect(pending).toEqual([{ type: 'process', id: video.id }]);
-    await handleJob(context, pending.shift());
-    const request = JSON.parse(vi.mocked(fetch).mock.calls.at(-1)![1]!.body as string);
-    expect(request.inputs.source).toBe('youtube'); expect(request.ref).toBe('migration/cloudflare');
-    const ids = JSON.parse(request.inputs.chunk_uuids); expect(ids).toHaveLength(expected);
-    for (const id of ids) {
-      const token = (await claim(env, id, request.inputs.queued_at)).claim_token!;
-      if (!imagePath) {
-        const image = await upload(env, new Request('http://local', { method: 'PUT', headers: { 'X-Claim-Token': token, 'Content-Type': 'image/jpeg' },
-          body: new Uint8Array([255, 216, 255, 217]) }), id, 12, 'detection');
-        imagePath = image.storage_path;
-        await publish(env, id, token, [{ id: crypto.randomUUID(), username: 'Fixture opponent', confidence: 0.95, rank: 'gold',
-          frame_time_seconds: 12, storage_path: imagePath }]);
-      }
-      await updateChunk(env, id, token, { status: 'completed', frames_processed: 900 });
+  await scheduled({ cron: '*/3 * * * *' } as ScheduledController, context);
+  expect(pending).toEqual([{ type: 'process', id: video.id }]);
+  await handleJob(context, pending.shift());
+  const request = JSON.parse(vi.mocked(fetch).mock.calls.at(-1)![1]!.body as string);
+  expect(request.inputs.source).toBe('youtube'); expect(request.ref).toBe('migration/cloudflare');
+  const ids = JSON.parse(request.inputs.chunk_uuids); expect(ids).toHaveLength(11);
+  for (const id of ids) {
+    const token = (await claim(env, id, request.inputs.queued_at)).claim_token!;
+    if (!imagePath) {
+      const image = await upload(env, new Request('http://local', { method: 'PUT', headers: { 'X-Claim-Token': token, 'Content-Type': 'image/jpeg' },
+        body: new Uint8Array([255, 216, 255, 217]) }), id, 12, 'detection');
+      imagePath = image.storage_path;
+      await publish(env, id, token, [{ id: crypto.randomUUID(), username: 'Fixture opponent', confidence: 0.95, rank: 'gold',
+        frame_time_seconds: 12, storage_path: imagePath }]);
     }
+    await updateChunk(env, id, token, { status: 'completed', frames_processed: 900 });
+    await scheduled({ cron: '*/3 * * * *' } as ScheduledController, context);
+    expect(pending).toEqual([]);
   }
   expect((await one(env, 'SELECT status FROM vods WHERE id=?', video.id))!.status).toBe('completed');
   expect(await rows(env, "SELECT status,count(*) AS n FROM chunks GROUP BY status")).toEqual([{ status: 'completed', n: 11 }]);

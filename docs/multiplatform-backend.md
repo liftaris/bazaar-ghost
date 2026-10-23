@@ -87,7 +87,7 @@ The Worker validates source identity, ownership, account settings, duration, and
 
 The processor resolves a VOD by `(source, source_id)` or its internal ID. Its normalized context includes account enablement, profile, and template era. Independent YouTube/Bilibili creators do not require invented Twitch streamer records.
 
-The existing processing workflow accepts `source=twitch|youtube|bilibili`, with the platform's external ID in `vod_id`. The Worker dispatches that workflow on the branch paired with its environment. A global chunk cap bounds active work, and the workflow runs at most four matrix workers simultaneously.
+The existing processing workflow accepts `source=twitch|youtube|bilibili`, with the platform's external ID in `vod_id`. The Worker dispatches that workflow on the branch paired with its environment. GitHub Actions queues the chunk jobs and manages execution capacity; the backend does not reserve slots.
 
 Cloudflare's existing ownership safeguards remain: atomic claim tokens, queued-at dispatch fencing, bounded streamed uploads, screenshot-before-detection validation, deterministic detection IDs, and stale-runner rejection. R2 paths add a platform namespace for new non-Twitch images while retaining chunk and attempt identity. Imported screenshot keys remain readable at their historical paths. Signed playback locators are resolved per chunk and are not stored in the catalog or printed in decoder logs.
 

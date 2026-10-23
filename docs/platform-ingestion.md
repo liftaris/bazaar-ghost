@@ -121,7 +121,7 @@ The workflow has no GitHub schedule and currently has no checked-in `workflow_ca
 
 Environment preflight verifies HTTPS origin, unauthenticated `/health`, and GitHub branch pairing before sending catalog/processor keys. The Worker separately checks the requested environment before dispatching OCR. Validation resource names, credentials, queues, and callbacks are separate from dev and production. Weekly deletion of the existing dev bucket does not apply to validation.
 
-The OCR dispatcher selects at most three due platform videos per ingestion run and retains the global active-chunk cap. Once provider scheduling is activated, the same three-minute `processPending` path independently dispatches remaining pending OCR chunks across sources, including a long recording's tail after earlier chunks finish. No ingestion poll is required merely to continue that OCR work. Validation's bounded Twitch acceptance has exercised this continuation on the actual three-minute schedule.
+The OCR dispatcher selects at most three due platform videos per ingestion run and submits all their eligible chunks in bounded workflow batches. The three-minute `processPending` path independently submits chunks from up to 100 pending recordings across sources. GitHub Actions queues the jobs and manages execution capacity. No ingestion poll or completion callback is required to release capacity for another recording.
 
 Video count alone is not a source-hours budget: a long archive can create many pending chunks. Broad discovery/enrollment should follow measured queue age, error rates, and processing cost, with an explicit capacity policy.
 

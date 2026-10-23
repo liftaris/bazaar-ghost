@@ -119,7 +119,7 @@ it('allows changing an account profile when active work has an independent video
 
 it('does not queue a stale profile when the account changes after dispatch loads its profile',async()=>{
   let changed=false;
-  const database=afterDatabaseRead("key='max_concurrent_chunks'",async()=>{
+  const database=afterDatabaseRead('SELECT * FROM sfde_profiles WHERE id=?',async()=>{
     await updateAccount(env,account.id,{sfde_profile_id:3});
     changed=true;
   });

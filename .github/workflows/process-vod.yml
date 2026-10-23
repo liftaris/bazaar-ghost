@@ -116,7 +116,7 @@ jobs:
         run: pip install 'yt-dlp[default]==2026.8.19'
       - id: prepare
         run: python scripts/vod_workflow.py prepare
-      - if: failure()
+      - if: failure() || cancelled()
         run: python scripts/vod_workflow.py fail-queued
 
   process-chunk:
@@ -127,9 +127,6 @@ jobs:
     timeout-minutes: 50
     strategy:
       fail-fast: false
-      # Automatic dispatch has already reserved globally bounded slots. Do not
-      # reserve eight slots while allowing only four of them to start here.
-      max-parallel: ${{ inputs.queued_at != '' && 256 || 4 }}
       matrix:
         chunk_id: ${{ fromJson(needs.prepare.outputs.chunk_uuids) }}
     env:
@@ -192,7 +189,7 @@ jobs:
             -e OTEL_EXPORTER_OTLP_ENDPOINT -e OTEL_EXPORTER_OTLP_HEADERS \
             "$SFDE_IMAGE"
       - name: Fail unclaimed chunk
-        if: failure()
+        if: failure() || cancelled()
         run: python scripts/vod_workflow.py fail-chunk
       - name: Write summary
         if: always()

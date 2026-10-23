@@ -1,9 +1,9 @@
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { claim, dispatchAutomatic, pendingVideos, plan, refillProcessing, updateChunk } from '../processing';
+import { claim, dispatchAutomatic, pendingVideos, plan, updateChunk } from '../processing';
 import { statement, one } from '../http';
 import { Twitch } from '../twitch';
-import { enqueueCatalog } from '../jobs';
+import { enqueueCatalog, handleJob } from '../jobs';
 
 beforeEach(async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 204 })));
@@ -52,40 +52,50 @@ it('pins workflow code and image to the tested deployment even if the branch adv
   expect(payload.inputs).toMatchObject({runtime_image: runtime, processor_revision: revision});
 });
 
-it('refills a completed recording tail promptly without exceeding the global reservation cap', async () => {
+it('dispatches an entire recording despite unrelated queued and processing chunks', async () => {
   await statement(env, "UPDATE vods SET duration_seconds=18000,bazaar_chapters='[0,18000]' WHERE id=2").run();
-  await statement(env, "INSERT INTO processing_config(key,value) VALUES('max_concurrent_chunks','8')").run();
-  const send = vi.fn().mockResolvedValue(undefined);
-  const hosted = { ...env, ENVIRONMENT: 'validation', OUTBOUND_ENABLED: 'true', GITHUB_TOKEN: 'test-only', JOBS: {send} as unknown as Queue };
+  await plan(env, 1);
+  await plan(env, 3);
+  await statement(env, "UPDATE chunks SET status='queued' WHERE vod_id=1").run();
+  await statement(env, "UPDATE chunks SET status='processing' WHERE vod_id=3").run();
+  const hosted = { ...env, ENVIRONMENT: 'validation', OUTBOUND_ENABLED: 'true', GITHUB_TOKEN: 'test-only' };
   const first = await dispatchAutomatic(hosted, 2);
-  expect(first).toHaveLength(8);
-  const token = (await claim(env, first[0])).claim_token!;
-  await updateChunk(hosted, first[0], token, {status:'completed'});
-  expect(send).toHaveBeenCalledWith({type:'refill-processing', id:2});
-  // A duplicated queue delivery is normal. Only one freed slot may be reserved.
-  await Promise.all([refillProcessing(hosted, 2), refillProcessing(hosted, 2)]);
-  expect(await one(env,"SELECT count(*) AS n FROM chunks WHERE status IN('queued','processing')")).toEqual({n:8});
-  expect(await one(env,"SELECT count(*) AS n FROM chunks WHERE status='pending'")).toEqual({n:1});
+  expect(first).toHaveLength(10);
+  expect(await dispatchAutomatic(hosted, 2)).toEqual([]);
+  expect(await one(env,"SELECT count(*) AS n FROM chunks WHERE status='pending'")).toEqual({n:0});
+  expect(fetch).toHaveBeenCalledOnce();
+});
+
+it('splits a large recording into workflow matrices without dropping or repeating chunks', async () => {
+  const duration = 257 * 1800;
+  await statement(env, 'UPDATE vods SET duration_seconds=?,bazaar_chapters=? WHERE id=2', duration, JSON.stringify([0, duration])).run();
+  const hosted = { ...env, ENVIRONMENT: 'validation', OUTBOUND_ENABLED: 'true', GITHUB_TOKEN: 'test-only' };
+  const ids = await dispatchAutomatic(hosted, 2);
+  const batches = vi.mocked(fetch).mock.calls.map(([, init]) => JSON.parse(JSON.parse(String(init!.body)).inputs.chunk_uuids));
+  expect(batches.map(batch => batch.length)).toEqual([256, 1]);
+  expect(batches.flat()).toEqual(ids);
+  expect(new Set(ids).size).toBe(257);
+  expect(await dispatchAutomatic(hosted, 2)).toEqual([]);
   expect(fetch).toHaveBeenCalledTimes(2);
 });
 
-it('continues eligible work after finishing a recording and respects an operator pause', async () => {
+it('respects an operator pause before dispatching pending recordings', async () => {
   const hosted = { ...env, ENVIRONMENT: 'validation', OUTBOUND_ENABLED: 'true', GITHUB_TOKEN: 'test-only' };
   await statement(env,"UPDATE vods SET published_at='2026-10-17T00:00:00Z' WHERE id=3").run();
   const [id] = await dispatchAutomatic(hosted, 2);
   const token = (await claim(env, id)).claim_token!;
   await updateChunk(env, id, token, {status:'completed'});
   await statement(env,"INSERT INTO processing_config(key,value) VALUES('automatic_vods','[]')").run();
-  await refillProcessing(hosted, 2);
+  expect(await dispatchAutomatic(hosted, 3)).toEqual([]);
   expect(fetch).toHaveBeenCalledTimes(1);
   await statement(env,"DELETE FROM processing_config WHERE key='automatic_vods'").run();
-  await refillProcessing(hosted, 2);
+  expect(await dispatchAutomatic(hosted, 3)).toHaveLength(1);
   expect(fetch).toHaveBeenCalledTimes(2);
   const payload = JSON.parse(vi.mocked(fetch).mock.calls[1][1]!.body as string);
   expect(payload.inputs.vod_id).toBe('3');
 });
 
-it('keeps a completed chunk durable if the refill queue is temporarily unavailable', async () => {
+it('completes chunks without scheduling more work and drains obsolete refill messages', async () => {
   const [chunk] = await plan(env, 2);
   const token = (await claim(env, chunk.id)).claim_token!;
   const send = vi.fn().mockRejectedValue(new Error('queue unavailable'));
@@ -93,7 +103,9 @@ it('keeps a completed chunk durable if the refill queue is temporarily unavailab
   await expect(updateChunk(hosted, chunk.id, token, {status:'completed'})).resolves.toEqual({updated:true});
   expect(await one(env,'SELECT status FROM chunks WHERE id=?',chunk.id)).toEqual({status:'completed'});
   await expect(updateChunk(hosted, chunk.id, token, {status:'completed'})).rejects.toMatchObject({status:409});
-  expect(send).toHaveBeenCalledTimes(1);
+  await handleJob(hosted, {type:'refill-processing', id:2});
+  expect(send).not.toHaveBeenCalled();
+  expect(fetch).not.toHaveBeenCalled();
 });
 
 it.each([['dev','dev'],['production','main']])('keeps automatic %s dispatch on the legacy contract', async (environment, branch) => {
@@ -117,7 +129,7 @@ it('rechecks the start boundary inside dispatch reservations', async () => {
   const db = new Proxy(env.DB, { get(target, key) {
     if(key==='prepare') return (sql: string) => {
       const original=target.prepare(sql);
-      if(!sql.includes("key='max_concurrent_chunks'")) return original;
+      if(!sql.includes('SELECT * FROM sfde_profiles WHERE id=?')) return original;
       const wrap=(stmt: D1PreparedStatement): D1PreparedStatement => new Proxy(stmt,{get(s,method){
         if(method==='bind')return (...args: unknown[])=>wrap(s.bind(...args));
         if(method==='first')return async()=>{const result=await s.first();await statement(env,"UPDATE processing_config SET value='2026-10-17T00:00:00Z' WHERE key='automatic_vods_since'").run();return result;};

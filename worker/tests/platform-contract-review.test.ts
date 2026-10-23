@@ -112,7 +112,7 @@ it('does not reserve or dispatch work after an account is disabled between plann
     get(target,key) {
       if(key==='prepare') return (sql:string)=>{
         const prepared=target.prepare(sql);
-        if(!sql.includes("key='max_concurrent_chunks'")) return prepared;
+        if(!sql.includes('SELECT * FROM sfde_profiles WHERE id=?')) return prepared;
         const wrap=(value:D1PreparedStatement):D1PreparedStatement=>new Proxy(value,{
           get(stmt,method) {
             if(method==='bind') return (...args:unknown[])=>wrap(stmt.bind(...args));
