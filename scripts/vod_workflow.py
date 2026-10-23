@@ -2,6 +2,7 @@
 """GitHub Actions preparation and reporting; inputs are data, never shell code."""
 
 import json
+from datetime import datetime
 import math
 import os
 from pathlib import Path
@@ -192,6 +193,24 @@ def summarize() -> None:
             username = name.replace('|', '\\|').replace('\n', ' ')
             confidence = '' if item['confidence'] is None else f"{item['confidence']:.0%}"
             destination.write(f"| {item['timestamp']} | {username} | {confidence} | {item['rank']} | {item.get('igd') or ''} |\n")
+    # Use backend timestamps, not a sum of overlapping worker/job durations.
+    # Preserve the detection artifact even if the optional timing read fails.
+    try:
+        chunk = api('chunks/' + str(UUID(os.environ['CHUNK_ID'])))
+        timing = {key: chunk.get(key) for key in ('queued_at', 'started_at', 'completed_at', 'processing_duration_ms')}
+        timing.update(runtime_image=os.getenv('SFDE_RUNTIME_IMAGE') or 'local-build',
+                      processor_revision=os.getenv('BUILD_COMMIT') or os.getenv('GITHUB_SHA'),
+                      image_pull_seconds=os.getenv('IMAGE_PULL_SECONDS') or None)
+        for name, start, end in [('queue_to_claim_seconds', 'queued_at', 'started_at'),
+                                 ('queue_to_output_seconds', 'queued_at', 'completed_at')]:
+            if timing[start] and timing[end]:
+                timing[name] = round((datetime.fromisoformat(timing[end].replace('Z', '+00:00'))
+                                      - datetime.fromisoformat(timing[start].replace('Z', '+00:00'))).total_seconds(), 3)
+        (Path('output') / f'timing_{os.environ["CHUNK_ID"]}.json').write_text(json.dumps(timing, indent=2))
+        with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as destination:
+            destination.write('\n### Timing\n\n```json\n' + json.dumps(timing, indent=2) + '\n```\n')
+    except Exception as error:
+        print(f'Timing summary unavailable: {error}', file=sys.stderr)
 
 
 def main() -> None:

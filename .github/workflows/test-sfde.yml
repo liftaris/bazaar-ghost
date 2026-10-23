@@ -8,12 +8,21 @@ on:
     paths: ["sfde/**", "contracts/**", "worker/**", "package*.json", "cloudflare.config.ts", "wrangler.config.ts", "config/**", "vitest.config.ts", "tsconfig.json", "scripts/**", ".github/workflows/**"]
   workflow_dispatch:
   workflow_call:
+    outputs:
+      runtime_image:
+        description: Tested validation runtime pinned by OCI digest
+        value: ${{ jobs.sfde.outputs.runtime_image }}
 permissions:
   contents: read
 jobs:
   sfde:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      runtime_image: ${{ steps.image.outputs.runtime_image }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: docker/setup-buildx-action@v4.4.1
@@ -31,6 +40,31 @@ jobs:
           docker create --name sfde-tests --network none sfde:test
           docker start -a sfde-tests
           test "$(docker inspect -f '{{.State.ExitCode}}' sfde-tests)" -eq 0
+      - name: Sign in to runtime registry
+        if: github.ref == 'refs/heads/migration/cloudflare' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Publish tested runtime
+        id: runtime
+        if: github.ref == 'refs/heads/migration/cloudflare' && github.event_name != 'pull_request'
+        uses: docker/build-push-action@v7.4.0
+        with:
+          context: ./sfde
+          build-contexts: contracts=./contracts
+          target: production
+          tags: ghcr.io/liftaris/bazaar-ghost/sfde-next:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/liftaris/bazaar-ghost
+            org.opencontainers.image.revision=${{ github.sha }}
+          push: true
+          cache-from: type=gha
+      - name: Export pinned runtime
+        id: image
+        if: steps.runtime.outputs.digest != ''
+        env:
+          DIGEST: ${{ steps.runtime.outputs.digest }}
+        run: echo "runtime_image=ghcr.io/liftaris/bazaar-ghost/sfde-next@$DIGEST" >> "$GITHUB_OUTPUT"
       - name: Collect report
         if: always()
         run: |

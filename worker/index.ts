@@ -240,7 +240,7 @@ async function route(req: Request, env: Env): Promise<Response> {
       if (!action && req.method === "GET") {
         const chunk = await one(
           env,
-          "SELECT c.id,c.start_seconds,c.end_seconds,c.status,c.frames_processed,c.detections_count,c.last_error,c.attempt_count,c.started_at,c.completed_at,c.quality,v.id AS vod_pk,v.source,v.source_id AS vod_id,v.creator_name AS streamer FROM chunks c JOIN vod_processing_context v ON v.id=c.vod_id WHERE c.id=?",
+          "SELECT c.id,c.start_seconds,c.end_seconds,c.status,c.frames_processed,c.detections_count,c.last_error,c.attempt_count,c.queued_at,c.started_at,c.completed_at,c.processing_duration_ms,c.quality,v.id AS vod_pk,v.source,v.source_id AS vod_id,v.creator_name AS streamer FROM chunks c JOIN vod_processing_context v ON v.id=c.vod_id WHERE c.id=?",
           id,
         );
         if (!chunk) throw new HttpError(404, "Chunk not found");

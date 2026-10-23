@@ -1,6 +1,6 @@
 import { one, rows, statement, requireValue } from "./http";
 import { Twitch, type CatalogStats } from "./twitch";
-import { dispatchAutomatic, pendingVideos, plan, recover } from "./processing";
+import { dispatchAutomatic, pendingVideos, plan, recover, refillProcessing } from "./processing";
 import { dueNotifications, notify } from "./notifications";
 import { cleanupAuth } from "./auth";
 import { dispatchCatalog, requestCatalog, runCatalogBatch, type CatalogBatch } from "./catalog-work";
@@ -138,6 +138,8 @@ export async function handleJob(env: Env, job: Job) {
       return plan(env, Number(job.id));
     case "process":
       return dispatchAutomatic(env, Number(job.id));
+    case "refill-processing":
+      return refillProcessing(env, Number(job.id));
     case "platform-ingestion":
       return dispatchIngestion(env);
     case "notify":

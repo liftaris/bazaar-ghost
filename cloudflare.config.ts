@@ -17,6 +17,7 @@ export function configuration(mode = "local") {
       env: {
         ENVIRONMENT: bindings.text(settings.vars.ENVIRONMENT),
         BUILD_COMMIT: bindings.text(process.env.BUILD_COMMIT ?? ("BUILD_COMMIT" in settings.vars ? settings.vars.BUILD_COMMIT : "unreleased")),
+        SFDE_RUNTIME_IMAGE: bindings.text(process.env.SFDE_RUNTIME_IMAGE ?? ''),
         PUBLIC_URL: bindings.text(settings.vars.PUBLIC_URL),
         PUBLIC_SITE_URL: bindings.text(settings.vars.PUBLIC_SITE_URL),
         OUTBOUND_ENABLED: bindings.text(settings.vars.OUTBOUND_ENABLED),

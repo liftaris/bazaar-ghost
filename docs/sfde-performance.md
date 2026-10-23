@@ -147,3 +147,42 @@ the five-template bank. Native 896×480 positive/negative regressions cover the
 previously rejected rendition. Hosted workflow wall time and ongoing accuracy
 must be observed after validation deployment; this local report is not hosted
 performance evidence.
+# Setup-to-output improvements
+
+The October 22 hosted investigation measured 23m21s and 26m29s to finish two
+recordings. These were spans across multiple workflow dispatches, not individual
+processor jobs. Roughly seven minutes in each span had no queued or processing
+chunk for that recording. Each chunk also rebuilt/loaded its own container.
+
+Validation now publishes the runtime once, after the offline SFDE tests pass.
+The deployment receives the OCI digest through `SFDE_RUNTIME_IMAGE`; dispatches
+carry that digest and `BUILD_COMMIT`. Runners check out that processor revision,
+pull the exact image, and verify its revision label. Advancing the branch cannot
+silently pair untested code with an older runtime. The runtime includes the
+existing FFmpeg, Paddle models, templates and contracts. There is no per-chunk
+model installation or container build on this path. Manual/local workflows
+without a published runtime retain their existing build path.
+
+The prepare job caches Streamlink downloads, installs yt-dlp/Deno only for
+YouTube, and skips resolver installation for local runs. Automatic workflow
+matrices may run all globally reserved chunks concurrently; manual matrices
+retain the four-job limit. The backend's existing atomic queued/processing cap
+is still authoritative.
+
+A terminal validation chunk enqueues a refill message after persisting its
+result. The consumer prioritizes eligible pending chunks of that recording,
+then other automatic candidates, using the same atomic slot reservations and
+operator eligibility checks. Duplicate callbacks/messages cannot exceed the
+global cap. Failed chunks retain the existing retry/backoff policy. The periodic
+sweep remains the recovery path if a queue handoff fails.
+
+Each successful chunk adds a `timing_<chunk-id>.json` artifact and job-summary
+section with its runtime identity, image-pull seconds, queue-to-claim seconds,
+reported processor milliseconds, and queue-to-completion seconds. Parallel job
+durations must not be added together and presented as elapsed recording time.
+
+Deployment sequence: the validation CI runs both test suites, publishes the
+tested image, then deploys the Worker with its digest. A failed image publication
+blocks deployment. The image is in the repository-linked GHCR package
+`ghcr.io/liftaris/bazaar-ghost/sfde-next`; runners use `packages: read`, publishing
+uses `packages: write`. Main/production is not part of this rollout.

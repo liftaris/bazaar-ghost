@@ -1,4 +1,5 @@
 import importlib.util
+from contextlib import chdir
 import json
 from pathlib import Path
 import tempfile
@@ -11,6 +12,25 @@ spec.loader.exec_module(workflow)
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_reports_elapsed_queue_to_output_separately_from_processor_work(self):
+        chunk_id = '2e032210-c665-4e6c-9f97-80b4c930c153'
+        detection = {'chunk_id': chunk_id, 'frames_processed': 900, 'matchups_found': 0, 'detections': []}
+        chunk = {'queued_at': '2026-10-22T19:40:00Z', 'started_at': '2026-10-22T19:41:00Z',
+                 'completed_at': '2026-10-22T19:43:00Z', 'processing_duration_ms': 119000}
+        with tempfile.TemporaryDirectory() as directory, chdir(directory):
+            Path('output').mkdir()
+            Path(f'output/detections_{chunk_id}.json').write_text(json.dumps(detection))
+            with patch.dict(workflow.os.environ, {'CHUNK_ID': chunk_id, 'GITHUB_STEP_SUMMARY': 'summary.md',
+                            'IMAGE_PULL_SECONDS': '12', 'BUILD_COMMIT': 'a' * 40}), \
+                    patch.object(workflow, 'api', return_value=chunk):
+                workflow.summarize()
+            result = json.loads(Path(f'output/timing_{chunk_id}.json').read_text())
+            self.assertEqual(result['queue_to_claim_seconds'], 60)
+            self.assertEqual(result['queue_to_output_seconds'], 180)
+            self.assertEqual(result['processing_duration_ms'], 119000)
+            self.assertEqual(result['image_pull_seconds'], '12')
+            self.assertIn('### Timing', Path('summary.md').read_text())
+
     def test_summary_handles_masked_unreadable_and_legacy_detections(self):
         data = {'chunk_id': 'chunk', 'frames_processed': 20, 'matchups_found': 3,
                 'detections': [

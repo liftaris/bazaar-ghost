@@ -192,6 +192,22 @@ export async function dispatchAutomatic(env: Env, vodId: number) {
   const allowed = await one(env, `SELECT 1 FROM vods v WHERE id=? AND ${automaticVideoPredicate}`, vodId);
   return allowed ? dispatch(env, vodId, true) : [];
 }
+export async function refillProcessing(env: Env, preferredVodId: number) {
+  if (env.ENVIRONMENT !== 'validation' || env.OUTBOUND_ENABLED !== 'true' || !env.GITHUB_TOKEN) return;
+  const configured = await one(env, "SELECT value FROM processing_config WHERE key='max_concurrent_chunks'");
+  const maximum = integer(Number(configured?.value ?? 10), 'max_concurrent_chunks', 1, 256);
+  const available = async () => Number((await one(env,
+    "SELECT count(*) AS n FROM chunks WHERE status IN('queued','processing')"))!.n) < maximum;
+  if (!await available()) return;
+  // Finish the recording that just freed a slot before starting more recordings.
+  // dispatchAutomatic repeats all eligibility checks and reserves slots atomically.
+  await dispatchAutomatic(env, preferredVodId);
+  if (!await available()) return;
+  for (const vod of await pendingVideos(env)) {
+    if (vod.id !== preferredVodId) await dispatchAutomatic(env, vod.id);
+    if (!await available()) break;
+  }
+}
 export async function dispatch(env: Env, vodId: number, automatic = false) {
   const pending = await plan(env, vodId);
   if (!pending.length) return [];
@@ -203,6 +219,11 @@ export async function dispatch(env: Env, vodId: number, automatic = false) {
   // Validation's automatic observation window uses NEXT. Other dispatch paths
   // retain their legacy profile contract; manual NEXT remains an explicit input.
   const next = automatic && env.ENVIRONMENT === 'validation';
+  const runtime = env.ENVIRONMENT === 'validation' && env.SFDE_RUNTIME_IMAGE;
+  if (runtime) {
+    requireValue(/^ghcr\.io\/liftaris\/bazaar-ghost\/sfde-next@sha256:[a-f0-9]{64}$/.test(runtime), 'Invalid SFDE runtime image');
+    requireValue(/^[a-f0-9]{40}$/.test(env.BUILD_COMMIT), 'Invalid SFDE runtime revision');
+  }
   const profile = next ? null : profileCheck(details.profile);
   const profileJoin = next ? '' : 'JOIN sfde_profiles p ON p.id=v.effective_profile_id';
   const profileFence = profile ? `AND p.id=? AND ${profile.sql}` : '';
@@ -260,7 +281,8 @@ export async function dispatch(env: Env, vodId: number, automatic = false) {
               chunk_uuids: JSON.stringify(ids),
               queued_at: queuedAt,
               old_templates: String(details.old_templates),
-              ...(next ? { sfde_next: 'true' } : { sfde_profile: JSON.stringify(details.streamers.sfde_profiles) }),
+               ...(next ? { sfde_next: 'true' } : { sfde_profile: JSON.stringify(details.streamers.sfde_profiles) }),
+               ...(runtime ? { runtime_image: runtime, processor_revision: env.BUILD_COMMIT } : {}),
               environment: env.ENVIRONMENT,
             },
           }),
@@ -352,7 +374,7 @@ export async function updateChunk(
   token: string | null,
   data: Record<string, any>,
 ) {
-  await owned(env, id, token);
+  const chunk = await owned(env, id, token);
   requireValue(
     ["processing", "completed", "failed"].includes(data.status),
     "Invalid chunk status",
@@ -395,6 +417,12 @@ export async function updateChunk(
     now(),
   ).run();
   if (!result.meta.changes) throw new HttpError(409, "Lost chunk claim");
+  if (data.status !== 'processing' && env.ENVIRONMENT === 'validation' && env.OUTBOUND_ENABLED === 'true') {
+    // The completed result is durable before requesting more work. A queue outage
+    // must not turn a successful chunk into a failure; the cron remains a fallback.
+    await env.JOBS.send({ type: 'refill-processing', id: chunk.vod_id }).catch(error =>
+      console.log(JSON.stringify({ event: 'processing_refill_enqueue_failed', chunk_id: id, error: String(error) })));
+  }
   if (data.status === "completed") {
     // A finished Recording may match another Recording; failures are retried by the scheduled sweep.
     const vod = await one(env, "SELECT v.id FROM chunks c JOIN vods v ON v.id=c.vod_id WHERE c.id=? AND v.status='completed'", id);

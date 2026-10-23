@@ -44,9 +44,16 @@ on:
         description: Use the evidence-based SFDE processor (validation only)
         type: boolean
         default: false
+      runtime_image:
+        description: Tested runtime OCI digest supplied by the validation backend
+        type: string
+      processor_revision:
+        description: Commit paired with the tested runtime
+        type: string
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   prepare:
@@ -70,6 +77,8 @@ jobs:
       SFDE_NEXT_ENABLED: ${{ inputs.sfde_next && 'true' || 'false' }}
       OLD_TEMPLATES: ${{ inputs.old_templates }}
       LOCAL: ${{ inputs.local }}
+      SFDE_RUNTIME_IMAGE: ${{ inputs.runtime_image }}
+      BUILD_COMMIT: ${{ inputs.processor_revision }}
     outputs:
       chunk_uuids: ${{ steps.prepare.outputs.chunk_uuids }}
       old_templates: ${{ steps.prepare.outputs.old_templates }}
@@ -78,9 +87,16 @@ jobs:
       sfde_profile: ${{ steps.prepare.outputs.sfde_profile }}
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.processor_revision || github.sha }}
+      - name: Validate runtime identity
+        if: inputs.runtime_image != '' || inputs.processor_revision != ''
+        run: python scripts/runtime_image.py validate
       - uses: actions/setup-python@v7.0.0
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: scripts/requirements-workflow.txt
       - name: Check SFDE target
         if: inputs.sfde_next && inputs.environment != 'validation'
         run: |
@@ -89,9 +105,15 @@ jobs:
       - name: Verify backend environment
         run: python scripts/backend_environment.py
       - uses: denoland/setup-deno@v2.0.5
+        if: inputs.source == 'youtube' && !inputs.local
         with:
           deno-version: v2.9.7
-      - run: pip install 'streamlink==8.6.2' 'yt-dlp[default]==2026.8.19'
+      - name: Install media resolver
+        if: ${{ !inputs.local }}
+        run: pip install -r scripts/requirements-workflow.txt
+      - name: Install YouTube fallback
+        if: inputs.source == 'youtube' && !inputs.local
+        run: pip install 'yt-dlp[default]==2026.8.19'
       - id: prepare
         run: python scripts/vod_workflow.py prepare
       - if: failure()
@@ -105,7 +127,9 @@ jobs:
     timeout-minutes: 50
     strategy:
       fail-fast: false
-      max-parallel: 4
+      # Automatic dispatch has already reserved globally bounded slots. Do not
+      # reserve eight slots while allowing only four of them to start here.
+      max-parallel: ${{ inputs.queued_at != '' && 256 || 4 }}
       matrix:
         chunk_id: ${{ fromJson(needs.prepare.outputs.chunk_uuids) }}
     env:
@@ -119,16 +143,21 @@ jobs:
       OLD_TEMPLATES: ${{ needs.prepare.outputs.old_templates }}
       ENVIRONMENT: ${{ inputs.environment }}
       SFDE_NEXT_ENABLED: ${{ inputs.sfde_next && 'true' || 'false' }}
+      SFDE_RUNTIME_IMAGE: ${{ inputs.runtime_image }}
+      SFDE_IMAGE: ${{ inputs.runtime_image || 'sfde:dev' }}
+      BUILD_COMMIT: ${{ inputs.processor_revision }}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${{ inputs.environment != 'validation' && secrets.GRAFANA_OTLP_ENDPOINT || '' }}
       OTEL_EXPORTER_OTLP_HEADERS: ${{ inputs.environment != 'validation' && format('Authorization=Basic {0}', secrets.GRAFANA_OTLP_AUTH) || '' }}
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.processor_revision || github.sha }}
       - name: Verify backend environment
         run: python scripts/backend_environment.py
       - uses: docker/setup-buildx-action@v4.4.1
-        if: ${{ !inputs.local }}
+        if: ${{ !inputs.local && inputs.runtime_image == '' }}
       - uses: docker/build-push-action@v7.4.0
-        if: ${{ !inputs.local }}
+        if: ${{ !inputs.local && inputs.runtime_image == '' }}
         timeout-minutes: 10
         with:
           context: ./sfde
@@ -137,6 +166,19 @@ jobs:
           load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Pull tested runtime
+        id: pull
+        if: inputs.runtime_image != ''
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/runtime_image.py validate
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          SECONDS=0
+          docker pull "$SFDE_IMAGE"
+          python scripts/runtime_image.py verify
+          echo "seconds=$SECONDS" >> "$GITHUB_OUTPUT"
       - name: Process chunk
         timeout-minutes: 35
         run: |
@@ -148,12 +190,14 @@ jobs:
             -e QUALITY -e STREAM_QUALITY -e SFDE_PROFILE -e OLD_TEMPLATES \
             -e ENVIRONMENT -e SFDE_NEXT_ENABLED \
             -e OTEL_EXPORTER_OTLP_ENDPOINT -e OTEL_EXPORTER_OTLP_HEADERS \
-            sfde:dev
+            "$SFDE_IMAGE"
       - name: Fail unclaimed chunk
         if: failure()
         run: python scripts/vod_workflow.py fail-chunk
       - name: Write summary
         if: always()
+        env:
+          IMAGE_PULL_SECONDS: ${{ steps.pull.outputs.seconds }}
         run: python scripts/vod_workflow.py summary
       - uses: actions/upload-artifact@v7.0.2
         if: always()
