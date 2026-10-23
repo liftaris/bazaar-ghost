@@ -88,6 +88,29 @@ def test_six_star_mask_keeps_native_and_mask_evidence_but_no_inferred_name(compl
     assert reader.predict.call_count == 2
 
 
+@pytest.mark.parametrize('confidence', [
+    .8785881400108337, .8067374229431152, .5769968032836914, .6170768737792969,
+])
+def test_visible_six_star_masks_use_name_confidence_threshold(confidence):
+    result = NameReader(reader_with([], [('******', confidence)])).read(
+        np.zeros((64, 160, 3), np.uint8), LOCATION)
+    assert result['name_state'] == 'masked'
+    assert result['username'] is None
+    assert result['confidence'] == confidence
+    assert json.loads(result['raw_text'])['mask'] == [['******', confidence]]
+
+
+@pytest.mark.parametrize('text,confidence,threshold', [
+    ('******', .49, .5), ('******', .79, .8), ('**e***', .99, .5),
+])
+def test_uncertain_masks_remain_obstructed(text, confidence, threshold):
+    result = NameReader(reader_with([], [(text, confidence)]), threshold).read(
+        np.zeros((64, 160, 3), np.uint8), LOCATION)
+    assert result['name_state'] == 'obstructed'
+    assert result['username'] is None
+    assert json.loads(result['raw_text'])['mask'] == [[text, confidence]]
+
+
 def test_exact_source_regions_record_both_ocr_inputs_and_their_union():
     frame = np.arange(160 * 64 * 3, dtype=np.uint8).reshape(64, 160, 3)
     reader = reader_with([('Native!', .99)])

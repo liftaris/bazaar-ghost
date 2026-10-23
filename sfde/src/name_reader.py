@@ -84,7 +84,7 @@ class NameReader:
         result['raw_text'] = json.dumps({'native': ordinary, 'mask': mask,
                                          'name_line_indices': selected,
                                          'regions': result['ocr_regions']}, ensure_ascii=False)
-        if len(mask) == 1 and mask[0][0].strip() == '******' and mask[0][1] >= .90:
+        if len(mask) == 1 and mask[0][0].strip() == '******' and mask[0][1] >= self.threshold:
             result.update(name_state='masked', confidence=mask[0][1],
                           method='mask-binary65-linear4x-english-ocr')
             return result
