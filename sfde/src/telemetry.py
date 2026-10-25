@@ -19,7 +19,6 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION
 from opentelemetry.semconv.resource import ResourceAttributes
-from opentelemetry.trace import Status, StatusCode
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 # Logging imports
@@ -291,12 +290,7 @@ def create_span(
             for key, value in attributes.items():
                 if value is not None:  # Skip None values
                     span.set_attribute(key, value)
-        try:
-            yield span
-        except Exception as e:
-            span.set_status(Status(StatusCode.ERROR, str(e)))
-            span.record_exception(e)
-            raise
+        yield span
 
 
 def extract_trace_context(headers: Dict[str, str]) -> Optional[trace.Context]:

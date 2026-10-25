@@ -142,9 +142,9 @@ jobs:
       SFDE_NEXT_ENABLED: ${{ inputs.sfde_next && 'true' || 'false' }}
       SFDE_RUNTIME_IMAGE: ${{ inputs.runtime_image }}
       SFDE_IMAGE: ${{ inputs.runtime_image || 'sfde:dev' }}
-      BUILD_COMMIT: ${{ inputs.processor_revision }}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ inputs.environment != 'validation' && secrets.GRAFANA_OTLP_ENDPOINT || '' }}
-      OTEL_EXPORTER_OTLP_HEADERS: ${{ inputs.environment != 'validation' && format('Authorization=Basic {0}', secrets.GRAFANA_OTLP_AUTH) || '' }}
+      BUILD_COMMIT: ${{ inputs.processor_revision || github.sha }}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets[inputs.environment == 'validation' && 'GRAFANA_VALIDATION_OTLP_ENDPOINT' || 'GRAFANA_OTLP_ENDPOINT'] }}
+      OTEL_EXPORTER_OTLP_HEADERS: Authorization=Basic ${{ secrets[inputs.environment == 'validation' && 'GRAFANA_VALIDATION_OTLP_AUTH' || 'GRAFANA_OTLP_AUTH'] }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -187,6 +187,8 @@ jobs:
             -e QUALITY -e STREAM_QUALITY -e SFDE_PROFILE -e OLD_TEMPLATES \
             -e ENVIRONMENT -e SFDE_NEXT_ENABLED \
             -e OTEL_EXPORTER_OTLP_ENDPOINT -e OTEL_EXPORTER_OTLP_HEADERS \
+            -e BUILD_COMMIT -e SFDE_RUNTIME_IMAGE \
+            -e GITHUB_REPOSITORY -e GITHUB_RUN_ID -e GITHUB_RUN_ATTEMPT -e GITHUB_JOB \
             "$SFDE_IMAGE"
       - name: Fail unclaimed chunk
         if: failure() || cancelled()

@@ -382,7 +382,9 @@ class SFDEProcessor:
         """Initialize OpenTelemetry for distributed tracing and metrics"""
         # Initialize telemetry (will be no-op if OTEL_EXPORTER_OTLP_ENDPOINT not set)
         telemetry_enabled = init_telemetry(
-            service_name="sfde", environment=self.environment
+            service_name='sfde-next' if self.next_enabled else 'sfde',
+            service_version=os.getenv('BUILD_COMMIT') or os.getenv('GITHUB_SHA') or 'unknown',
+            environment=self.environment,
         )
 
         if telemetry_enabled:
@@ -395,7 +397,9 @@ class SFDEProcessor:
         # Extract trace context if provided (propagated from GitHub Actions via process-vod edge function)
         trace_parent = os.getenv("TRACEPARENT")
         if trace_parent:
-            self.trace_context = extract_trace_context({"traceparent": trace_parent})
+            self.trace_context = extract_trace_context({
+                'traceparent': trace_parent, 'tracestate': os.getenv('TRACESTATE', ''),
+            })
             self.logger.info(
                 f"Trace context extracted from TRACEPARENT: {trace_parent[:50]}..."
             )
@@ -410,6 +414,13 @@ class SFDEProcessor:
             "quality": self.formatted_quality,
             "start_seconds": self.start_time,
             "end_seconds": self.end_time,
+            'sfde.processor_mode': 'next' if self.next_enabled else 'legacy',
+            'video.source': self.source,
+            'github.repository': os.getenv('GITHUB_REPOSITORY'),
+            'github.run_id': os.getenv('GITHUB_RUN_ID'),
+            'github.run_attempt': os.getenv('GITHUB_RUN_ATTEMPT'),
+            'github.job': os.getenv('GITHUB_JOB'),
+            'sfde.runtime_image': os.getenv('SFDE_RUNTIME_IMAGE'),
         }
         if not self.next_enabled:
             self.span_attributes['profile.name'] = self.profile.get('profile_name', 'default')
@@ -474,14 +485,18 @@ class SFDEProcessor:
                         f"nameplate slice: {nameplate_slice}, IGD slice: {igd_slice}"
                     )
 
-                self.worker_context = otel_context.get_current()
                 deadline = time.monotonic() + self.config['processing']['timeout']
                 for attempt in range(1, MEDIA_READ_ATTEMPTS + 1):
                     try:
-                        self._run_workers(deadline)
+                        with create_span('sfde.attempt', {'attempt': attempt}):
+                            self.worker_context = otel_context.get_current()
+                            try:
+                                self._run_workers(deadline)
+                            except Exception:
+                                self._stop_workers()
+                                raise
                         break
                     except MediaReadError as error:
-                        self._stop_workers()
                         remaining = deadline - time.monotonic()
                         # A worker that outlived its stop would share the retry's fresh state.
                         if (attempt == MEDIA_READ_ATTEMPTS or any(thread.is_alive() for thread in self.threads)
@@ -556,6 +571,9 @@ class SFDEProcessor:
                 }
 
             except Exception as e:
+                if root_span:
+                    root_span.set_attribute('status', 'failed')
+                    root_span.set_attribute('error.type', type(e).__name__)
                 self.logger.error(f"Processing failed: {e}", exc_info=True)
                 self._stop_workers()
                 # Record failure metric
@@ -625,9 +643,13 @@ class SFDEProcessor:
         """Report worker exceptions to the orchestrator and always signal EOF."""
         token = otel_context.attach(getattr(self, 'worker_context', otel_context.get_current()))
         try:
-            worker()
+            with create_span(f'sfde.worker.{threading.current_thread().name}'):
+                try:
+                    worker()
+                except Exception:
+                    self.logger.exception('%s failed', threading.current_thread().name)
+                    raise
         except Exception as error:
-            self.logger.exception('%s failed', threading.current_thread().name)
             self.worker_errors.put(error)
             self.shutdown.set()
         finally:
@@ -651,8 +673,9 @@ class SFDEProcessor:
         Piping a Streamlink segment rebases timestamps at a rounded segment
         boundary. Seeking the playlist itself preserves the requested offset.
         """
-        media = resolve_media(self.source, self.vod_id, self.quality,
-                              **({'stream_quality': self.stream_quality} if platform(self.source)['capabilities']['qualitySelectable'] and self.stream_quality else {}))
+        with create_span('sfde.resolve_media', {'video.source': self.source}):
+            media = resolve_media(self.source, self.vod_id, self.quality,
+                                  **({'stream_quality': self.stream_quality} if platform(self.source)['capabilities']['qualitySelectable'] and self.stream_quality else {}))
         self._media_input_args = ffmpeg_input_args(media)
         self._media_progressive_args = ffmpeg_progressive_args(media)
         self.logger.info('Media resolved with %s (%sp input)', media['resolver'], media['height'])
@@ -1042,7 +1065,8 @@ class SFDEProcessor:
                 continue
             self.result_batch.append(result)
             if result.get('schema_version') == 2:
-                self.enricher.enrich(result)
+                with create_span('sfde.enrich', {'encounter.id': result.get('id')}):
+                    self.enricher.enrich(result)
                 # Publish before observing the next result, so inherited evidence
                 # always references an uploaded original image, never a fake read.
                 self._flush_results()
@@ -1119,7 +1143,6 @@ class SFDEProcessor:
 
     def cleanup(self) -> None:
         self._stop_workers()
-        shutdown_telemetry()
 
 
 
@@ -1151,6 +1174,8 @@ def main() -> None:
     except Exception as e:
         print(f"Failed to process chunk: {e}", file=sys.stderr)
         sys.exit(1)
+    finally:
+        shutdown_telemetry()
 
 
 if __name__ == "__main__":

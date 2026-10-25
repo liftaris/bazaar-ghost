@@ -114,9 +114,13 @@ class BackendClient:
         if attempts.get(chunk_id, 0) >= 64:
             raise ValueError('Chunk inference attempt limit reached')
         attempts[chunk_id] = attempts.get(chunk_id, 0) + 1
-        return self._request(f'chunks/{chunk_id}/inference', 'POST', {
-            'request_id': request_id, 'task': task, 'at_ms': at_ms, 'image_base64': image_base64,
-        }, chunk_id)
+        with create_span('sfde.inference', {'inference.task': task, 'inference.attempt': attempts[chunk_id]}) as span:
+            response = self._request(f'chunks/{chunk_id}/inference', 'POST', {
+                'request_id': request_id, 'task': task, 'at_ms': at_ms, 'image_base64': image_base64,
+            }, chunk_id)
+            if span:
+                span.set_attribute('inference.status', response.get('status', 'unknown'))
+            return response
 
     def _next_record(self, matchup):
         """Upload *all* source images before publishing schema 2, including unknowns."""
