@@ -1,0 +1,54 @@
+name: Select SFDE validation canary
+on:
+  push:
+    branches: [migration/cloudflare]
+    paths: [.github/workflows/select-sfde-canary.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  select:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/migration/cloudflare'
+    runs-on: ubuntu-latest
+    environment: validation
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: List eligible pending chunks without changing them
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_VALIDATION_API_TOKEN }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from urllib.request import Request, urlopen
+
+          config = json.loads(Path('config/environments.json').read_text())['validation']
+          assert config['name'] == 'bazaarghost-validation'
+          assert config['database']['name'] == 'bazaarghost-validation'
+          sql = """
+            SELECT c.id AS chunk_id,c.start_seconds,c.end_seconds,v.source,v.source_id
+            FROM chunks c JOIN vod_processing_context v ON v.id=c.vod_id
+            WHERE c.status='pending'
+              AND (c.scheduled_for IS NULL OR c.scheduled_for<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+              AND v.processing_enabled=1 AND v.ready_for_processing=1
+              AND v.availability='available' AND v.source='twitch'
+              AND c.end_seconds-c.start_seconds<=1800
+            ORDER BY v.published_at DESC,c.start_seconds LIMIT 5
+          """
+          url = f"https://api.cloudflare.com/client/v4/accounts/{config['accountId']}/d1/database/{config['database']['id']}/query"
+          request = Request(url, method='POST', data=json.dumps({'sql': sql}).encode(), headers={
+              'Authorization': 'Bearer ' + os.environ['CLOUDFLARE_API_TOKEN'],
+              'Content-Type': 'application/json',
+          })
+          with urlopen(request, timeout=30) as response:
+              result = json.load(response)
+          if not result.get('success'):
+              raise RuntimeError('Validation query failed')
+          candidates = result['result'][0]['results']
+          print(json.dumps(candidates, indent=2))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('Eligible pending validation chunks. No database writes performed.\n\n```json\n')
+              summary.write(json.dumps(candidates, indent=2) + '\n```\n')
+          PY
