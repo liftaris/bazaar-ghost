@@ -96,11 +96,10 @@ class NameReader:
         if not observed:
             result['name_state'] = 'obstructed' if uncertain else 'unreadable'
             return result
-        # Newlines delimit OCR boxes, not inferred spaces or hidden letters.
-        # Preserve case, punctuation, Unicode and the complete observed tokens.
         text = '\n'.join(text for text, _ in observed)
         confidence = min(confidence for _, confidence in observed)
         uncertain = uncertain or len(observed) != 1 or len(text.split()) != 1 or confidence < self.threshold
+        text = text.split()[0]
         result.update(username=text if text.strip('* \t\r\n') else None,
                       confidence=confidence, name_state='obstructed' if uncertain else 'complete')
         return result

@@ -360,8 +360,12 @@ def test_local_name_and_clock_failure_do_not_drop_encounter():
     ([], [('******', .49)], 'obstructed', None),
     ([('partial', .65)], [], 'complete', 'partial'),
     ([('low', .25)], [], 'obstructed', 'low'),
-    ([('two', .99), ('fragments', .99)], [], 'obstructed', 'two\nfragments'),
-    ([('ab cd', .99)], [], 'obstructed', 'ab cd'),
+    ([('two', .99), ('fragments', .99)], [], 'obstructed', 'two'),
+    ([('ab cd', .99)], [], 'obstructed', 'ab'),
+    ([('kephyr\nWARS', .99)], [], 'obstructed', 'kephyr'),
+    ([(' \tMiXeD.\r\nextra', .99)], [], 'obstructed', 'MiXeD.'),
+    ([('名前\u00a0extra', .99)], [], 'obstructed', '名前'),
+    ([(' \t\r\n', .99)], [], 'unreadable', None),
 ])
 def test_name_whole_tokens_mask_before_cleanup(monkeypatch, raw, mask, state, username):
     monkeypatch.setattr('name_reader.tokens', Mock(side_effect=[raw, mask]))
