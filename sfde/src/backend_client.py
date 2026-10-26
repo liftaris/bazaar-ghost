@@ -114,7 +114,7 @@ class BackendClient:
         if attempts.get(chunk_id, 0) >= 64:
             raise ValueError('Chunk inference attempt limit reached')
         attempts[chunk_id] = attempts.get(chunk_id, 0) + 1
-        with create_span('sfde.inference', {'inference.task': task, 'inference.attempt': attempts[chunk_id]}) as span:
+        with create_span('sfde.inference', {'inference.task': task, 'inference.call_index': attempts[chunk_id]}) as span:
             response = self._request(f'chunks/{chunk_id}/inference', 'POST', {
                 'request_id': request_id, 'task': task, 'at_ms': at_ms, 'image_base64': image_base64,
             }, chunk_id)
@@ -156,8 +156,10 @@ class BackendClient:
     def upload_batch(self, matchups):
         started = time.monotonic()
         attrs = {'streamer': self.streamer or 'unknown', 'quality': self.quality}
-        with create_span('backend_upload', attributes={'batch.size': len(matchups)}):
+        with create_span('backend_upload', attributes={'batch.size': len(matchups)}) as span:
             for attempt in range(self.retry_attempts):
+                if span:
+                    span.set_attribute('upload.attempts', attempt + 1)
                 try:
                     grouped = {}
                     for matchup in matchups:

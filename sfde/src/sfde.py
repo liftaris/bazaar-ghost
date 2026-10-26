@@ -38,7 +38,9 @@ from telemetry import (
     create_span,
     record_counter,
     record_histogram,
-    record_gauge,
+    measure_work,
+    measured_frames,
+    worker_timing,
     extract_trace_context,
     shutdown_telemetry,
 )
@@ -370,6 +372,9 @@ class SFDEProcessor:
         context = {
             'vod_id': self.vod_id, 'chunk_id': self.chunk_id,
             'streamer': self.streamer, 'quality': self.formatted_quality,
+            'github_run_id': os.getenv('GITHUB_RUN_ID'),
+            'github_run_attempt': os.getenv('GITHUB_RUN_ATTEMPT'),
+            'service_version': os.getenv('BUILD_COMMIT') or os.getenv('GITHUB_SHA') or 'unknown',
         }
         def add_context(record: logging.LogRecord) -> bool:
             for key, value in context.items():
@@ -428,6 +433,7 @@ class SFDEProcessor:
     def _handle_shutdown(self, signum, frame):
         """Handle shutdown signals gracefully"""
         self.logger.info(f"Received signal {signum}, initiating shutdown")
+        self.shutdown_signal = signum
         self.shutdown.set()
 
     def process_vod_chunk(self) -> Dict[str, Any]:
@@ -450,7 +456,7 @@ class SFDEProcessor:
         claimed = False
 
         # Track processing time for metrics
-        processing_start_time = time.time()
+        processing_start_time = time.monotonic()
 
         # Wrap entire processing in a root span
         with create_span("process_chunk", attributes=self.span_attributes, context=self.trace_context) as root_span:
@@ -521,14 +527,7 @@ class SFDEProcessor:
                 status = 'completed'
 
                 # Record telemetry metrics
-                duration_ms = (time.time() - processing_start_time) * 1000
-
-                self.logger.info('chunk_finished', extra={
-                    'event': 'chunk_finished', 'status': status,
-                    'frames_processed': self.frames_processed, 'matchups_found': self.matchups_found,
-                    'decode_coverage': self.decode_coverage,
-                    'duration_ms': round(duration_ms, 2),
-                })
+                duration_ms = (time.monotonic() - processing_start_time) * 1000
                 metric_attrs = {
                     "streamer": self.streamer or "unknown",
                     "quality": self.formatted_quality,
@@ -553,6 +552,11 @@ class SFDEProcessor:
                     detections_count=len(self.all_detections), quality=self.formatted_quality,
                     processing_duration_ms=round(duration_ms),
                 )
+                self.logger.info('chunk_finished', extra={
+                    'event': 'chunk_finished', 'status': status,
+                    'frames_processed': self.frames_processed, 'matchups_found': self.matchups_found,
+                    'duration_ms': round(duration_ms, 2),
+                })
 
                 record_counter("chunks_completed", 1, metric_attrs)
 
@@ -574,6 +578,11 @@ class SFDEProcessor:
                 if root_span:
                     root_span.set_attribute('status', 'failed')
                     root_span.set_attribute('error.type', type(e).__name__)
+                    signal_number = getattr(self, 'shutdown_signal', None)
+                    root_span.set_attribute('termination.reason', 'signal' if signal_number is not None
+                                            else 'timeout' if isinstance(e, TimeoutError) else 'error')
+                    if signal_number is not None:
+                        root_span.set_attribute('signal.number', signal_number)
                 self.logger.error(f"Processing failed: {e}", exc_info=True)
                 self._stop_workers()
                 # Record failure metric
@@ -594,6 +603,8 @@ class SFDEProcessor:
                 raise
             finally:
                 self.cleanup()
+                if root_span:
+                    root_span.set_attribute('workers.unfinished', sum(t.is_alive() for t in self.threads))
 
     def _run_workers(self, deadline: float) -> None:
         """Decode, detect and upload one attempt; raise the first worker error."""
@@ -643,7 +654,8 @@ class SFDEProcessor:
         """Report worker exceptions to the orchestrator and always signal EOF."""
         token = otel_context.attach(getattr(self, 'worker_context', otel_context.get_current()))
         try:
-            with create_span(f'sfde.worker.{threading.current_thread().name}'):
+            stage = threading.current_thread().name
+            with create_span(f'sfde.worker.{stage}') as span, worker_timing(stage, span):
                 try:
                     worker()
                 except Exception:
@@ -659,13 +671,18 @@ class SFDEProcessor:
 
     def _put(self, destination: queue.Queue, value: Any) -> None:
         """Apply backpressure instead of dropping frames when OCR is slower."""
-        while not self.shutdown.is_set():
-            try:
-                destination.put(value, timeout=0.1)
-                return
-            except queue.Full:
-                continue
+        with measure_work('queue_write'):
+            while not self.shutdown.is_set():
+                try:
+                    destination.put(value, timeout=0.1)
+                    return
+                except queue.Full:
+                    continue
         raise RuntimeError('Processing cancelled during queue write')
+
+    def _get(self, source: queue.Queue):
+        with measure_work('queue_read'):
+            return source.get(timeout=0.1)
 
     def _resolve_stream(self) -> str:
         """Resolve the selected HLS rendition; FFmpeg owns accurate VOD seeking.
@@ -753,10 +770,10 @@ class SFDEProcessor:
         tolerance = max(0.001, interval * 1e-6)
         sample_count, first_pts, last_pts = 0, None, None
         diagnostics = []
-        for frame_data, pts in timestamped_frames(
+        for frame_data, pts in measured_frames(timestamped_frames(
             self.ffmpeg_proc.stdout, self.ffmpeg_proc.stderr, self.logger,
             source_timeline=source_timeline, validate_end=False, diagnostics=diagnostics,
-        ):
+        )):
             timestamp = start_time + int(pts)
             if 0 <= pts < end_time - start_time:
                 # Validate the sampled timeline before integer conversion for storage.
@@ -776,7 +793,6 @@ class SFDEProcessor:
                     self._put(self.frame_queue, (frame_data, round((start_time + pts) * 1000), not preroll))
                 else:
                     self._put(self.frame_queue, (frame_data, timestamp))
-                record_gauge("queue_depth", 1, {"streamer": self.streamer or "unknown", "quality": self.formatted_quality})
         code = self.ffmpeg_proc.wait(timeout=10)
         progressive = bool(getattr(self, '_media_progressive_args', None)) and not self.test_mode
         if code:
@@ -910,8 +926,7 @@ class SFDEProcessor:
 
         while not self.shutdown.is_set():
             try:
-                frame_data, timestamp = self.frame_queue.get(timeout=0.1)
-                record_gauge("queue_depth", -1, metric_attrs)
+                frame_data, timestamp = self._get(self.frame_queue)
 
                 # If using combined crop, decode and slice subregions.
                 # Otherwise pass raw JPEG bytes directly (existing behavior).
@@ -1009,12 +1024,14 @@ class SFDEProcessor:
         attrs = {'streamer': self.streamer or 'unknown', 'quality': self.formatted_quality}
         while not self.shutdown.is_set():
             try:
-                jpeg, at_ms, owned = self.frame_queue.get(timeout=.1)
+                jpeg, at_ms, owned = self._get(self.frame_queue)
             except queue.Empty:
                 if self.frames_done.is_set() and self.frame_queue.empty():
                     break
                 continue
-            for event in self.encounters.consume(jpeg, at_ms):
+            with measure_work('analysis'):
+                events = self.encounters.consume(jpeg, at_ms)
+            for event in events:
                 self._enqueue_detection(event, attrs)
             if owned:
                 self.frames_processed += 1
@@ -1022,7 +1039,9 @@ class SFDEProcessor:
             else:
                 self.preroll_frames_processed += 1
         if not self.shutdown.is_set():
-            for event in self.encounters.flush():
+            with measure_work('analysis'):
+                events = self.encounters.flush()
+            for event in events:
                 self._enqueue_detection(event, attrs)
             self.logger.info('next_analysis_finished', extra={
                 'event': 'next_analysis_finished', **self.encounters.stats,
@@ -1058,7 +1077,7 @@ class SFDEProcessor:
         """Drain all detections, including the final partial batch, before success."""
         while not self.shutdown.is_set():
             try:
-                result = self.result_queue.get(timeout=0.1)
+                result = self._get(self.result_queue)
             except queue.Empty:
                 if self.results_done.is_set() and self.result_queue.empty():
                     break

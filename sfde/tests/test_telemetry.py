@@ -103,6 +103,10 @@ def test_next_trace_tree_and_remote_parent(next_job, traces):
         assert spans[name].context.trace_id == root.context.trace_id
     assert len(spans) == 8
     assert spans['sfde.inference'].attributes['inference.status'] == 'ok'
+    assert spans['sfde.inference'].attributes['inference.call_index'] == 1
+    assert 'inference.attempt' not in spans['sfde.inference'].attributes
+    assert spans['backend_upload'].attributes['upload.attempts'] == 1
+    assert root.attributes['workers.unfinished'] == 0
     assert 'private-image' not in str([dict(span.attributes) for span in spans.values()])
 
 
@@ -212,6 +216,169 @@ def test_job_reaches_otlp_http_collector_before_exit(next_job, monkeypatch):
         assert all(span.trace_id == root.trace_id for span in spans)
     finally:
         provider.shutdown()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_worker_timing_accounts_waits_without_frame_spans(next_job, traces):
+    provider, exporter = traces
+    next_job.encounters.consume = lambda *_: []
+    next_job.ffmpeg_worker = lambda: [next_job._put(next_job.frame_queue, (b'jpeg', n, True)) for n in range(500)]
+    next_job.process_vod_chunk()
+    provider.force_flush()
+    spans = exporter.get_finished_spans()
+    assert len(spans) == 5
+    cv = next(s for s in spans if s.name == 'sfde.worker.opencv')
+    assert cv.attributes['work.analysis.calls'] == 501
+    assert cv.attributes['work.queue_read.calls'] >= 500
+    assert cv.attributes['work.analysis.seconds'] >= 0
+    assert cv.attributes['work.queue_read.seconds'] >= 0
+    decode = next(s for s in spans if s.name == 'sfde.worker.ffmpeg')
+    assert decode.attributes['work.queue_write.calls'] == 500
+
+
+def test_timers_do_not_include_consumer_work(monkeypatch):
+    clock = iter((0., 2., 10., 13., 20., 21.))
+    monkeypatch.setattr(telemetry.time, 'perf_counter', lambda: next(clock))
+    span = Mock()
+    with telemetry.worker_timing('ffmpeg', span):
+        assert list(telemetry.measured_frames(['one', 'two'])) == ['one', 'two']
+    values = dict(call.args for call in span.set_attribute.call_args_list)
+    assert values['work.decode_read.seconds'] == 6
+    assert values['work.decode_read.calls'] == 3
+    assert values['work.queue_write.seconds'] == 0
+
+
+def test_metric_attributes_exclude_job_identity(monkeypatch):
+    metric = Mock()
+    monkeypatch.setattr(telemetry, '_metrics', {'test': metric})
+    attrs = {'streamer': 'person', 'chunk_id': 'id', 'trace_id': 'trace', 'quality': '480p', 'stage': 'opencv'}
+    telemetry.record_counter('test', 1, attrs)
+    telemetry.record_histogram('test', 2, attrs)
+    metric.add.assert_called_once_with(1, {'quality': '480p', 'stage': 'opencv'})
+    metric.record.assert_called_once_with(2, {'quality': '480p', 'stage': 'opencv'})
+
+
+def test_completion_update_failure_never_logs_success(next_job, traces, monkeypatch):
+    monkeypatch.setattr(next_job.logger, 'info', Mock())
+    def update(chunk, status, **fields):
+        if status == 'completed':
+            raise RuntimeError('completion unavailable')
+    next_job.backend.update_chunk = update
+    with pytest.raises(RuntimeError, match='completion unavailable'):
+        next_job.process_vod_chunk()
+    assert all(call.args[0] != 'chunk_finished' for call in next_job.logger.info.call_args_list)
+    traces[0].force_flush()
+    root = next(s for s in traces[1].get_finished_spans() if s.name == 'process_chunk')
+    assert root.attributes['status'] == 'failed'
+
+
+@pytest.mark.parametrize('reason', ['signal', 'timeout'])
+def test_interruption_has_terminal_reason(next_job, traces, reason):
+    if reason == 'signal':
+        next_job._handle_shutdown(15, None)
+    else:
+        next_job._run_workers = Mock(side_effect=TimeoutError('deadline'))
+    with pytest.raises((RuntimeError, TimeoutError)):
+        next_job.process_vod_chunk()
+    traces[0].force_flush()
+    root = next(s for s in traces[1].get_finished_spans() if s.name == 'process_chunk')
+    assert root.attributes['termination.reason'] == reason
+    assert root.status.status_code == StatusCode.ERROR
+
+
+def test_shutdown_isolates_flush_failure_and_reports_timeout(monkeypatch, capsys):
+    import json
+    providers = [Mock(), Mock(), Mock()]
+    providers[0].force_flush.side_effect = RuntimeError('trace flush failed')
+    providers[1].force_flush.return_value = False
+    monkeypatch.setattr(telemetry, '_initialized', True)
+    monkeypatch.setattr(telemetry, '_logger_provider', providers[2])
+    monkeypatch.setattr(telemetry, '_otel_handler', None)
+    monkeypatch.setattr(telemetry.trace, 'get_tracer_provider', lambda: providers[0])
+    monkeypatch.setattr(telemetry.metrics, 'get_meter_provider', lambda: providers[1])
+    telemetry.shutdown_telemetry(100)
+    telemetry.shutdown_telemetry(100)
+    for provider in providers:
+        provider.force_flush.assert_called_once_with(100)
+        provider.shutdown.assert_called_once()
+    report = json.loads(capsys.readouterr().out)
+    assert report['providers']['traces.force_flush'] == 'RuntimeError'
+    assert report['providers']['metrics.force_flush'] == 'timeout'
+
+
+def test_export_audit_reports_root_without_payload(next_job, traces, monkeypatch, capsys):
+    import json
+    from opentelemetry.sdk.trace.export import SpanExportResult
+    next_job.process_vod_chunk()
+    traces[0].force_flush()
+    monkeypatch.setattr(telemetry.OTLPSpanExporter, 'export', lambda *_: SpanExportResult.SUCCESS)
+    exporter = telemetry.AuditedSpanExporter(endpoint='http://localhost:1')
+    exporter.export(traces[1].get_finished_spans())
+    exporter.shutdown()
+    reports = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith('{')]
+    report = next(r for r in reports if r.get('event') == 'telemetry_trace_export')
+    assert report['result'] == 'SUCCESS'
+    assert report['roots'][0]['status'] == 'completed'
+    assert len(report['roots'][0]['trace_id']) == 32
+    assert 'private-image' not in str(report)
+
+
+def test_real_providers_flush_all_signals_in_subprocess():
+    import os
+    import subprocess
+    import sys
+    from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
+    from opentelemetry.proto.collector.metrics.v1.metrics_service_pb2 import ExportMetricsServiceRequest
+    from opentelemetry.proto.collector.logs.v1.logs_service_pb2 import ExportLogsServiceRequest
+    received = []
+    class Collector(BaseHTTPRequestHandler):
+        def do_POST(self):
+            received.append((self.path, self.rfile.read(int(self.headers['Content-Length']))))
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+    server = HTTPServer(('127.0.0.1', 0), Collector)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    env = {k: v for k, v in os.environ.items() if not k.startswith('OTEL_')}
+    env.update(OTEL_EXPORTER_OTLP_ENDPOINT=f'http://127.0.0.1:{server.server_port}',
+               PYTHONPATH=os.path.dirname(telemetry.__file__))
+    try:
+        result = subprocess.run([sys.executable, '-c', '''
+import logging
+import telemetry
+logging.getLogger('sfde').setLevel(logging.INFO)
+assert telemetry.init_telemetry('sfde-next', 'test-revision', 'local')
+with telemetry.create_span('process_chunk', {'status': 'completed'}):
+    telemetry.record_counter('chunks_completed', 1, {'quality': '480p', 'streamer': 'private-person'})
+    logging.getLogger('sfde').info('chunk_finished')
+telemetry.shutdown_telemetry(5000)
+'''], env=env, capture_output=True, text=True, timeout=20)
+        assert result.returncode == 0, result.stderr
+        assert 'telemetry_trace_export' in result.stdout
+        assert '"traces.force_flush": "completed"' in result.stdout
+        assert {path for path, _ in received} == {'/v1/traces', '/v1/metrics', '/v1/logs'}
+        spans, records = [], []
+        for path, body in received:
+            if path == '/v1/traces':
+                request = ExportTraceServiceRequest.FromString(body)
+                spans.extend(s for r in request.resource_spans for scope in r.scope_spans for s in scope.spans)
+            elif path == '/v1/logs':
+                request = ExportLogsServiceRequest.FromString(body)
+                records.extend(l for r in request.resource_logs for scope in r.scope_logs for l in scope.log_records)
+            else:
+                request = ExportMetricsServiceRequest.FromString(body)
+                assert 'private-person' not in str(request)
+                assert 'sfde.chunks.completed' in str(request)
+        assert len(spans) == 1
+        terminal = next(r for r in records if r.body.string_value == 'chunk_finished')
+        assert terminal.trace_id == spans[0].trace_id
+        assert terminal.span_id == spans[0].span_id
+    finally:
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)

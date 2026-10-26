@@ -5,6 +5,7 @@ JSON logging formatter for structured logging
 import json
 import logging
 from datetime import datetime, timezone
+from opentelemetry import trace
 
 class JSONFormatter(logging.Formatter):
     """Custom JSON formatter for structured logging"""
@@ -32,6 +33,10 @@ class JSONFormatter(logging.Formatter):
             'function': record.funcName,
             'line': record.lineno
         }
+        context = trace.get_current_span().get_span_context()
+        if context.is_valid:
+            log_obj['trace_id'] = format(context.trace_id, '032x')
+            log_obj['span_id'] = format(context.span_id, '016x')
 
         # Add context fields from LoggerAdapter
         for field in self.CONTEXT_FIELDS:
