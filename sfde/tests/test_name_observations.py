@@ -35,27 +35,27 @@ def reader_with(native, mask=()):
     (' observed?! ', .99, False, 'obstructed'),
     ('a' * 300, .99, True, 'complete'),
 ])
-def test_exact_native_text_survives_without_identity_gate(text, confidence, complete, state):
+def test_first_word_is_username_and_exact_native_text_survives_in_evidence(text, confidence, complete, state):
     native = [(text, confidence)]
     reader = reader_with(native)
     frame = np.arange(160 * 64 * 3, dtype=np.uint8).reshape(64, 160, 3)
     result = NameReader(reader).read(frame, dict(LOCATION, complete=complete))
-    assert (result['username'], result['confidence'], result['name_state']) == (text, confidence, state)
+    assert (result['username'], result['confidence'], result['name_state']) == (text.split()[0], confidence, state)
     assert json.loads(result['raw_text'])['native'] == [[text, confidence]]
     # Override the shared reader's .5 recognition filter only for this call.
     assert reader.predict.call_args_list[0].kwargs == {'text_rec_score_thresh': 0.}
     assert np.array_equal(reader.predict.call_args_list[0].args[0], frame[8:32, 10:110])
 
 
-def test_multi_box_native_output_preserves_every_token_and_marks_uncertainty():
+def test_multi_box_output_keeps_first_word_and_preserves_every_token_in_evidence():
     native = [('MiXeD!', .98), ('小猫..', .18), ('suffix-with-long-punctuation!?', .75)]
     result = NameReader(reader_with(native)).read(np.zeros((64, 160, 3), np.uint8), LOCATION)
-    assert result['username'] == 'MiXeD!\n小猫..\nsuffix-with-long-punctuation!?'
+    assert result['username'] == 'MiXeD!'
     assert result['confidence'] == .18 and result['name_state'] == 'obstructed'
     assert json.loads(result['raw_text'])['native'] == [list(t) for t in native]
 
 
-def test_name_row_retains_fragments_and_raw_chat_without_appending_chat_to_name():
+def test_name_row_keeps_first_word_and_preserves_fragments_and_chat_in_evidence():
     reader = SimpleNamespace(predict=Mock(side_effect=[[
         {'rec_texts': ['Main', 'Frame', 'chat overlay'], 'rec_scores': [.98,.97,.99],
          'rec_polys': [[[0,5],[35,5],[35,23],[0,23]],
@@ -63,7 +63,7 @@ def test_name_row_retains_fragments_and_raw_chat_without_appending_chat_to_name(
                        [[75,0],[99,0],[99,6],[75,6]]]}
     ], [{'rec_texts': [], 'rec_scores': []}]]))
     result = NameReader(reader).read(np.zeros((64,160,3),np.uint8), LOCATION)
-    assert result['username'] == 'Main\nFrame'
+    assert result['username'] == 'Main'
     assert result['name_state'] == 'obstructed'
     raw = json.loads(result['raw_text'])
     assert raw['native'][-1][0] == 'chat overlay'
@@ -204,7 +204,7 @@ def test_real_ocr_preserves_observation_without_claiming_hidden_name_truth(locat
     native = json.loads(result['raw_text'])['native']
     observed = [(text, confidence) for text, confidence in native if text.strip()]
     assert observed, 'Expected visible text in this actual nameplate crop, not reconstructed truth'
-    assert result['username'] == '\n'.join(text for text, _ in observed)
+    assert result['username'] == observed[0][0].split()[0]
     assert result['confidence'] == min(confidence for _, confidence in observed)
     assert result['name_state'] == 'obstructed'
     assert result['ocr_regions']['native'] == location['name_region']
