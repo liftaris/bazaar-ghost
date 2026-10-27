@@ -41,7 +41,7 @@ The check reads validation only. It compares the deployed commit, full chunk cov
 
 Only YouTube processing was enabled. The freshly queried validation switches are ingestion `0`, discovery `0`, processing `1`, notifications `0`. The `automatic_vods_since` cutoff remains `2026-10-16T00:00:00.000Z`; older backlog recordings remain excluded. See the [rollout plan](youtube-rollout-plan.md) and [decision trail](youtube-rollout-decisions.tsv).
 
-Production remains separate. Authenticated Cloudflare inventory found only the validation BazaarGhost D1 database. The production branch still uses Supabase, and the Cloudflare production resource configuration contains placeholders. These validation results do not establish a production cutover.
+The user clarified that "production" meant deployed validation. This rollout meets that target. The separate Supabase production migration is outside this request, not a remaining blocker.
 
 ## Earlier audit
 
@@ -103,4 +103,4 @@ Full automatic YouTube acceptance still needs the selected execution path to com
 
 Full Twitch parity also includes notifications. `catalog_youtube.normalize_video` sets `notifications_enabled=False`. Migration `0011` defaults platform notifications off except for Twitch, and current outbox triggers require both recording and platform permission. Ingestion switches alone do not enable notifications. Actual delivery is additionally suppressed outside production.
 
-The current deployment configuration still separates Cloudflare validation from production. Successful validation is not evidence of a production cutover.
+The deployment configuration still separates Cloudflare validation from the Supabase production service. No separate cutover was requested or performed.

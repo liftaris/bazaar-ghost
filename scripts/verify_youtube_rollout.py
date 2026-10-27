@@ -10,8 +10,6 @@ import subprocess
 from urllib.request import Request
 from urllib.parse import urlencode
 
-from PIL import Image
-
 from backend_environment import open_backend
 
 
@@ -62,6 +60,7 @@ def verify(artifacts):
             assert summary['frames_processed'] == coverage['sampled_frames'] == chunk['frames_processed']
             assert coverage['sampled_frames'] == coverage['requested_expected_frames']
             assert coverage['completion_reason'] == 'requested_range'
+            assert coverage['source_gap_count'] == 0, coverage
             assert coverage['unobserved_catalog_tail_seconds'] == 0
             assert coverage['first_sample_seconds'] == chunk['start_seconds']
             assert 0 < chunk['end_seconds'] - coverage['last_sample_seconds'] <= 2
@@ -110,6 +109,8 @@ def verify(artifacts):
                         'chunks': coverage_reports})
 
     def image(path):
+        from PIL import Image
+
         assert path.startswith('/detections/youtube/')
         response = subprocess.run(['curl', '--fail', '--silent', '--show-error', '--max-time', '45',
                                    '--max-filesize', '5000000', BASE + path], capture_output=True)
