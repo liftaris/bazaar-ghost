@@ -95,6 +95,7 @@ def check(identity, clients, output, provider='bgutil', policy='auto', cookiefil
                 (output / f'{identity}-{clients.replace(",", "_")}-{policy}-{at}.jpg').write_bytes(decoded.stdout)
             except Exception as error:
                 frame['error'] = safe_error_category(error)
+                frame['exception_type'] = type(error).__name__
             report['frames'].append(frame)
         report['playback'] = bool(report['frames']) and all(f['decoded'] for f in report['frames'])
     except Exception as error:

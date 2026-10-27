@@ -39,6 +39,11 @@ jobs:
         with:
           deno-version: v2.9.7
       - run: pip install 'streamlink==8.6.2' 'yt-dlp[default]==2026.8.19'
+      - name: Install and verify media decoder
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version
       - name: Check baseline metadata and playback before installing the plugin
         continue-on-error: ${{ inputs.probe == 'po_token' }}
         env:
