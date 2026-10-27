@@ -50,6 +50,15 @@ class YouTubePotTests(unittest.TestCase):
             self.assertIn(f'youtube:player_client=mweb;fetch_pot={policy}', command)
             self.assertEqual('--no-plugin-dirs' in command, policy == 'never')
 
+    def test_cookie_file_is_passed_without_exposing_session_in_report(self):
+        stderr = ('Found YouTube account cookies\nLOGIN_REQUIRED\n'
+                  'Sign in to confirm you are not a bot Cookie: SID=private-session')
+        with patch('check_youtube_pot.subprocess.run', return_value=SimpleNamespace(returncode=1, stderr=stderr)) as run:
+            result = check('jwxFzTcvWLs', 'web_creator', Path('.'), cookiefile='/private/session.txt')
+        self.assertIn('/private/session.txt', run.call_args.args[0])
+        self.assertTrue(result['account_cookies_detected'])
+        self.assertNotIn('private', json.dumps(result))
+
 
 if __name__ == '__main__':
     unittest.main()

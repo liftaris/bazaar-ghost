@@ -15,6 +15,10 @@ on:
         type: choice
         default: baseline
         options: [baseline, po_token]
+      authenticated:
+        description: Use the temporary YouTube-only cookie secret
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -63,6 +67,15 @@ jobs:
       - name: Install current extractor for the experiment
         if: inputs.probe == 'po_token'
         run: pip install 'yt-dlp[default]==2026.10.26' 'yt-dlp-ejs==0.8.0'
+      - name: Prepare temporary YouTube session
+        if: inputs.probe == 'po_token' && inputs.authenticated
+        env:
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_PROBE_COOKIES }}
+        run: |
+          test -n "$YOUTUBE_COOKIES"
+          umask 077
+          printf '%s' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/youtube-cookies.txt"
+          echo "YOUTUBE_COOKIE_FILE=$RUNNER_TEMP/youtube-cookies.txt" >> "$GITHUB_ENV"
       - name: Compare baseline and token-assisted media playback
         if: inputs.probe == 'po_token'
         env:
@@ -79,6 +92,9 @@ jobs:
           include-hidden-files: true
           retention-days: 7
           if-no-files-found: warn
+      - name: Remove temporary YouTube session
+        if: always() && inputs.authenticated
+        run: rm -f "$RUNNER_TEMP/youtube-cookies.txt"
       - name: Stop token provider
         if: always() && inputs.probe == 'po_token' && matrix.provider == 'bgutil'
         run: docker rm -f youtube-pot-provider

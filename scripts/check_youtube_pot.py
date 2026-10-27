@@ -29,14 +29,18 @@ def token_evidence(stderr, provider):
             r'\b(?:TimeoutError|ConnectionRefusedError|PermissionError|FileNotFoundError|TypeError|AttributeError|RuntimeError)\b', stderr))),
         'player_statuses': sorted(set(re.findall(r'playability status: ([A-Z_]+)', stderr))),
         'js_challenge_attempted': 'Solving JS challenges using deno' in stderr,
+        'account_cookies_detected': 'Found YouTube account cookies' in stderr,
+        'cookies_rejected': 'cookies are no longer valid' in stderr or 'cookies have been rotated' in stderr,
     }
 
 
-def check(identity, clients, output, provider='bgutil', policy='auto'):
+def check(identity, clients, output, provider='bgutil', policy='auto', cookiefile=None):
     report = {'clients': clients, 'policy': policy, 'resolved': False, 'playback': False, 'frames': []}
     stage = 'extraction'
     try:
         options = ['--no-plugin-dirs'] if policy == 'never' else []
+        if cookiefile:
+            options += ['--cookies', str(cookiefile)]
         if provider == 'bgutil' and policy != 'never':
             options += ['--extractor-args', 'youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416']
         result = subprocess.run([
@@ -104,9 +108,11 @@ def main():
     output = Path(os.environ.get('YOUTUBE_PROBE_OUTPUT', '.ignore/youtube-pot'))
     output.mkdir(parents=True, exist_ok=True)
     provider = os.environ.get('YOUTUBE_POT_PROVIDER', 'bgutil')
+    cookiefile = os.environ.get('YOUTUBE_COOKIE_FILE')
     if provider not in ('bgutil', 'wpc'):
         raise ValueError('Unknown PO token provider')
-    report = {'source_id': identity, 'provider': provider, 'attempts': [], 'passed': False,
+    report = {'source_id': identity, 'provider': provider, 'authenticated': bool(cookiefile),
+              'attempts': [], 'passed': False,
               'yt_dlp_version': package_version('yt-dlp'),
               'ejs_version': package_version('yt-dlp-ejs'),
               'revision': os.environ.get('GITHUB_SHA'), 'run_id': os.environ.get('GITHUB_RUN_ID')}
@@ -122,13 +128,17 @@ def main():
         baseline = output / 'baseline.json'
         if baseline.exists():
             report['baseline'] = json.loads(baseline.read_text())
-        for clients, policy in (('default', 'never'), ('mweb', 'auto'), ('mweb', 'always'),
-                                ('mweb,tv,web_safari', 'auto'), ('web_safari', 'auto')):
+        cases = (('default', 'never'), ('mweb', 'auto'), ('mweb', 'always'),
+                 ('mweb,tv,web_safari', 'auto'), ('web_safari', 'auto'))
+        if cookiefile:
+            cases = (('default', 'never'), ('default', 'auto'), ('web_creator', 'auto'),
+                     ('web_creator', 'always'), ('tv_downgraded', 'auto'), ('web_safari', 'auto'))
+        for clients, policy in cases:
             time.sleep(5)
-            attempt = check(identity, clients, output, provider, policy)
+            attempt = check(identity, clients, output, provider, policy, cookiefile)
             report['attempts'].append(attempt)
             print(json.dumps({'source_id': identity, **attempt}), flush=True)
-            if attempt['playback'] and attempt.get('token_retrieved') and attempt.get('provider_loaded'):
+            if attempt['playback'] and (cookiefile or (attempt.get('token_retrieved') and attempt.get('provider_loaded'))):
                 report['passed'] = True
     except Exception as error:
         report['error'] = safe_error_category(error)
