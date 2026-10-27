@@ -55,7 +55,23 @@ The validation Worker has its GitHub dispatch secret, and validation has a YouTu
 gh workflow run check-youtube-access.yml --ref migration/cloudflare -f video_id=jwxFzTcvWLs
 ```
 
-This check reads official metadata and decodes one real video frame. It performs no catalog writes or OCR dispatch. [Hosted run 38675486605](https://github.com/liftaris/bazaar-ghost/actions/runs/38675486605) could read metadata but failed playback with `auth_required`; the same check passed locally. An API key does not provide media playback access. Recurring YouTube processing remains disabled until the chosen Actions runner passes playback and the pending ingestion backlog is reviewed. Twitch has separate [hosted acceptance](backend-validation-status.md#twitch-acceptance-october-16-2026). The normal catalog path still uses yt-dlp; the preflight does not silently change its readiness or duration semantics.
+This check reads official metadata and decodes one real video frame. It performs no catalog writes or OCR dispatch. [Hosted run 38675486605](https://github.com/liftaris/bazaar-ghost/actions/runs/38675486605) could read metadata but failed playback with `auth_required`; the same check passed locally. An API key does not provide media playback access. The later [authenticated rollout](youtube-support-status.md#october-27-deployed-rollout) enabled validation processing while preserving the historical cutoff and keeping ingestion/discovery off. Twitch has separate [hosted acceptance](backend-validation-status.md#twitch-acceptance-october-16-2026). The normal catalog path still uses yt-dlp; the preflight does not change its readiness or duration semantics.
+
+### Refresh validation YouTube authentication
+
+Normal YouTube jobs use the validation environment secret `YOUTUBE_COOKIES`. The separate `YOUTUBE_PROBE_COOKIES` secret is temporary probe infrastructure, not an application dependency. No PO-token service is required for the working authenticated default.
+
+To refresh application authentication, export from an explicitly authorized logged-in Firefox profile. The exporter includes only YouTube cookies from the default container and creates a private file. Replace `FIREFOX_PROFILE` with that profile directory before running:
+
+```sh
+private_dir=$(mktemp -d /tmp/opencode/youtube-auth.XXXXXX)
+trap 'rm -rf "$private_dir"' EXIT
+TMPDIR=/tmp/opencode python3 scripts/export_youtube_cookies.py \
+  --profile "$FIREFOX_PROFILE" --output "$private_dir/cookies.txt"
+gh secret set YOUTUBE_COOKIES --env validation < "$private_dir/cookies.txt"
+```
+
+Do not print the file, upload it as an artifact, or commit it. Hosted jobs create separate mode-0600 jars and remove them after use. Docker uses UID 1000 and a writable jar because yt-dlp updates cookies. Cookies can expire or be revoked; a passing deployment does not provide automatic credential renewal. Inspect the next real catalog and processing job after refresh.
 
 ### YouTube PO-token probe
 
@@ -96,7 +112,7 @@ check. The local control did retrieve tokens, but direct 480p FFmpeg reads were
 denied with HTTP 403; a separate bounded native yt-dlp download succeeded once.
 Neither result establishes full playback readiness. The hosted failure happens
 before the token-generation step, so adding this provider alone did not resolve
-the sign-in restriction. Keep recurring YouTube processing disabled.
+the sign-in restriction. The later authenticated rollout above supersedes this anonymous-only activation blocker.
 
 ## October 2026 dependency update
 

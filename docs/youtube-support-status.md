@@ -1,8 +1,25 @@
 # YouTube support status
 
-Latest result: [authenticated GitHub-hosted playback succeeds](youtube-po-token-experiment.md#authenticated-hosted-playback-succeeds). Run 40540195761 passed all 12 cases and 48 frame checks for one recording, including plugin-free controls. The earlier anonymous login blocker still applies. Production integration and cookie renewal remain open; broader hosted verification is running.
+Authenticated streaming is deployed to validation at `130c9bd39d149384961c73a4bc85f225c4d4d81b`. [PR 82](https://github.com/liftaris/bazaar-ghost/pull/82) passed independent review and CI. [Deployment 40546559912](https://github.com/liftaris/bazaar-ghost/actions/runs/40546559912) passed, and live `/health` returned that commit. The deployed scheduler dispatched two full Kripparrian uploads. OCR completion is pending.
 
-Audited October 27, 2026 against `migration/cloudflare` at `fac316865551e9b0fc24bedb995e1956327168be`. The live validation `/health` returned that exact commit. The initial audit read source, Linear records, GitHub workflow history, and public validation endpoints. A subsequent [fresh PO-token experiment](youtube-po-token-experiment.md) tested six actual GitHub-hosted jobs. Private D1 settings were not queried.
+The dedicated validation `YOUTUBE_COOKIES` secret supplies private cookie jars to catalog, ingestion, preparation, and Docker processing jobs. Normal processing still seeks directly into media streams. It does not download full recordings first. [Authenticated hosted probes](youtube-po-token-experiment.md#authenticated-hosted-playback-succeeds) passed all 12 cases and 48 frame checks, including plugin-free controls. Anonymous login failures and cookie expiry remain operational risks.
+
+## October 27 deployed rollout
+
+| Recording | Full duration | Catalog job | Scheduler-created processing job |
+| --- | --- | --- | --- |
+| `HklpcveV_4o`, record 310520 | 2763 seconds | [40546805031](https://github.com/liftaris/bazaar-ghost/actions/runs/40546805031) | [40548008075](https://github.com/liftaris/bazaar-ghost/actions/runs/40548008075) |
+| `k3Mnp0OQ8ug`, record 310521 | 2609 seconds | [40546810258](https://github.com/liftaris/bazaar-ghost/actions/runs/40546810258) | [40548009614](https://github.com/liftaris/bazaar-ghost/actions/runs/40548009614) |
+
+Both catalog records are visible through the deployed public lookup API. [Hosted bounded channel listing](https://github.com/liftaris/bazaar-ghost/actions/runs/40547183873) also returned and cataloged both uploads. This tests the anonymous channel-listing path, not automatic discovery or WebSub delivery.
+
+Only YouTube processing was enabled. The freshly queried validation switches are ingestion `0`, discovery `0`, processing `1`, notifications `0`. The `automatic_vods_since` cutoff remains `2026-10-16T00:00:00.000Z`; older backlog recordings remain excluded. See the [rollout plan](youtube-rollout-plan.md) and [decision trail](youtube-rollout-decisions.tsv).
+
+Production remains separate. Authenticated Cloudflare inventory found only the validation BazaarGhost D1 database. The production branch still uses Supabase, and the Cloudflare production resource configuration contains placeholders. These validation results do not establish a production cutover.
+
+## Earlier audit
+
+The initial October 27 audit used `migration/cloudflare` at `fac316865551e9b0fc24bedb995e1956327168be`. The live validation `/health` then returned that exact commit. That audit read source, Linear records, GitHub workflow history, and public validation endpoints. A subsequent [fresh PO-token experiment](youtube-po-token-experiment.md) tested six actual GitHub-hosted jobs. Private D1 settings were not queried until the deployed rollout above.
 
 YouTube has a working catalog and processing implementation, historical full-recording acceptance, and frontend support. Reliable automatic access from the chosen runner remains the main blocker. Twitch already runs automatically. Bilibili passed automatic hosted validation on October 20.
 
@@ -10,10 +27,10 @@ YouTube has a working catalog and processing implementation, historical full-rec
 
 | Area | Evidence | Remaining limitation |
 | --- | --- | --- |
-| Enrollment and catalog | `scripts/catalog_youtube.py` handles channel IDs, uploads, finalized archives, explicit ranges, and resumable backfills | Metadata still uses yt-dlp, which encountered hosted sign-in failures |
+| Enrollment and catalog | `scripts/catalog_youtube.py` handles channel IDs, uploads, finalized archives, explicit ranges, and resumable backfills | Authenticated hosted metadata now passes; cookie expiry remains a dependency |
 | Automatic ingestion | `scripts/platform_ingestion.py` and `scripts/platform_discovery.py` handle discovery, uploads/streams polling, durable readiness jobs, and retries | The proposed Worker-native Data API adapter is not implemented |
 | WebSub | `worker/youtube-websub.ts` handles signed delivery, replay protection, subscription confirmation, and renewal | Recorded acceptance does not establish real public hub delivery |
-| Media and OCR | Streamlink-first resolution, yt-dlp fallback, shared chunks, FFmpeg, and SFDE | Hosted access and native resolution remain unresolved |
+| Media and OCR | Streamlink-first resolution, authenticated yt-dlp fallback, shared chunks, FFmpeg, and SFDE | Native 480p hosted probes pass; deployed OCR remains under verification |
 | API | Live `/api/v1/platforms` lists YouTube; `/api/v1/search?platform=youtube&limit=1` returned matchup 17 with a YouTube source at 2388 seconds | Historical searchable output does not prove new automatic ingestion |
 | Frontend | [BG-38](https://linear.app/kaio-barbosa/issue/BG-38), BG-90, and BG-92 are Done; BG-96 records real-player clock verification | Passive YouTube URL advance was not verified in BG-96; this audit did not rerun browser QA |
 | Notifications | Generic Matchup notification delivery exists | YouTube catalog rows disable notifications, and platform notification defaults are off |
@@ -30,7 +47,7 @@ The original PO-token experiments failed before requesting a token. The October 
 
 Both `prepare` and `process-chunk` in `.github/workflows/process-vod.yml` use `ubuntu-latest`. `scripts/vod_workflow.py:142-147` resolves media during preparation. Moving only chunk jobs to a working network would leave preparation blocked. Catalog jobs also need working access until the metadata adapter changes.
 
-The smallest demonstrated route is source-specific self-hosted Actions execution on a network where anonymous access passed. A self-hosted VM with another datacenter IP is not automatically equivalent to the successful local network.
+Before the authenticated probes, the demonstrated route was source-specific self-hosted Actions execution on a network where anonymous access passed. Authenticated GitHub-hosted playback now provides another verified route. A self-hosted VM with another datacenter IP is not automatically equivalent to the successful local network.
 
 The local branch `experiment/youtube-workers`, at `8195dc3`, contains an unmerged byte-range relay. It passed 12/12 local frame checks and 7/12 hosted checks, all at 360p. No full OCR run passed through it. The five failed hosted checks were not all individually classified as sign-in failures. The temporary Worker was deleted. A relay or proxy remains an experiment rather than an established deployment path.
 
@@ -46,7 +63,7 @@ The earlier Linear comment's quota estimate is outdated. Google's [current quota
 
 ### Native video quality
 
-[BG-125](https://linear.app/kaio-barbosa/issue/BG-125) tracks rendition selection. `sfde/src/media_source.py:126-147` returns a supported Streamlink rendition before considering yt-dlp. Earlier real probes exposed only muxed itag 18 at 360p. A request for 480p therefore does not establish native 480p input. Preparation discards the resolved height and reports the requested processing geometry.
+[BG-125](https://linear.app/kaio-barbosa/issue/BG-125) tracks rendition selection. The deployed resolver now falls back to yt-dlp when Streamlink returns a YouTube rendition below the requested processing resolution. Earlier real probes exposed only muxed itag 18 at 360p. The yt-dlp candidate selector can still choose a lower rendition if no higher one exists, so requested processing geometry alone does not prove native input resolution. Inspect the processor's resolved-input log and the actual OCR output.
 
 The local acceptance already includes a readable day-4 value left null on native 360p. This does not invalidate all 360p processing. It does justify selecting and reporting the actual input resolution, then reviewing OCR against real frames. Higher-resolution extraction must also work through FFmpeg seeks and chunk reads, not just return a format URL.
 
