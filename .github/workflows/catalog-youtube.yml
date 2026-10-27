@@ -74,7 +74,14 @@ jobs:
       - uses: denoland/setup-deno@v2.0.5
         with:
           deno-version: v2.9.7
-      - run: pip install 'yt-dlp[default]==2026.8.19'
+      - run: pip install 'yt-dlp[default]==2026.10.26'
+      - name: Prepare YouTube authentication
+        env:
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+        run: |
+          umask 077
+          printf '%s' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/youtube-cookies.txt"
+          echo "YOUTUBE_COOKIES_FILE=$RUNNER_TEMP/youtube-cookies.txt" >> "$GITHUB_ENV"
       - name: Catalog a bounded page
         shell: bash
         run: |
@@ -92,6 +99,9 @@ jobs:
           fi
           if [ "$ENABLE_PROCESSING" = true ]; then args+=(--enable-processing); fi
           python scripts/catalog_youtube.py "${args[@]}" > catalog-result.json
+      - name: Remove YouTube authentication
+        if: always()
+        run: rm -f "$RUNNER_TEMP/youtube-cookies.txt"
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: youtube-catalog

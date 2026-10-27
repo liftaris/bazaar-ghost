@@ -59,6 +59,8 @@ This check reads official metadata and decodes one real video frame. It performs
 
 ### YouTube PO-token probe
 
+The [October 27 repeat](youtube-po-token-experiment.md) used six GitHub-hosted jobs plus two diagnostic follow-ups, yt-dlp 2026.10.26, bgutil 2.0.2, and WPC 1.1.2. All 40 extraction attempts required sign-in. Unlike the earlier run below, forced bgutil token retrieval succeeded on all three videos before the login rejection. The current diagnostic is credential-free and explicitly skips official API metadata unless the standalone baseline script receives `YOUTUBE_API_KEY`. The workflow's runtime dependency pins remain separate from normal ingestion and OCR.
+
 The same manual workflow can compare the existing resolver with yt-dlp's
 [documented token-provider setup](https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide):
 

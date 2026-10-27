@@ -19,7 +19,7 @@ The Cloudflare environment retains its `validation` name and isolated resources 
 - Each known creator is also reconciled hourly, with due times spread across the hour. This catches mixed-game archives absent from Twitch's game-specific discovery feed. Dedicated `stream.offline` subscriptions trigger immediate reconciliation once enrolled.
 - Cataloging uses Helix archive pagination and per-video chapter queries. It stops at the configured start boundary or 100 recent archives. Deleted Twitch accounts do not repeatedly fail the queue.
 - Every three minutes, the backend submits eligible chunks from up to 100 pending recordings. GitHub Actions queues and runs the jobs according to runner capacity. Failed chunks retry after five minutes, up to three attempts; completed chunks are retained. Waiting for a runner does not consume an attempt.
-- Availability reconciliation runs twice daily. YouTube/Bilibili automatic ingestion remains paused because its separate provider-access limitations are unresolved; current Supabase production's automatic VOD pipeline is Twitch.
+- Availability reconciliation runs twice daily. Bilibili passed automatic hosted validation on October 20. YouTube's runner-access blocker remains unresolved in the latest recorded probes. See the [support audit](youtube-support-status.md) for evidence and rollout scope.
 
 Cloudflare processing was opened on October 17, 2026, with the fixed boundary `2026-10-16T00:00:00.000Z`. This catches recent recordings while excluding the existing historical catalog. Capacity started at four chunks and was raised to eight after 15 successful chunks with no failures. This is a fixed start date, not a moving expiration window: unfinished eligible recordings remain eligible tomorrow. The boundary is checked by scheduler selection, queued-job handling and atomic dispatch reservation. Missing/invalid publication dates fail closed. An explicit administrator dispatch can deliberately process an older recording.
 
@@ -37,7 +37,7 @@ The controls live in Cloudflare D1 `processing_config`:
 | `automatic_vods` | absent | No per-VOD allowlist |
 | `twitch_discovery_streamer_ids` | absent | No per-streamer discovery allowlist |
 
-Per-platform switches live in `platform_settings` (see [processing and platform controls](cloudflare-migration.md#processing-and-platform-controls)). Migration `0010` carried the earlier pause over: Twitch fully on; YouTube and Bilibili ingestion/discovery off, processing on.
+Per-platform switches live in `platform_settings` (see [processing and platform controls](cloudflare-migration.md#processing-and-platform-controls)). Migration `0010` initially carried the earlier pause over. The later October 19 rollout recorded Twitch and Bilibili fully on, with YouTube ingestion, discovery, and processing all off. These are recorded rollout values, not a live settings read. The old `automatic_platform_ingestion` key was deleted by the migration.
 
 The former `max_concurrent_chunks` setting is ignored. GitHub Actions owns execution capacity; queued and processing chunks no longer reserve backend slots.
 
