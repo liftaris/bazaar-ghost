@@ -16,21 +16,25 @@ from media_source import ffmpeg_input_args, resolve_media, validate_source_id
 def main():
     identity = validate_source_id('youtube', os.environ['VIDEO_ID'])
     report = {'source_id': identity, 'metadata': False, 'playback': False}
-    try:
-        url = 'https://www.googleapis.com/youtube/v3/videos?' + urlencode({
-            'part': 'snippet,contentDetails,status', 'id': identity,
-            'key': os.environ['YOUTUBE_API_KEY'],
-        })
-        with urlopen(Request(url), timeout=30) as response:
-            payload = response.read(2_000_001)
-        if len(payload) > 2_000_000:
-            raise ValueError('Metadata response too large')
-        items = json.loads(payload).get('items', [])
-        if len(items) != 1 or items[0].get('id') != identity:
-            raise ValueError('Video metadata unavailable')
-        report.update(metadata=True, api_duration=items[0]['contentDetails']['duration'])
-    except Exception as error:
-        report['metadata_error'] = safe_error_category(error)
+    api_key = os.environ.get('YOUTUBE_API_KEY')
+    if api_key:
+        try:
+            url = 'https://www.googleapis.com/youtube/v3/videos?' + urlencode({
+                'part': 'snippet,contentDetails,status', 'id': identity,
+                'key': api_key,
+            })
+            with urlopen(Request(url), timeout=30) as response:
+                payload = response.read(2_000_001)
+            if len(payload) > 2_000_000:
+                raise ValueError('Metadata response too large')
+            items = json.loads(payload).get('items', [])
+            if len(items) != 1 or items[0].get('id') != identity:
+                raise ValueError('Video metadata unavailable')
+            report.update(metadata=True, api_duration=items[0]['contentDetails']['duration'])
+        except Exception as error:
+            report['metadata_error'] = safe_error_category(error)
+    else:
+        report['metadata_skipped'] = 'No API key supplied; media-only probe'
     try:
         media = resolve_media('youtube', identity, '480p')
         result = subprocess.run([
@@ -48,7 +52,7 @@ def main():
         report['playback_error'] = safe_error_category(error)
     # Never print extractor stderr, authenticated API URLs, or signed media URLs.
     print(json.dumps(report))
-    return 0 if report['metadata'] and report['playback'] else 1
+    return 0 if report['playback'] and (not api_key or report['metadata']) else 1
 
 
 if __name__ == '__main__':

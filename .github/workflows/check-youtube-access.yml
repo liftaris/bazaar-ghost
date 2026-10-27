@@ -21,7 +21,6 @@ jobs:
   check:
     if: github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/migration/cloudflare' || github.ref == 'refs/heads/docs/youtube-support-status')
     runs-on: ubuntu-latest
-    environment: validation
     timeout-minutes: 50
     strategy:
       fail-fast: false
@@ -40,7 +39,6 @@ jobs:
         continue-on-error: ${{ inputs.probe == 'po_token' }}
         env:
           VIDEO_ID: ${{ inputs.video_id }}
-          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
         run: |
           mkdir -p .ignore/youtube-pot
           python scripts/check_youtube_access.py | tee .ignore/youtube-pot/baseline.json
@@ -69,7 +67,6 @@ jobs:
         if: inputs.probe == 'po_token'
         env:
           VIDEO_ID: ${{ inputs.video_id }}
-          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           YOUTUBE_PROBE_OUTPUT: .ignore/youtube-pot
           YOUTUBE_POT_PROVIDER: ${{ matrix.provider }}
         run: xvfb-run -a python scripts/check_youtube_pot.py

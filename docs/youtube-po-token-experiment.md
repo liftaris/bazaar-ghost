@@ -17,6 +17,8 @@ The latest stable [yt-dlp release is 2026.10.26](https://github.com/yt-dlp/yt-dl
 
 The diagnostic workflow retains the installed production-version baseline before installing any token plugin. Its experimental stage upgrades only that job to yt-dlp 2026.10.26 with EJS 0.8.0 and Deno. Normal ingestion and OCR dependency pins do not change.
 
+The workflow requires no GitHub environment or secrets. Official Data API metadata is explicitly skipped without an API key; the standalone baseline script can still check it when a caller supplies `YOUTUBE_API_KEY`. The first three dispatches were rejected by validation-environment branch protection before any runner started. They are not YouTube results.
+
 Each video runs on two independent GitHub-hosted jobs, one with bgutil 2.0.2 and its existing digest-pinned service, one with WPC 1.1.2 and Chrome under Xvfb. Each job tries:
 
 1. Current default clients with plugins disabled and `fetch_pot=never`.
