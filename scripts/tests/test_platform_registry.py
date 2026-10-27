@@ -73,11 +73,11 @@ class SourceLiteralTests(unittest.TestCase):
     """Platform names live in contracts/platforms.json; code outside adapters and tests stays platform-neutral."""
     # Adapter modules (platform-specific by design) and the frozen v1 contract.
     ADAPTERS = {
+        'scripts/backfill_bilibili_avatars.py',
         'worker/youtube-websub.ts', 'contracts/public-api.ts', 'sfde/src/media_source.py', 'sfde/src/bilibili_source.py',
         'sfde/src/extraction_errors.py', 'scripts/catalog_youtube.py', 'scripts/catalog_bilibili.py',
         'scripts/check_youtube_access.py', 'scripts/check_youtube_pot.py', 'scripts/platform_discovery.py',
         'scripts/platform_ingestion.py', 'scripts/export_youtube_cookies.py', 'scripts/verify_youtube_rollout.py',
-        'scripts/backfill_bilibili_avatars.py',
     }
     LITERAL = re.compile(r'''['"`](?:[^'"`\n]*[^a-z0-9_-])?(youtube|bilibili)(?:[^a-z0-9_-][^'"`\n]*)?['"`]''')
 

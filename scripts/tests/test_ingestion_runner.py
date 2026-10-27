@@ -149,9 +149,10 @@ class WorkflowContractTests(unittest.TestCase):
             self.assertIn(f"inputs.environment == '{environment}' && github.ref == 'refs/heads/{branch}'", self.workflow)
         self.assertIn('environment: ${{ inputs.environment }}', self.workflow)
         self.assertIn("group: platform-ingestion-${{ inputs.avatar_backfill && 'avatars-validation' || inputs.environment }}", self.workflow)
+        self.assertIn("if: inputs.avatar_backfill && inputs.environment == 'validation' && github.ref == 'refs/heads/migration/cloudflare'", self.workflow)
+        self.assertIn('!inputs.avatar_backfill && (', self.workflow)
         self.assertIn('cancel-in-progress: false', self.workflow)
-        ingest = self.workflow.split('\n  ingest:\n', 1)[1]
-        timeout = int(re.search(r'timeout-minutes: (\d+)', ingest).group(1))
+        timeout = int(re.search(r'timeout-minutes: (\d+)', self.workflow.split('\n  ingest:\n', 1)[1]).group(1))
         worker = (ROOT / 'worker/platform-ingestion-dispatch.ts').read_text()
         lease = int(re.search(r'INGESTION_RUNNING_MINUTES = (\d+)', worker).group(1))
         self.assertEqual(timeout, 35)
