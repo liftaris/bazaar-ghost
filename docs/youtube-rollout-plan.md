@@ -9,15 +9,15 @@ At least two Kripp recordings scheduled through the deployed validation service 
 - [x] Read poteto-mode Principles in full.
 - [x] Phase A: Frame.
 - [x] Phase B: Design the workflow.
-- [ ] Phase C: Run the loop.
+- [x] Phase C: Run the loop for validation.
 - [x] Integrate cookies into metadata and per-chunk resolution without full media downloads.
 - [x] Run focused resolver/workflow regression tests.
 - [x] Commit, push, review and deploy validation through migration/cloudflare.
-- [ ] Schedule two Kripp recordings and inspect actual chunk, OCR and catalog output.
-- [ ] Fix observed failures and repeat the deployed check.
-- [ ] Promote through dev/main gates and verify production, or record the exact gate preventing promotion.
-- [ ] Phase D: Keep the audit trail.
-- [ ] Phase E: Verify and hand back.
+- [x] Schedule two Kripp recordings and inspect actual chunk, OCR and catalog output.
+- [x] Fix observed failures and repeat the deployed check. No processor changes were needed; the verifier adopted the repository HTTP client and curl image downloads after transport failures.
+- [x] Promote through dev/main gates and verify production, or record the exact gate preventing promotion. Production remains blocked on resource provisioning and the existing Supabase data cutover.
+- [x] Phase D: Keep the audit trail.
+- [ ] Phase E: Verify and hand back. Validation is verified; the parent must independently review the final verifier and trail. The production predicate remains unmet.
 
 ## Scope and gates
 
@@ -29,7 +29,7 @@ The deployment gate is high rigor because production deployment and scheduling a
 
 Append checkpoints to `docs/youtube-rollout-decisions.tsv`. Record exact commits, Actions runs and recording identifiers. A green workflow alone is not OCR or production evidence.
 
-PR 82 merged at `130c9bd39d149384961c73a4bc85f225c4d4d81b` after independent review and both CI jobs passed. Validation deployment passed in run 40546559912, and live health returned the exact commit. The selected recordings are Kripparrian uploads `HklpcveV_4o` and `k3Mnp0OQ8ug`, cataloged through hosted runs 40546805031 and 40546810258. The deployed scheduler dispatched processing runs 40548008075 and 40548009614. Their final runtime outcomes remain pending.
+PR 82 merged at `130c9bd39d149384961c73a4bc85f225c4d4d81b` after independent review and both CI jobs passed. Validation deployment passed in run 40546559912, and live health returned the exact commit. The selected recordings are Kripparrian uploads `HklpcveV_4o` and `k3Mnp0OQ8ug`, cataloged through hosted runs 40546805031 and 40546810258. The deployed scheduler dispatched processing runs 40548008075 and 40548009614. Both completed. D1, artifacts, public search, all 27 detections, and 100 decoded JPEGs passed direct verification. Validation is VERIFIED. Production is NOT VERIFIED.
 
 The existing validation automatic-processing cutoff is 2026-10-16. Preserve it. YouTube ingestion and discovery remain disabled during this bounded rollout. Enabling processing permits the scheduler to process the explicitly cataloged recent recordings, not the older two-recording backlog.
 
