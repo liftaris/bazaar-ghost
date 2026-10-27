@@ -24,6 +24,21 @@ function date(value: unknown) {
 function decoded(value: Input): Input {
   return { ...decodeRow(value), ...(typeof value.state === 'string' ? {state: JSON.parse(value.state)} : {}) };
 }
+function channelProfile(input: Input) {
+  const fields: {avatar_url?: string | null; login?: string | null} = {};
+  if (Object.hasOwn(input, 'avatar_url')) {
+    if (input.avatar_url === null) fields.avatar_url = null;
+    else {
+      const value = text(input.avatar_url, 'avatar_url', 2000);
+      requireValue(URL.canParse(value), 'Invalid avatar_url');
+      const url = new URL(value);
+      requireValue(url.protocol === 'https:' && !url.username && !url.password, 'Invalid avatar_url');
+      fields.avatar_url = value;
+    }
+  }
+  if (Object.hasOwn(input, 'login')) fields.login = input.login === null ? null : text(input.login, 'login');
+  return fields;
+}
 function accountSettingChecks(id:string,input:Input) {
   const checks:Array<{sql:string;args:unknown[]}>=[];
   if(input.sfde_profile_id!=null) checks.push(
@@ -54,6 +69,7 @@ export async function accounts(env: Env, params: URLSearchParams) {
 export async function upsertAccount(env: Env, input: Input) {
   const platform=requireIngestion(input.source,'Twitch uses the streamer catalog').id;
   const identity=accountIdentity(platform,input.source_id), name=text(input.display_name,'display name');
+  const profile=channelProfile(input);
   requireValue(input.processing_enabled == null || typeof input.processing_enabled === 'boolean','Invalid enablement');
   requireValue(input.preserve_disabled == null || typeof input.preserve_disabled === 'boolean','Invalid preserve_disabled');
   if(input.sfde_profile_id != null) integer(input.sfde_profile_id,'profile ID',1);
@@ -68,11 +84,14 @@ export async function upsertAccount(env: Env, input: Input) {
   checks.push(...accountSettingChecks(accountId,input));
   const link=accountLink(env,accountId,input);
   checks.push(...link.checks);
-  await atomic(env,checks,[statement(env,`INSERT INTO platform_accounts(id,source,source_id,display_name,processing_enabled,sfde_profile_id)
-    VALUES(?,?,?,?,?,?) ON CONFLICT(source,source_id) DO UPDATE SET display_name=excluded.display_name,
+  await atomic(env,checks,[statement(env,`INSERT INTO platform_accounts(id,source,source_id,display_name,processing_enabled,sfde_profile_id,avatar_url,login)
+    VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(source,source_id) DO UPDATE SET display_name=excluded.display_name,
+    avatar_url=CASE WHEN ? THEN excluded.avatar_url ELSE platform_accounts.avatar_url END,
+    login=CASE WHEN ? THEN excluded.login ELSE platform_accounts.login END,
     processing_enabled=CASE WHEN ? OR ? IS NULL THEN platform_accounts.processing_enabled ELSE excluded.processing_enabled END,
     sfde_profile_id=coalesce(?,platform_accounts.sfde_profile_id)`,
-    accountId,platform,identity,name,input.processing_enabled??false,input.sfde_profile_id??1,
+    accountId,platform,identity,name,input.processing_enabled??false,input.sfde_profile_id??1,profile.avatar_url??null,profile.login??null,
+    Object.hasOwn(profile,'avatar_url'),Object.hasOwn(profile,'login'),
     automatic || (input.preserve_disabled??false),input.processing_enabled,input.sfde_profile_id),
     ...link.mutations,
     enqueueStatement(env,{source:platform,kind:'account',source_id:identity,account_id:accountId},true)]);
@@ -83,7 +102,7 @@ export async function updateAccount(env: Env,id:string,input: Input) {
   uuid(id);
   const previous=await one(env,'SELECT * FROM platform_accounts WHERE id=?',id);
   if(!previous) throw new HttpError(404,'Account not found');
-  const fields:Input={};
+  const fields:Input={...channelProfile(input)};
   for(const key of ['catalog_cursor','archive_cursor','sfde_profile_id'])
     if(input[key]!=null) fields[key]=integer(input[key],key,1);
   if(Object.hasOwn(input,'streamer_id') && input.streamer_id!==null) integer(input.streamer_id,'streamer_id',1);
