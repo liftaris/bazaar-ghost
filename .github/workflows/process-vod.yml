@@ -113,9 +113,20 @@ jobs:
         run: pip install -r scripts/requirements-workflow.txt
       - name: Install YouTube fallback
         if: inputs.source == 'youtube' && !inputs.local
-        run: pip install 'yt-dlp[default]==2026.8.19'
+        run: pip install 'yt-dlp[default]==2026.10.26'
+      - name: Prepare YouTube authentication
+        if: inputs.source == 'youtube' && !inputs.local
+        env:
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+        run: |
+          umask 077
+          printf '%s' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/youtube-cookies.txt"
+          echo "YOUTUBE_COOKIES_FILE=$RUNNER_TEMP/youtube-cookies.txt" >> "$GITHUB_ENV"
       - id: prepare
         run: python scripts/vod_workflow.py prepare
+      - name: Remove YouTube authentication
+        if: always()
+        run: rm -f "$RUNNER_TEMP/youtube-cookies.txt"
       - if: failure() || cancelled()
         run: python scripts/vod_workflow.py fail-queued
 
@@ -176,6 +187,13 @@ jobs:
           docker pull "$SFDE_IMAGE"
           python scripts/runtime_image.py verify
           echo "seconds=$SECONDS" >> "$GITHUB_OUTPUT"
+      - name: Prepare media authentication
+        env:
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+        run: |
+          umask 077
+          printf '%s' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/youtube-cookies.txt"
+          sudo chown 1000:1000 "$RUNNER_TEMP/youtube-cookies.txt"
       - name: Process chunk
         timeout-minutes: 35
         run: |
@@ -183,6 +201,8 @@ jobs:
           chmod 777 output
           docker run --rm --network host \
             -v "$PWD/output:/app/output" \
+            -v "$RUNNER_TEMP/youtube-cookies.txt:/app/youtube-cookies.txt" \
+            -e YOUTUBE_COOKIES_FILE=/app/youtube-cookies.txt \
             -e BAZAARGHOST_API_URL -e BAZAARGHOST_PROCESSOR_KEY -e CHUNK_ID -e QUEUED_AT \
             -e QUALITY -e STREAM_QUALITY -e SFDE_PROFILE -e OLD_TEMPLATES \
             -e ENVIRONMENT -e SFDE_NEXT_ENABLED \
@@ -190,6 +210,9 @@ jobs:
             -e BUILD_COMMIT -e SFDE_RUNTIME_IMAGE \
             -e GITHUB_REPOSITORY -e GITHUB_RUN_ID -e GITHUB_RUN_ATTEMPT -e GITHUB_JOB \
             "$SFDE_IMAGE"
+      - name: Remove media authentication
+        if: always()
+        run: sudo rm -f "$RUNNER_TEMP/youtube-cookies.txt"
       - name: Fail unclaimed chunk
         if: failure() || cancelled()
         run: python scripts/vod_workflow.py fail-chunk

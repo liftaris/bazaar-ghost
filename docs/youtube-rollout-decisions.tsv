@@ -1,0 +1,4 @@
+ts	phase	decision	why	evidence	result
+2026-10-27T16:49:45Z	frame	Require deployed normal processing and actual OCR output before claiming success	Probe extraction alone does not exercise the product	docs/youtube-rollout-plan.md	open
+2026-10-27T16:50:00Z	design	Keep existing media locator shape and add progressive flag to yt-dlp results	Decoder already models progressive retry behavior	sfde/src/media_source.py	pending tests
+2026-10-27T16:51:00Z	auth	Use isolated writable per-run cookie jars and a distinct application secret	yt-dlp updates cookie files and the probe secret has an independent lifecycle	.github/workflows/process-vod.yml	pending deployed check

@@ -68,18 +68,36 @@ class YouTubeTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 normalize_video(self.metadata(), chapters=ranges)
 
-    def test_streamlink_remains_first_and_ffmpeg_can_normalize_resolution(self):
-        data = {'streams': {'360p': {'type': 'http', 'url': 'https://cdn.example/video.mp4',
+    def test_streamlink_remains_first_at_requested_resolution(self):
+        data = {'streams': {'480p': {'type': 'http', 'url': 'https://cdn.example/video.mp4',
                                     'headers': {'User-Agent': 'test', 'Authorization': 'not-forwarded'}},
                             'best': {'type': 'http', 'url': 'https://cdn.example/video.mp4'}}}
         with patch('media_source.subprocess.run', return_value=SimpleNamespace(returncode=0, stdout=json.dumps(data))) as run:
             with patch('media_source.youtube_metadata') as fallback:
                 media = resolve_media('youtube', '0C6bxQsDj-s', '480p')
                 self.assertEqual(media['resolver'], 'streamlink')
-                self.assertEqual(media['height'], 360)
+                self.assertEqual(media['height'], 480)
                 self.assertEqual(ffmpeg_input_args(media), ['-headers', 'User-Agent: test\r\n'])
                 fallback.assert_not_called()
                 self.assertEqual(run.call_args.args[0][0], 'streamlink')
+
+    def test_low_resolution_streamlink_falls_back_to_native_resolution(self):
+        data = {'streams': {'360p': {'type': 'http', 'url': 'https://cdn.example/low'}}}
+        formats = [{'url': 'https://cdn.example/native', 'vcodec': 'avc', 'height': 480, 'protocol': 'https'}]
+        with patch('media_source.subprocess.run', return_value=SimpleNamespace(returncode=0, stdout=json.dumps(data))), \
+                patch('media_source.youtube_metadata', return_value=self.metadata(formats=formats)):
+            media = resolve_media('youtube', '0C6bxQsDj-s')
+        self.assertEqual(media['height'], 480)
+        self.assertEqual(media['resolver'], 'yt-dlp')
+        self.assertTrue(media['progressive'])
+
+    def test_metadata_uses_configured_cookie_jar_without_downloading(self):
+        with patch.dict('os.environ', {'YOUTUBE_COOKIES_FILE': '/private/cookies.txt'}), \
+                patch('media_source.subprocess.run', return_value=SimpleNamespace(returncode=0, stdout=json.dumps(self.metadata()))) as run:
+            youtube_metadata('0C6bxQsDj-s')
+        command = run.call_args.args[0]
+        self.assertIn('--skip-download', command)
+        self.assertEqual(command[command.index('--cookies') + 1], '/private/cookies.txt')
 
     def test_fallback_is_youtube_only_and_ignores_audio_and_drm(self):
         with patch('media_source.subprocess.run', return_value=SimpleNamespace(returncode=1, stdout='')):

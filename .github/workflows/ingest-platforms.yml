@@ -99,8 +99,16 @@ jobs:
         if: steps.runner.outputs.proceed == 'true'
         with:
           deno-version: v2.9.7
-      - run: pip install 'yt-dlp[default]==2026.8.19'
+      - run: pip install 'yt-dlp[default]==2026.10.26'
         if: steps.runner.outputs.proceed == 'true'
+      - name: Prepare YouTube authentication
+        if: steps.runner.outputs.proceed == 'true'
+        env:
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+        run: |
+          umask 077
+          printf '%s' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/youtube-cookies.txt"
+          echo "YOUTUBE_COOKIES_FILE=$RUNNER_TEMP/youtube-cookies.txt" >> "$GITHUB_ENV"
       - name: Enroll optional account
         if: steps.runner.outputs.proceed == 'true' && steps.runner.outputs.automatic == 'false' && inputs.identity != '' && inputs.source != 'none'
         run: python scripts/platform_ingestion.py enroll --source "$SOURCE" --identity "$IDENTITY"
@@ -117,6 +125,9 @@ jobs:
           fi
           set -o pipefail
           python scripts/platform_ingestion.py "${args[@]}" | tee ingestion-result.jsonl
+      - name: Remove YouTube authentication
+        if: always()
+        run: rm -f "$RUNNER_TEMP/youtube-cookies.txt"
       - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
