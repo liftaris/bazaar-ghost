@@ -2,7 +2,7 @@
 
 The Worker stores durable discovery, creator-poll, and video-readiness jobs in D1. When provider scheduling is activated, its existing three-minute processing schedule queues a bounded GitHub Actions ingestion run for due work. That runner reads platform metadata through yt-dlp/public endpoints and sends validated catalog changes back to the Worker. Finite playable recordings then enter the existing GitHub OCR workflow. Nothing records a live stream.
 
-Validation now enables ongoing parallel Twitch discovery, hourly catalog reconciliation and three-minute processing with a fixed publication-time start boundary. Three real Twitch VODs completed through Worker queues and GitHub-hosted OCR, including automatic interruption recovery. YouTube/Bilibili ingestion dispatch remains paused. See [parallel operation and controls](parallel-backend.md) and [earlier Twitch acceptance](backend-validation-status.md#twitch-acceptance-october-16-2026).
+Validation enables ongoing parallel Twitch discovery, hourly catalog reconciliation and three-minute processing with a fixed publication-time start boundary. Bilibili subsequently passed automatic hosted validation on October 20: 36/36 eligible videos complete and 434 detections. YouTube's runner-access blocker remains unresolved in the latest recorded probes. See the [October 27 support audit](youtube-support-status.md), [parallel operation and controls](parallel-backend.md), and [earlier Twitch acceptance](backend-validation-status.md#twitch-acceptance-october-16-2026).
 
 This ports the ingestion follow-up from `ec4b870`. The separate [multiplatform backend guide](multiplatform-backend.md) describes source identities, profiles, manual backfills, processing, and appearance grouping.
 

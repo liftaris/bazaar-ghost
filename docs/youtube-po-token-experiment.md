@@ -42,4 +42,32 @@ gh workflow run check-youtube-access.yml --ref docs/youtube-support-status \
 
 ## Results
 
-Pending execution. Tests of diagnostic parsing are not evidence of YouTube access.
+### GitHub-hosted runners
+
+All six jobs ran on GitHub-hosted Ubuntu at probe commit `f57107f07d0b8ad8652fe934d0a6eb1213d5f403`. Each completed dependency installation and uploaded its JSON report. The original protected-environment rejections are excluded from these results.
+
+| Video | Run | Bgutil forced token | Final extraction result, both providers |
+| --- | --- | --- | --- |
+| `jwxFzTcvWLs` | [40535744865](https://github.com/liftaris/bazaar-ghost/actions/runs/40535744865) | Retrieved | `LOGIN_REQUIRED` / `auth_required` |
+| `Bfr68889LR0` | [40535749790](https://github.com/liftaris/bazaar-ghost/actions/runs/40535749790) | Retrieved | `LOGIN_REQUIRED` / `auth_required` |
+| `62BIbb1liSU` | [40535754413](https://github.com/liftaris/bazaar-ghost/actions/runs/40535754413) | Retrieved | `LOGIN_REQUIRED` / `auth_required` |
+
+All 30 experimental client/policy attempts failed at extraction, including six current-version plugin-free controls. The six old-version Streamlink-first baselines also returned `auth_required`. No hosted attempt reached format selection or frame decoding.
+
+The important new evidence is the three bgutil `mweb;fetch_pot=always` cases: each successfully retrieved a PO token before YouTube still required login. The earlier conclusion that token fetching never ran is therefore no longer complete. Forcing token generation does not resolve this hosted login restriction.
+
+WPC loaded in all three jobs but reported no retrieved token. Its request log uses `Launching` and `Minting`, which the initial diagnostic parser did not recognize. The corrected parser was tested in [40536277752](https://github.com/liftaris/bazaar-ghost/actions/runs/40536277752) at `a8cf9fc`. On those two additional hosted runners, all ten extraction attempts again returned `LOGIN_REQUIRED`. Bgutil again retrieved a forced token. WPC was available, found Chrome, and attempted browser launch for the forced request, but no token was retrieved. The finite diagnostics do not establish why WPC's browser token generation failed. This is not evidence of a successful WPC token being rejected.
+
+Across the primary set and diagnostic repeat, eight actual hosted jobs produced 40 failed extraction attempts. Bgutil successfully retrieved forced tokens in four of those attempts, each followed by the login rejection.
+
+### Local control
+
+On the local network, yt-dlp 2026.10.26 with default clients and plugins disabled selected native-480p HLS format 231. All four frames decoded at 0, 220, 1800, and 3903 seconds. Independent ffprobe inspection confirmed all four JPEGs are 852 × 480, with distinct hashes.
+
+Bgutil `mweb` with both automatic and forced tokens, and the combined-client case, retrieved tokens and selected direct-HTTPS format 135 at 480p. Every requested frame returned HTTP 403. The isolated `web_safari` attempt retrieved a token but timed out during extraction. These failures apply to the selected rendition and FFmpeg path, not every format the extractor might expose.
+
+Local evidence is saved under `/tmp/opencode/youtube-pot-local/`. Hosted artifacts are downloaded under `/tmp/opencode/youtube-pot-hosted/`; GitHub retains the uploaded reports for seven days. The local run is a network control, not a substitute for the six actual hosted jobs.
+
+### Conclusion
+
+Anonymous YouTube access remains blocked on the tested GitHub-hosted runners, even after successful forced token retrieval with the current extractor. A dependency upgrade or PO-token sidecar alone does not establish automatic support. Current yt-dlp's token-free HLS result is promising for processing on the already-working local network, but no full-recording OCR run was performed in this experiment.
