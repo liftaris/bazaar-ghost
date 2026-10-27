@@ -77,7 +77,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: platform-ingestion-${{ inputs.environment }}
+  group: platform-ingestion-${{ inputs.avatar_backfill && 'avatars-validation' || inputs.environment }}
   cancel-in-progress: false
 jobs:
   avatars:
