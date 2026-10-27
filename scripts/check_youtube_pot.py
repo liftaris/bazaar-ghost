@@ -20,8 +20,13 @@ def token_evidence(stderr, provider):
     marker = 'bgutil:http-' if provider == 'bgutil' else 'wpc-'
     return {
         'provider_loaded': marker in stderr,
-        'token_requested': bool(re.search(r'(?:Generating|Fetching).*PO Token', stderr)),
+        'provider_unavailable': bool(re.search(re.escape(marker) + r'[^\n,]* \(external, unavailable\)', stderr)),
+        'token_requested': bool(re.search(r'(?:Generating|Fetching|Minting|Launching youtube.com).*PO Token', stderr)),
         'token_retrieved': bool(re.search(r'Retrieved a (?:gvs|player) PO Token for', stderr)),
+        'browser_launch_attempted': 'Launching youtube.com in browser' in stderr,
+        'browser_missing': 'WPC PO Token Provider requires Chrome to be installed' in stderr,
+        'provider_error_types': sorted(set(re.findall(
+            r'\b(?:TimeoutError|ConnectionRefusedError|PermissionError|FileNotFoundError|TypeError|AttributeError|RuntimeError)\b', stderr))),
         'player_statuses': sorted(set(re.findall(r'playability status: ([A-Z_]+)', stderr))),
         'js_challenge_attempted': 'Solving JS challenges using deno' in stderr,
     }

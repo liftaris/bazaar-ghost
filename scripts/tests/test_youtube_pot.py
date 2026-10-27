@@ -25,11 +25,22 @@ class YouTubePotTests(unittest.TestCase):
 
     def test_browser_provider_and_player_token_are_recognized(self):
         result = token_evidence('PO Token Providers: wpc-1.1.2 (external)\n'
-                                'Generating a player PO Token\n'
+                                'Launching youtube.com in browser to retrieve PO Token(s).\n'
+                                'Minting player PO Token for mweb using WebPoClient in browser\n'
                                 'Retrieved a player PO Token for mweb client', 'wpc')
         self.assertTrue(result['provider_loaded'])
         self.assertTrue(result['token_requested'])
         self.assertTrue(result['token_retrieved'])
+        self.assertTrue(result['browser_launch_attempted'])
+        self.assertFalse(result['provider_unavailable'])
+
+    def test_installed_but_unavailable_provider_is_not_a_token_rejection(self):
+        result = token_evidence('PO Token Providers: wpc-1.1.2 (external, unavailable)\n'
+                                'WPC PO Token Provider requires Chrome to be installed', 'wpc')
+        self.assertTrue(result['provider_loaded'])
+        self.assertTrue(result['provider_unavailable'])
+        self.assertTrue(result['browser_missing'])
+        self.assertFalse(result['token_requested'])
 
     def test_control_disables_plugins_and_force_requests_player_tokens(self):
         for policy in ('never', 'always'):
