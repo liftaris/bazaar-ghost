@@ -19,13 +19,17 @@ on:
         description: Use the temporary YouTube-only cookie secret
         type: boolean
         default: false
+      full_recording:
+        description: Also download and decode the entire 480p recording in the bgutil job
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
   check:
     if: github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/migration/cloudflare' || github.ref == 'refs/heads/docs/youtube-support-status')
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 70
     strategy:
       fail-fast: false
       matrix:
@@ -87,6 +91,7 @@ jobs:
           VIDEO_ID: ${{ inputs.video_id }}
           YOUTUBE_PROBE_OUTPUT: .ignore/youtube-pot
           YOUTUBE_POT_PROVIDER: ${{ matrix.provider }}
+          YOUTUBE_FULL_RECORDING: ${{ inputs.full_recording && matrix.provider == 'bgutil' && 'true' || 'false' }}
         run: xvfb-run -a python scripts/check_youtube_pot.py
       - name: Save safe reports and decoded frames
         if: always() && inputs.probe == 'po_token'

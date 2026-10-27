@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from urllib.request import urlopen
 
@@ -141,11 +142,46 @@ def main():
             print(json.dumps({'source_id': identity, **attempt}), flush=True)
             if attempt['playback'] and (cookiefile or (attempt.get('token_retrieved') and attempt.get('provider_loaded'))):
                 report['passed'] = True
+        if os.environ.get('YOUTUBE_FULL_RECORDING') == 'true':
+            report['full_recording'] = check_full_recording(identity, cookiefile)
+            report['passed'] = report['passed'] and report['full_recording']['decoded']
     except Exception as error:
         report['error'] = safe_error_category(error)
     (output / f'{identity}.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps(report), flush=True)
     return 0 if report['passed'] else 1
+
+
+def check_full_recording(identity, cookiefile):
+    report = {'downloaded': False, 'decoded': False}
+    try:
+        with tempfile.TemporaryDirectory(prefix='youtube-full-') as directory:
+            recording = Path(directory) / 'recording.mp4'
+            options = ['--cookies', str(cookiefile)] if cookiefile else []
+            result = subprocess.run([
+                'yt-dlp', '--ignore-config', '--no-plugin-dirs', '--no-playlist',
+                '--js-runtimes', 'deno', '--extractor-args',
+                'youtube:player_client=default;fetch_pot=never', *options,
+                '-f', '135', '-o', str(recording),
+                'https://www.youtube.com/watch?v=' + identity,
+            ], capture_output=True, timeout=1200)
+            if result.returncode:
+                raise extraction_error(result.stderr.decode(errors='replace'))
+            report.update(downloaded=True, bytes=recording.stat().st_size)
+            probe = subprocess.run([
+                'ffprobe', '-v', 'error', '-show_entries',
+                'format=duration:stream=width,height', '-of', 'json', str(recording),
+            ], capture_output=True, check=True, timeout=30)
+            report['media'] = json.loads(probe.stdout)
+            decoded = subprocess.run([
+                'ffmpeg', '-nostdin', '-v', 'error', '-i', str(recording),
+                '-map', '0:v:0', '-f', 'null', '-',
+            ], capture_output=True, timeout=1200)
+            report.update(decoded=decoded.returncode == 0,
+                          decode_error_bytes=len(decoded.stderr))
+    except Exception as error:
+        report.update(error=safe_error_category(error), exception_type=type(error).__name__)
+    return report
 
 
 if __name__ == '__main__':
