@@ -2,6 +2,12 @@ name: Ingest platforms
 on:
   workflow_call:
     inputs:
+      avatar_backfill:
+        type: boolean
+        default: false
+      apply_avatars:
+        type: boolean
+        default: false
       environment:
         type: string
         default: validation
@@ -28,6 +34,14 @@ on:
         default: 1200
   workflow_dispatch:
     inputs:
+      avatar_backfill:
+        description: Only inventory and backfill existing Bilibili avatars (validation only)
+        type: boolean
+        default: false
+      apply_avatars:
+        description: Persist avatar backfill (otherwise dry-run)
+        type: boolean
+        default: false
       environment:
         description: Backend environment paired with this branch
         type: choice
@@ -66,11 +80,47 @@ concurrency:
   group: platform-ingestion-${{ inputs.environment }}
   cancel-in-progress: false
 jobs:
+  avatars:
+    if: inputs.avatar_backfill && inputs.environment == 'validation' && github.ref == 'refs/heads/migration/cloudflare'
+    runs-on: ubuntu-latest
+    environment: validation
+    timeout-minutes: 30
+    env:
+      ENVIRONMENT: validation
+      BAZAARGHOST_API_URL: ${{ vars.BAZAARGHOST_API_URL }}
+      BAZAARGHOST_CATALOG_KEY: ${{ secrets.BAZAARGHOST_CATALOG_KEY }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_VALIDATION_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_VALIDATION_ACCOUNT_ID }}
+      APPLY_AVATARS: ${{ inputs.apply_avatars }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.11'
+      - run: npm ci --ignore-scripts
+      - name: Backfill avatar metadata only
+        shell: bash
+        run: |
+          args=(--all-existing)
+          if [ "$APPLY_AVATARS" = true ]; then args+=(--apply); fi
+          set -o pipefail
+          python scripts/backfill_bilibili_avatars.py "${args[@]}" | tee avatar-backfill.jsonl
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: avatar-backfill
+          path: avatar-backfill.jsonl
+          if-no-files-found: ignore
   ingest:
     if: >-
+      ${{ !inputs.avatar_backfill && (
       (inputs.environment == 'validation' && github.ref == 'refs/heads/migration/cloudflare') ||
       (inputs.environment == 'dev' && github.ref == 'refs/heads/dev') ||
-      (inputs.environment == 'production' && github.ref == 'refs/heads/main')
+      (inputs.environment == 'production' && github.ref == 'refs/heads/main')) }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     timeout-minutes: 35

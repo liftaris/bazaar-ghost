@@ -11,6 +11,7 @@ import json
 import math
 import re
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 from catalog_api import api, fence
 from backend_environment import verify_backend
@@ -54,6 +55,19 @@ def normalize_part(metadata: Dict[str, Any], cid: str, assume_bazaar: bool = Fal
     }
 
 
+def avatar_url(face: Any) -> Optional[str]:
+    """Normalize public Bilibili avatar URLs; absent provider data never clears an avatar."""
+    if not isinstance(face, str) or not face.strip():
+        return None
+    value = face.strip()
+    parsed = urlsplit('https:' + value if value.startswith('//') else value)
+    if (parsed.scheme not in ('http', 'https') or not parsed.hostname
+            or not parsed.hostname.endswith('.hdslb.com') or parsed.username or parsed.password
+            or parsed.netloc != parsed.hostname or not parsed.path.startswith('/bfs/face/')):
+        raise ValueError('Invalid Bilibili avatar URL')
+    return urlunsplit(('https', parsed.netloc, parsed.path, parsed.query, ''))
+
+
 def ensure_account(owner: Dict[str, Any], enable: bool, profile_id: Optional[int],
                    streamer_id: Optional[int], preserve_disabled: bool = False, job=None) -> Dict[str, Any]:
     """Bilibili uploader UID is independent of any Twitch creator link."""
@@ -61,6 +75,9 @@ def ensure_account(owner: Dict[str, Any], enable: bool, profile_id: Optional[int
     if not re.fullmatch(r'[1-9][0-9]*', source_id):
         raise ValueError('Invalid Bilibili uploader UID')
     values = {'source': 'bilibili', 'source_id': source_id, 'display_name': owner['name']}
+    face = avatar_url(owner.get('face'))
+    if face:
+        values['avatar_url'] = face
     if enable:
         values['processing_enabled'] = True
     if profile_id is not None:

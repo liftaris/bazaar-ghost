@@ -2,6 +2,7 @@ import { env, SELF } from 'cloudflare:test';
 import { beforeEach, expect, it } from 'vitest';
 import { one, rows } from '../http';
 import { mergeSessions } from '../sessions';
+import { upsertAccount, updateAccount } from '../platforms';
 
 const BB1 = '11111111-1111-4111-8111-111111111111', BB2 = '22222222-2222-4222-8222-222222222222', YT1 = '33333333-3333-4333-8333-333333333333';
 const admin = (path: string, method: string, data?: unknown) => SELF.fetch(`http://local${path}`, {
@@ -36,6 +37,41 @@ it('keeps the provisional name and avatar in sync with the Channel', async () =>
   await video(1, BB1);
   await env.DB.exec(`UPDATE platform_accounts SET display_name='Renamed',avatar_url='https://img/2.png' WHERE id='${BB1}'`);
   expect(await one(env, 'SELECT display_name,avatar_url FROM streamer_identities')).toEqual({ display_name: 'Renamed', avatar_url: 'https://img/2.png' });
+});
+
+it('persists catalog avatars, preserves absent values, and exposes provisional avatars publicly', async () => {
+  await video(1, BB1);
+  await detect(1);
+  const face='https://i2.hdslb.com/bfs/face/avatar.jpg';
+  const input={source:'bilibili',source_id:'111',display_name:'Bili One'};
+  const created=await upsertAccount(env,{...input,source_id:'333',avatar_url:face});
+  expect(created.avatar_url).toBe(face);
+  await env.DB.exec(`INSERT INTO sfde_profiles(id,profile_name,crop_region) VALUES(2,'custom','[0,0,1,1]'); UPDATE platform_accounts SET sfde_profile_id=2 WHERE id='${BB1}'`);
+  const before=await one(env,'SELECT sfde_profile_id,processing_enabled FROM platform_accounts WHERE id=?',BB1);
+  const ownership=await owner(BB1);
+  await upsertAccount(env,{...input,avatar_url:face});
+  for(const value of [undefined,null,'']) await upsertAccount(env,{...input,avatar_url:value});
+  expect(await one(env,'SELECT avatar_url FROM platform_accounts WHERE id=?',BB1)).toEqual({avatar_url:face});
+  expect(await one(env,'SELECT avatar_url FROM streamer_identities WHERE provisional_channel_id=?',BB1)).toEqual({avatar_url:face});
+  const updated=face.replace('avatar','updated');
+  await updateAccount(env,BB1,{avatar_url:updated});
+  expect(await one(env,'SELECT avatar_url FROM streamer_identities WHERE provisional_channel_id=?',BB1)).toEqual({avatar_url:updated});
+  expect(await owner(BB1)).toEqual(ownership);
+  expect(await one(env,'SELECT sfde_profile_id,processing_enabled FROM platform_accounts WHERE id=?',BB1)).toEqual(before);
+  expect(await rows(env,'SELECT * FROM platform_ingestion_jobs')).toEqual([]);
+  const response=await (await pub('/api/v1/streamers?platform=bilibili')).json();
+  expect(response).toMatchObject({items:[{avatarUrl:updated,channels:[{avatarUrl:updated}]}]});
+});
+
+it('refreshes a linked channel without replacing its curated Streamer avatar or profile', async () => {
+  await env.DB.exec("INSERT INTO streamers(id,login,display_name,profile_image_url) VALUES(4242,'curated','Curated','https://img/curated.png')");
+  await updateAccount(env,BB2,{streamer_id:4242});
+  const identity=await one(env,'SELECT * FROM streamer_identities WHERE id=4242');
+  const ownership=await owner(BB2);
+  await updateAccount(env,BB2,{avatar_url:'https://i2.hdslb.com/bfs/face/channel.jpg'});
+  expect(await one(env,'SELECT * FROM streamer_identities WHERE id=4242')).toEqual(identity);
+  expect(await owner(BB2)).toEqual(ownership);
+  await expect(updateAccount(env,BB2,{avatar_url:'javascript:alert(1)'})).rejects.toMatchObject({status:400});
 });
 
 it('backfills existing Channels with public content, once, and attributes their Sessions', async () => {

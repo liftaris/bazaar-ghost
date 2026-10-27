@@ -21,6 +21,12 @@ function date(value: unknown) {
   requireValue(typeof value === 'string' && /(?:Z|[+-]\d\d:\d\d)$/.test(value) && Number.isFinite(Date.parse(value)), 'Expected timestamp with timezone');
   return new Date(value).toISOString();
 }
+function avatar(value: unknown) {
+  if(value == null || value === '') return null;
+  const url=URL.parse(text(value,'avatar URL',2048));
+  requireValue(url && url.protocol==='https:' && !url.username && !url.password,'Invalid avatar URL');
+  return url.href;
+}
 function decoded(value: Input): Input {
   return { ...decodeRow(value), ...(typeof value.state === 'string' ? {state: JSON.parse(value.state)} : {}) };
 }
@@ -54,6 +60,7 @@ export async function accounts(env: Env, params: URLSearchParams) {
 export async function upsertAccount(env: Env, input: Input) {
   const platform=requireIngestion(input.source,'Twitch uses the streamer catalog').id;
   const identity=accountIdentity(platform,input.source_id), name=text(input.display_name,'display name');
+  const avatarUrl=avatar(input.avatar_url);
   requireValue(input.processing_enabled == null || typeof input.processing_enabled === 'boolean','Invalid enablement');
   requireValue(input.preserve_disabled == null || typeof input.preserve_disabled === 'boolean','Invalid preserve_disabled');
   if(input.sfde_profile_id != null) integer(input.sfde_profile_id,'profile ID',1);
@@ -68,11 +75,12 @@ export async function upsertAccount(env: Env, input: Input) {
   checks.push(...accountSettingChecks(accountId,input));
   const link=accountLink(env,accountId,input);
   checks.push(...link.checks);
-  await atomic(env,checks,[statement(env,`INSERT INTO platform_accounts(id,source,source_id,display_name,processing_enabled,sfde_profile_id)
-    VALUES(?,?,?,?,?,?) ON CONFLICT(source,source_id) DO UPDATE SET display_name=excluded.display_name,
+  await atomic(env,checks,[statement(env,`INSERT INTO platform_accounts(id,source,source_id,display_name,avatar_url,processing_enabled,sfde_profile_id)
+    VALUES(?,?,?,?,?,?,?) ON CONFLICT(source,source_id) DO UPDATE SET display_name=excluded.display_name,
+    avatar_url=coalesce(excluded.avatar_url,platform_accounts.avatar_url),
     processing_enabled=CASE WHEN ? OR ? IS NULL THEN platform_accounts.processing_enabled ELSE excluded.processing_enabled END,
     sfde_profile_id=coalesce(?,platform_accounts.sfde_profile_id)`,
-    accountId,platform,identity,name,input.processing_enabled??false,input.sfde_profile_id??1,
+    accountId,platform,identity,name,avatarUrl,input.processing_enabled??false,input.sfde_profile_id??1,
     automatic || (input.preserve_disabled??false),input.processing_enabled,input.sfde_profile_id),
     ...link.mutations,
     enqueueStatement(env,{source:platform,kind:'account',source_id:identity,account_id:accountId},true)]);
@@ -89,6 +97,8 @@ export async function updateAccount(env: Env,id:string,input: Input) {
   if(Object.hasOwn(input,'streamer_id') && input.streamer_id!==null) integer(input.streamer_id,'streamer_id',1);
   if(input.processing_enabled!=null) {requireValue(typeof input.processing_enabled==='boolean','Invalid enablement'); fields.processing_enabled=input.processing_enabled;}
   if(input.display_name!=null) fields.display_name=text(input.display_name,'display name');
+  const avatarUrl=avatar(input.avatar_url);
+  if(avatarUrl) fields.avatar_url=avatarUrl;
   if(input.last_cataloged_at!=null) fields.last_cataloged_at=date(input.last_cataloged_at);
   requireValue(Object.keys(fields).length>0||Object.hasOwn(input,'streamer_id'),'No account changes');
   requireValue(input.job_id == null && input.lease_token == null ||
