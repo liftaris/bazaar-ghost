@@ -7,7 +7,7 @@
 - [x] Choose the metadata source and account-update shape.
 - [x] Implement avatar and handle persistence without changing operator settings or ownership.
 - [x] Run Python, Worker, and type checks.
-- [ ] Commit and push for independent review.
+- [x] Commit and push for independent review.
 - [ ] Deploy validation after review and CI pass.
 - [ ] Refresh the existing Kripparrian account through the deployed catalog workflow.
 - [ ] Verify the public channel and streamer expose the fetched avatar and decode the image bytes.
@@ -33,3 +33,11 @@ The baseline is `/api/v1/channels/lookup?platform=youtube&sourceId=UCeBMccz-PDZf
 Local checks passed with 227 Python tests, two skips, 538 Worker tests, and TypeScript checking. Tests cover explicit avatar selection instead of banners, identity mismatch, unsafe URLs, enrollment response reuse, existing-account polling, failure preservation, omitted-value preservation, lease fencing, provisional-streamer propagation, public API output, and unchanged unrelated Twitch identity.
 
 The real extracted avatar downloaded and decoded as a 250-by-250 PNG, then was visually inspected. Local evidence is `/tmp/opencode/youtube-avatar-source.json` and `/tmp/opencode/youtube-avatar-source.png`. This proves source extraction and image access, not deployed persistence. Deployment verification remains pending review.
+
+## Base integration
+
+The parent independently approved `a2fc19c`. Before merge, the base advanced to `8267ce2` with Bilibili avatar persistence and an isolated backfill job. The combined implementation retains the base's shared `avatar()` validator and preserves saved avatars on null or empty input. Login updates also preserve saved values on null input. The stale-lease test now supplies a nonempty avatar so it exercises lease fencing rather than an empty update.
+
+The incoming workflow added two inputs, a separate concurrency group, and a shorter backfill timeout. Updated its contract test to assert those inputs and concurrency expression and inspect the ingestion job's timeout. Registered the incoming platform-specific backfill script in the adapter allowlist.
+
+Combined checks pass with 232 Python tests (two skipped), 540 Worker tests, and typecheck. The changed candidate requires narrow independent re-review before merge. No deployment or live metadata refresh has occurred yet.

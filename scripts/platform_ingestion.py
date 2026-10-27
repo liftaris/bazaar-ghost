@@ -104,6 +104,8 @@ def verified_account(source: str, metadata: Dict[str, Any], job: Dict[str, Any])
     if job.get('account_id') and (not rows or rows[0]['id'] != job['account_id']):
         raise ValueError('Candidate owner does not match the enrolled account')
     if rows:
+        if source == 'bilibili':
+            return bilibili_account(metadata['owner'], False, None, None, preserve_disabled=True, job=job)
         return rows[0]
     # Like Twitch discovery, new game-matching creators are enabled. An operator disable wins thereafter.
     if source == 'youtube':

@@ -141,15 +141,17 @@ class WorkflowContractTests(unittest.TestCase):
     def test_dispatch_inputs_exist_in_both_triggers_and_environment_guards_match(self):
         call, dispatch = self.workflow.split('  workflow_call:\n', 1)[1].split('  workflow_dispatch:\n', 1)
         dispatch = dispatch.split('\npermissions:', 1)[0]
-        expected = {'environment', 'dispatch_ticket', 'source', 'identity', 'discovery', 'dispatch', 'limit', 'seconds'}
+        expected = {'environment', 'dispatch_ticket', 'source', 'identity', 'discovery', 'dispatch', 'limit', 'seconds',
+                    'avatar_backfill', 'apply_avatars'}
         for section in [call, dispatch]:
             self.assertEqual(set(re.findall(r'^      (\w+):$', section, re.M)), expected)
         for environment, branch in BRANCHES.items():
             self.assertIn(f"inputs.environment == '{environment}' && github.ref == 'refs/heads/{branch}'", self.workflow)
         self.assertIn('environment: ${{ inputs.environment }}', self.workflow)
-        self.assertIn('group: platform-ingestion-${{ inputs.environment }}', self.workflow)
+        self.assertIn("group: platform-ingestion-${{ inputs.avatar_backfill && 'avatars-validation' || inputs.environment }}", self.workflow)
         self.assertIn('cancel-in-progress: false', self.workflow)
-        timeout = int(re.search(r'timeout-minutes: (\d+)', self.workflow).group(1))
+        ingest = self.workflow.split('\n  ingest:\n', 1)[1]
+        timeout = int(re.search(r'timeout-minutes: (\d+)', ingest).group(1))
         worker = (ROOT / 'worker/platform-ingestion-dispatch.ts').read_text()
         lease = int(re.search(r'INGESTION_RUNNING_MINUTES = (\d+)', worker).group(1))
         self.assertEqual(timeout, 35)

@@ -49,7 +49,7 @@ it('fences periodic metadata refresh and preserves operator settings', async () 
   expect(await one(env, 'SELECT processing_enabled,sfde_profile_id FROM platform_accounts WHERE id=?', account.id))
     .toEqual({processing_enabled: 1, sfde_profile_id: 2});
   await expect(updateAccount(env, account.id, {...fence, processing_enabled: false, avatar_url: null})).rejects.toMatchObject({status: 400});
-  await expect(updateAccount(env, account.id, {...fence, lease_token: crypto.randomUUID(), avatar_url: null})).rejects.toMatchObject({status: 409});
+  await expect(updateAccount(env, account.id, {...fence, lease_token: crypto.randomUUID(), avatar_url: 'https://example.com/stale'})).rejects.toMatchObject({status: 409});
   expect((await one(env, 'SELECT avatar_url FROM platform_accounts WHERE id=?', account.id))?.avatar_url).toBe(avatar);
 });
 
