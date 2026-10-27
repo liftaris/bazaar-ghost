@@ -165,7 +165,7 @@ def test_shifted_clock_is_only_partially_supported_and_profile_cannot_force_day(
     assert result['wins_remaining'] == 10
     assert result['lethal'] is False
     assert result['igd'] is None
-    assert reader.predict.call_count == 1
+    assert reader.predict.call_count == 2
 
 
 def test_explicitly_unsupported_right_side_clock_stays_unknown():
@@ -181,7 +181,8 @@ def test_no_clock_and_wrong_profile_do_not_call_ocr_or_return_zero_false_default
     frame = np.zeros((480, 852, 3), dtype=np.uint8)
     result = ClockReader(reader, PROFILE).observe(frame)
     assert result == {'visible': False, 'igd': None, 'wins_remaining': None,
-                      'lethal': None, 'evidence': {}, 'clock_region': None}
+                      'lethal': None, 'evidence': {}, 'clock_region': None,
+                      'game_mode': None, 'tournament_wins': None, 'tournament_losses': None}
     reader.predict.assert_not_called()
 
 
@@ -190,7 +191,8 @@ def test_real_no_clock_intro_returns_no_fabricated_zero_or_false():
     frame = cv2.imread(str(ASSETS / 'fixtures/no-clock-bili152.jpg'))
     result = ClockReader(reader, PROFILE).observe(frame)
     assert result == {'visible': False, 'igd': None, 'wins_remaining': None,
-                      'lethal': None, 'evidence': {}, 'clock_region': None}
+                      'lethal': None, 'evidence': {}, 'clock_region': None,
+                      'game_mode': None, 'tournament_wins': None, 'tournament_losses': None}
     reader.predict.assert_not_called()
 
 
@@ -212,8 +214,9 @@ def test_invalid_or_empty_inputs_are_unknown(frame):
 def test_evidence_and_clock_regions_are_bounded_source_pixels():
     frame = native('m12')
     result = ClockReader(None).observe(frame)
-    assert set(result) == {'visible', 'igd', 'wins_remaining', 'lethal', 'evidence', 'clock_region'}
-    assert set(result['evidence']) == {'igd', 'wins_remaining', 'lethal'}
+    assert set(result) == {'visible', 'igd', 'wins_remaining', 'lethal', 'evidence', 'clock_region',
+                           'game_mode', 'tournament_wins', 'tournament_losses'}
+    assert set(result['evidence']) == {'igd', 'wins_remaining', 'lethal', 'game_mode'}
     for region in [result['clock_region']] + [r['region'] for r in result['evidence'].values()]:
         x, y, w, h = region
         assert all(isinstance(v, int) for v in region)
@@ -248,7 +251,7 @@ def test_profile_fallback_keeps_exact_legacy_source_crop_and_preprocessing():
             return next(self.responses)
 
     good = [{'rec_texts': ['1'], 'rec_scores': [0.99]}]
-    reader = RecordingReader([[], good])
+    reader = RecordingReader([[], [], good])
     result = ClockReader(reader, PROFILE).observe(native())
     assert result['igd'] == 1
     assert result['evidence']['igd']['region'] == [124, 216, 12, 12]
@@ -269,16 +272,17 @@ def test_profile_cannot_select_unrelated_or_clipped_text_region(region):
     reader.predict.return_value = []
     result = ClockReader(reader, {'igd_crop_region': region}).observe(native())
     assert result['igd'] is None
-    assert reader.predict.call_count == 1  # Only the geometry-supported glyph.
+    assert reader.predict.call_count == 2
 
 
 def test_hidden_day_does_not_get_reconstructed_from_safe_crown_or_wins():
     reader = Mock()
+    reader.predict.return_value = []
     frame = native()
     frame[210:234, 120:141] = 0
     result = ClockReader(reader, PROFILE).observe(frame)
     assert result['igd'] is None
-    reader.predict.assert_not_called()
+    assert reader.predict.call_count == 1
 
 
 def test_ocr_error_does_not_erase_independent_wins_or_safe_crown():

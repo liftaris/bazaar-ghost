@@ -144,7 +144,8 @@ class BackendClient:
                 raise ValueError('Inherited evidence has no original image path')
         record = {key: matchup.get(key) for key in (
             'username', 'confidence', 'name_state', 'encounter_confidence', 'igd',
-            'ghost_hero', 'streamer_hero', 'wins_remaining', 'lethal')}
+            'ghost_hero', 'streamer_hero', 'wins_remaining', 'lethal',
+            'game_mode', 'tournament_wins', 'tournament_losses')}
         record.update(schema_version=2,
                       id=detection_id(matchup['recording_identity'], matchup['anchor_ms']),
                       timestamp=matchup['timestamp'], frame_time_seconds=matchup['timestamp'],

@@ -58,6 +58,16 @@ export interface SourceRow {
   streamer_hero: Hero | null;
   wins_remaining: number | null;
   lethal: number | null;
+  game_mode?: "normal" | "tournament" | null;
+  tournament_wins?: number | null;
+  tournament_losses?: number | null;
+  raw_igd?: number | null;
+  igd_correction_id?: string | null;
+  igd_correction_evidence?: string | null;
+  igd_correction_source_refs?: string | null;
+  igd_correction_input_digest?: string | null;
+  igd_correction_reason?: string | null;
+  igd_correction_created_at?: string | null;
   field_evidence: string;
   indexed_at: string;
   rank: string | null;
@@ -226,9 +236,11 @@ export function matchup(row: MatchupRow, sources: SourceRow[], streamer: Streame
   };
 }
 const publicField: Record<FieldKey, EvidenceField> = { encounter: "encounter", username: "username", rank: "rank", igd: "igd",
-  ghost_hero: "ghostHero", streamer_hero: "streamerHero", wins_remaining: "winsRemaining", lethal: "lethal" };
+  ghost_hero: "ghostHero", streamer_hero: "streamerHero", wins_remaining: "winsRemaining", lethal: "lethal",
+  game_mode: "gameMode", tournament_wins: "tournamentWins", tournament_losses: "tournamentLosses" };
 function observations(row: SourceRow): FieldObservations {
-  return JSON.parse(row.field_evidence || "{}");
+  const raw: FieldObservations = JSON.parse(row.field_evidence || "{}");
+  return row.igd_correction_evidence ? { ...raw, igd: JSON.parse(row.igd_correction_evidence) } : raw;
 }
 type Candidate = { row: SourceRow; observation?: FieldObservation };
 /** Scores only compare within the same method/model, never across unrelated scales.
@@ -239,10 +251,11 @@ function selectField(sources: SourceRow[], field: FieldKey, observed: Map<Source
   const value = (r: SourceRow) => field === "encounter" ? r.encounter_confidence : r[field];
   return sources.flatMap(row => {
     const observation = observed.get(row)?.[field];
-    if (value(row) == null && field !== "encounter" && !(field === "username" && observation)) return [];
+    if (value(row) == null && field !== "encounter" && !(field === "username" && observation) && !(field === "igd" && row.igd_correction_id)) return [];
     if (!observation && (row.name_state !== "legacy" || !["encounter", "username", "rank", "igd"].includes(field))) return [];
     return [{ row, observation }];
   }).sort((a, b) => {
+    if (field === "igd" && !!a.row.igd_correction_id !== !!b.row.igd_correction_id) return a.row.igd_correction_id ? -1 : 1;
     if (field === "username") return nameTier(a.row) - nameTier(b.row)
       || (b.row.confidence ?? -1) - (a.row.confidence ?? -1)
       || Number(a.row.rank === null) - Number(b.row.rank === null) || Number(a.row.igd === null) - Number(b.row.igd === null)
@@ -273,14 +286,34 @@ function fieldEvidence({ row, observation: o }: Candidate, field: FieldKey): Fie
       runSegmentId: o.inherited_from.run_segment_id, atMs: o.inherited_from.at_ms } } : {}) };
 }
 /** Independent per-field winners within an already-established Matchup only. */
-function projectEncounter(sources: SourceRow[]): Encounter {
+export function projectEncounter(sources: SourceRow[]): Encounter {
   const observed = new Map(sources.map(row => [row, observations(row)]));
   const chosen = Object.fromEntries((Object.keys(publicField) as FieldKey[]).map(k => [k, selectField(sources, k, observed)])) as Partial<Record<FieldKey, Candidate>>;
+  const mode = chosen.game_mode?.row.game_mode ?? null;
+  if (mode === "tournament") {
+    delete chosen.wins_remaining; delete chosen.lethal;
+    // The score pair belongs to the selected mode observation, never independent winners.
+    const row = chosen.game_mode!.row;
+    for (const key of ["tournament_wins", "tournament_losses"] as const)
+      chosen[key] = row[key] != null && observed.get(row)?.[key] ? { row, observation: observed.get(row)?.[key] } : undefined;
+  } else {
+    delete chosen.tournament_wins; delete chosen.tournament_losses;
+    const compatible = sources.filter(row => (row.game_mode ?? null) === mode);
+    for (const key of ["wins_remaining", "lethal"] as const) chosen[key] = selectField(compatible, key, observed);
+  }
   const fieldEvidenceMap: Encounter["fieldEvidence"] = {};
   for (const key of Object.keys(chosen) as FieldKey[]) if (chosen[key]) fieldEvidenceMap[publicField[key]] = fieldEvidence(chosen[key]!, key);
+  const day = chosen.igd?.row;
+  const rawDay: FieldObservations = day ? JSON.parse(day.field_evidence || "{}") : {};
   return { confidence: chosen.encounter?.row.encounter_confidence ?? null,
     ghostHero: chosen.ghost_hero?.row.ghost_hero ?? null, streamerHero: chosen.streamer_hero?.row.streamer_hero ?? null,
     igd: chosen.igd?.row.igd ?? null, winsRemaining: chosen.wins_remaining?.row.wins_remaining ?? null,
+    rawIgd: day ? (day.raw_igd === undefined ? day.igd : day.raw_igd) : null,
+    rawIgdEvidence: day && (rawDay.igd || day.name_state === "legacy") ? fieldEvidence({ row: day, observation: rawDay.igd }, "igd") : null,
+    igdCorrection: day?.igd_correction_id ? { id: day.igd_correction_id, inputDigest: day.igd_correction_input_digest!,
+      reason: day.igd_correction_reason!, createdAt: day.igd_correction_created_at!, sourceRefs: JSON.parse(day.igd_correction_source_refs!) } : null,
+    gameMode: mode, tournamentWins: chosen.tournament_wins?.row.tournament_wins ?? null,
+    tournamentLosses: chosen.tournament_losses?.row.tournament_losses ?? null,
     lethal: chosen.lethal?.row.lethal == null ? null : !!chosen.lethal.row.lethal, fieldEvidence: fieldEvidenceMap };
 }
 export function result(row: MatchupRow, sources: SourceRow[], streamer: StreamerRef | null): MatchupResult {

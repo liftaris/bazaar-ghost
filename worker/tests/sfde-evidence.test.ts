@@ -45,6 +45,10 @@ async function detection(index = 0, at = 12, name: string | null = null, token =
       igd: c, ghost_hero: e, streamer_hero: e, wins_remaining: c, lethal: c } };
 }
 const post = (index: number, records: unknown[], token = tokens[index], database = env) => publish(database, chunks[index].id, token, records);
+const adminDay = (id: string, method = "GET", input?: unknown, authenticated = true) => worker.fetch(
+  new Request(`http://local/api/admin/detections/${id}/igd-correction`, { method,
+    headers: { ...(authenticated ? { Authorization: "Bearer day-review-test" } : {}), "Content-Type": "application/json" },
+    ...(input === undefined ? {} : { body: JSON.stringify(input) }) }), { ...env, ADMIN_KEY: "day-review-test" });
 async function get(path: string) {
   const response = await SELF.fetch(`http://local/api/v1${path}`);
   expect(response.status, await response.clone().text()).toBe(200);
@@ -56,6 +60,102 @@ async function nextClaim(index = 0) {
   tokens[index] = (await claim(env, chunks[index].id)).claim_token!;
   return tokens[index];
 }
+
+it("persists coherent tournament observations and rejects mixed clocks or mismatched score images", async () => {
+  const base = await detection();
+  const d = { ...base, game_mode: "tournament", wins_remaining: null, lethal: null, tournament_wins: Number.MAX_SAFE_INTEGER, tournament_losses: 101,
+    field_evidence: { ...base.field_evidence, game_mode: base.field_evidence.igd,
+      tournament_wins: base.field_evidence.igd, tournament_losses: base.field_evidence.igd } };
+  await expect(post(0, [{ ...d, wins_remaining: 4 }])).rejects.toThrow("normal clock fields");
+  await expect(post(0, [{ ...d, tournament_wins: Number.MAX_SAFE_INTEGER + 1 }])).rejects.toThrow("tournament_wins");
+  await expect(post(0, [{ ...d, field_evidence: { ...d.field_evidence, tournament_losses: base.field_evidence.encounter } }])).rejects.toThrow("same observation");
+  await post(0, [d]);
+  const result = await get(`/matchups/${await anchor()}`);
+  expect(result.encounter).toMatchObject({ gameMode: "tournament", tournamentWins: Number.MAX_SAFE_INTEGER, tournamentLosses: 101, winsRemaining: null, lethal: null });
+  expect(result.fieldEvidence.tournamentWins.atMs).toBe(result.fieldEvidence.tournamentLosses.atMs);
+  expect(await one(env, "SELECT game_mode,tournament_wins,tournament_losses FROM detections WHERE id=?", d.id))
+    .toEqual({ game_mode: "tournament", tournament_wins: Number.MAX_SAFE_INTEGER, tournament_losses: 101 });
+});
+
+it("deletes a reviewed correction with a fresh digest, restores raw day, and invalidates public caches", async () => {
+  const d = await detection(); await post(0, [d]);
+  const raw = await one(env, "SELECT * FROM detections WHERE id=?", d.id);
+  const review = await (await adminDay(d.id)).json<any>();
+  expect((await adminDay(d.id, "PUT", { inputDigest: review.inputDigest, igd: null, method: "reviewed_medallion_v2",
+    actor: "reviewer", reason: "Medallion obscured", sourceRefs: [{ detectionId: d.id, field: "igd" }] })).status).toBe(200);
+  const detail = await get(`/matchups/${await anchor()}`);
+  expect(detail.encounter.igd).toBeNull();
+  const input = { inputDigest: (await (await adminDay(d.id)).json<any>()).inputDigest };
+  const revision = await one(env, "SELECT revision FROM public_cache_state WHERE id=1");
+  expect((await adminDay(d.id, "DELETE", input, false)).status).toBe(401);
+  expect((await adminDay(d.id, "DELETE", { inputDigest: review.inputDigest })).status).toBe(409);
+  const deleted = await adminDay(d.id, "DELETE", input);
+  expect(deleted.status, await deleted.clone().text()).toBe(200);
+  expect(await deleted.json()).toEqual({ detectionId: d.id, correctionId: null, igd: 9, rawIgd: 9 });
+  expect((await one(env, "SELECT revision FROM public_cache_state WHERE id=1"))!.revision).toBeGreaterThan(revision!.revision);
+  expect((await get(`/matchups/${await anchor()}`)).encounter).toMatchObject({ igd: 9, rawIgd: 9, igdCorrection: null,
+    fieldEvidence: { igd: { method: "local_cv_v1" } } });
+  expect(await one(env, "SELECT * FROM detections WHERE id=?", d.id)).toEqual(raw);
+  expect(await rows(env, "SELECT * FROM igd_corrections")).toEqual([]);
+});
+
+it("keeps raw day immutable, supports reviewed same-image corrections and explicit null, and fences stale reviews", async () => {
+  const d = await detection(); await post(0, [d]);
+  const raw = await one(env, "SELECT igd,field_evidence,publish_body FROM detections WHERE id=?", d.id);
+  expect((await adminDay(d.id, "GET", undefined, false)).status).toBe(401);
+  const review = await (await adminDay(d.id)).json<any>();
+  const input = { inputDigest: review.inputDigest, igd: 7, method: "reviewed_medallion_v2", actor: "reviewer", reason: "Read the day medallion in the registered image",
+    sourceRefs: [{ detectionId: d.id, field: "igd" }] };
+  const saved = await adminDay(d.id, "PUT", input);
+  expect(saved.status, await saved.clone().text()).toBe(200);
+  let detail = await get(`/matchups/${await anchor()}`);
+  expect(detail.encounter).toMatchObject({ igd: 7, rawIgd: 9, igdCorrection: { reason: input.reason },
+    rawIgdEvidence: { method: "local_cv_v1" }, fieldEvidence: { igd: { method: input.method } } });
+  expect(detail.encounter.fieldEvidence.igd.screenshotUrl).toBe(d.field_evidence.igd.image_path);
+  expect((await adminDay(d.id, "PUT", input)).status).toBe(409);
+  const latest = await (await adminDay(d.id)).json<any>();
+  expect((await adminDay(d.id, "PUT", { ...input, inputDigest: latest.inputDigest, igd: null })).status).toBe(200);
+  detail = await get(`/matchups/${await anchor()}`);
+  expect(detail.encounter).toMatchObject({ igd: null, rawIgd: 9, fieldEvidence: { igd: { method: input.method } } });
+  expect(detail.opponent.igd).toBeNull();
+  expect(detail.detections[0].igd).toBeNull();
+  expect(await one(env, "SELECT igd,field_evidence,publish_body FROM detections WHERE id=?", d.id)).toEqual(raw);
+  expect(await get("/recordings/1/igd-quality")).toMatchObject({ metric: "coverage", total: 1, known: 0, missing: 1, corrected: 1, rawKnown: 1 });
+  await nextClaim(); const replacement = await detection(); replacement.igd = 10; await post(0, [replacement]);
+  detail = await get(`/matchups/${await anchor()}`);
+  expect(detail.encounter).toMatchObject({ igd: 10, rawIgd: 10, igdCorrection: null });
+  expect((await adminDay(d.id, "PUT", { ...input, inputDigest: latest.inputDigest })).status).toBe(409);
+});
+
+it.each(["normal", "tournament"])("keeps tournament scores together when another %s source has stronger individual fields", async otherMode => {
+  const a = await detection(0), b = await detection(1);
+  const tournament = (d: typeof a, wins: number, modeConfidence: number, scoreConfidence: number) => ({
+    ...d, game_mode: "tournament", tournament_wins: wins, tournament_losses: 2, wins_remaining: null, lethal: null,
+    field_evidence: { ...d.field_evidence, game_mode: { ...d.field_evidence.igd, confidence: modeConfidence },
+      tournament_wins: { ...d.field_evidence.igd, confidence: scoreConfidence }, tournament_losses: d.field_evidence.igd },
+  });
+  await post(0, [tournament(a, 6, 0.99, 0.1)]);
+  await post(1, [otherMode === "tournament" ? tournament(b, 8, 0.8, 0.99) : {
+    ...b, game_mode: "normal", field_evidence: { ...b.field_evidence, game_mode: { ...b.field_evidence.igd, confidence: 0.8 } },
+  }]);
+  const id = await anchor(); await linkAnchors(env, [id, await anchor(2)], how);
+  const detail = await get(`/matchups/${id}`);
+  expect(detail.encounter).toMatchObject({ gameMode: "tournament", tournamentWins: 6, tournamentLosses: 2, winsRemaining: null, lethal: null });
+  for (const field of ["gameMode", "tournamentWins", "tournamentLosses"]) expect(detail.fieldEvidence[field].detectionId).toBe(a.id);
+});
+
+it("reports bracketed day suggestions as coverage review candidates without writing detections", async () => {
+  const a = await detection(0, 12), b = await detection(0, 30), c = await detection(0, 48);
+  a.igd = 4; b.igd = 11; c.igd = 6;
+  await post(0, [a, b, c]);
+  const before = await rows(env, "SELECT * FROM detections ORDER BY frame_time_seconds");
+  expect(await get("/recordings/1/igd-quality")).toMatchObject({ metric: "coverage", total: 3, known: 3, missing: 0, corrected: 0,
+    suggestions: [{ detectionId: b.id, suggestedIgd: 5, currentIgd: 11, method: "bracketed_sequence", requiresReview: true }] });
+  expect(await rows(env, "SELECT * FROM detections ORDER BY frame_time_seconds")).toEqual(before);
+  expect(await rows(env, "SELECT * FROM igd_corrections")).toEqual([]);
+  await linkAnchors(env, [await anchor(1, 12), await anchor(1, 30)], how);
+  expect(await get("/recordings/1/igd-quality")).toMatchObject({ total: 2, known: 2, missing: 0, corrected: 0, suggestions: [] });
+});
 
 it("publishes masked encounters on scoped browse/detail/timeline/favorites/counts, never in discovery/name search/indexes/notifications", async () => {
   const d = await detection(); d.name_state = "masked";

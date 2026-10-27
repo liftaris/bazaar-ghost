@@ -1,4 +1,3 @@
-// Frozen eight-choice hero-resize/prompts.json and BG116 prompt.json, unchanged.
 const criteria = {
   Dooley: "A small, rounded robot with a single large circular eye, mechanical limbs, and orange and grey coloring.",
   Vanessa: "A female pirate with dark hair, sharp facial features, a slim athletic build, and red coloring.",
@@ -25,9 +24,9 @@ const prompts = {
   streamer_hero: hero("LEFT", "streamer"),
   clock_day: {
     model: "clairic",
-    state: "Read The Bazaar clock HUD from visible pixels only. Day is printed in the light tab. Ten boxes above the dial: blue interiors are earned wins; dark interiors are unearned. Ignore gold outlines. Day and wins are independent; never infer one from the other. The BOTTOM-LEFT crown is orange/whole when safe, grey/cracked when lethal; ignore the top-left trophy. Return null for each hidden, absent, or ambiguous target.",
+    state: "Read only the printed in-game DAY in this crop of The Bazaar clock medallion. The day can be dark digits on a light medallion or light digits on a dark medallion. In tournament mode a separate WINS-LOSSES score appears ABOVE the medallion: neither number of that score is the day. Never read or calculate day from tournament scores, wins, losses, or win boxes. Return null when the day medallion is unreadable. This crop may exclude all other clock fields; do not invent them.",
     fields: {
-      day: { type: "number", integer: true, instructions: "Read the printed day integer; null if not readable." },
+      day: { type: "number", integer: true, instructions: "Read the integer inside the day medallion, BELOW any wins-losses score. Never return a score component. Null if the medallion is unreadable." },
       wins_earned: { type: "number", integer: true, instructions: "Count blue-filled box interiors, 0 through 10; null unless all ten boxes are readable." },
       lethal: { type: "number", integer: true, instructions: "Bottom-left crown only: 0=orange whole safe, 1=grey cracked lethal, null=unclear or hidden." },
     },

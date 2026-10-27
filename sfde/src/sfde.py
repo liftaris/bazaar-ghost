@@ -215,7 +215,8 @@ class SFDEProcessor:
             self.logger.warning('SFDE next clock module unavailable: clock fields remain unknown')
         else:
             try:
-                clock = ClockReader(self.frame_processor.reader)
+                from ocr_runtime import create_clock_text_reader
+                clock = ClockReader(self.frame_processor.reader, text_reader=create_clock_text_reader())
             except Exception:
                 self.logger.warning('Optional clock initialization failed; retaining encounters', exc_info=True)
         self.encounters = BufferedEncounterPipeline(self.frame_processor, recording=f'{self.source}:{self.vod_pk or self.vod_id}',

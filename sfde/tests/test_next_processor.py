@@ -466,7 +466,7 @@ def test_day_fallback_only_registered_full_clock_strict_integer(day, expected):
     call = backend.infer.call_args_list[0]
     assert call.kwargs['task'] == 'clock_day' and call.kwargs['at_ms'] == 8000
     pixels = cv2.imdecode(np.frombuffer(base64.b64decode(call.kwargs['image_base64']), np.uint8), 1)
-    assert pixels.shape[:2] == (19,14)
+    assert pixels.shape[:2] == (5,6)
     assert result['_paid_attempts'] == 3
 
 
@@ -519,6 +519,27 @@ def test_new_payload_uploads_every_source_before_publish_even_unknown_name():
     record = calls[1][2]['detections'][0]
     assert record['schema_version'] == 2 and record['username'] is None and record['confidence'] is None
     assert record['id'] == result['id'] and record['storage_path'] == '/intro-0.jpg'
+
+
+def test_tournament_context_survives_pipeline_and_publication():
+    tournament = clock(day=7, wins=None, lethal=None, game_mode='tournament',
+                       tournament_wins=6, tournament_losses=0)
+    for field in ('game_mode', 'tournament_wins', 'tournament_losses'):
+        tournament['evidence'][field] = {'region': [6, 10, 5, 2],
+                                       'method': 'paddle_tournament_score', 'confidence': .99}
+    p = pipeline([LOCATION, LOCATION, None, None, None],
+                 clocks=[clock(visible=False)]*2 + [tournament]*3)
+    for at_ms in range(0, 10000, 2000):
+        p.consume(image(), at_ms)
+    result = p.flush()[0]
+    client = BackendClient.__new__(BackendClient)
+    client._request = Mock(return_value={'storage_path': '/saved.jpg'})
+    record = client._next_record(result)
+    assert (record['igd'], record['game_mode'], record['tournament_wins'], record['tournament_losses']) == (7, 'tournament', 6, 0)
+    assert record['wins_remaining'] is record['lethal'] is None
+    evidence = record['field_evidence']
+    assert evidence['tournament_wins'] == evidence['tournament_losses']
+    assert evidence['tournament_wins']['image_path'] == '/saved.jpg'
 
 
 def test_new_retry_uploads_ms_sources_and_preserves_exact_payload_identity(monkeypatch):

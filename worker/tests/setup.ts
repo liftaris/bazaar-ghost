@@ -30,6 +30,7 @@ beforeEach(async () => {
     "platform_ingestion_dispatch",
     "platform_ingestion_jobs",
     "chat_mentions",
+    "igd_corrections",
     "detections",
     "search_grams",
     "search_names",

@@ -105,6 +105,8 @@ it("migrates populated pre-0022 D1 atomically without retargeting FKs, losing po
       const expected = schema23.get(table)!;
       if (table === "vods" || table === "sessions") {
         expect(actual.map(({ streamer_mode: _mode, ...row }) => row), table).toEqual(expected);
+      } else if (table === "detections") {
+        expect(actual, table).toEqual(expected.map(row => ({ ...row, game_mode: null, tournament_wins: null, tournament_losses: null })));
       } else expect(actual, table).toEqual(expected);
     }
     expect(await rows(env, "SELECT id,streamer_mode FROM vods ORDER BY id")).toEqual([{ id: 1, streamer_mode: 0 }, { id: 2, streamer_mode: 1 }]);

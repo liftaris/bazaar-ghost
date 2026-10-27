@@ -32,3 +32,10 @@ def create_ocr_reader(confidence_threshold: float = 0.5) -> 'PaddleOCR':
         enable_mkldnn=False,
         text_rec_score_thresh=confidence_threshold,
     )
+
+
+def create_clock_text_reader():
+    from paddleocr import TextRecognition
+
+    return TextRecognition(model_name=TEXT_RECOGNITION_MODEL, device='cpu',
+                           cpu_threads=CPU_THREADS, enable_mkldnn=False)

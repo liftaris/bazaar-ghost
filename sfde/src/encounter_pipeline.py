@@ -112,6 +112,7 @@ class EncounterPipeline:
             # confidence stays null for template methods, as the wire requires.
             'encounter_confidence': max(0., min(1., location['score'])), 'detected_rank': None,
             'igd': None, 'wins_remaining': None, 'lethal': None,
+            'game_mode': None, 'tournament_wins': None, 'tournament_losses': None,
             'ghost_hero': None, 'streamer_hero': None, 'field_evidence': {},
             '_images': {}, '_intro_ms': at_ms, '_intro_reads': 0, '_last_intro_ms': at_ms,
             '_hero_ms': None, '_hero_previous': None, '_hero_quality': None, '_hero_seen': 0,
@@ -184,9 +185,30 @@ class EncounterPipeline:
                 'owned_pre_intro_field;verified_intro_phase_anchor;'+('repeated_agreement' if len(supported)>1 else 'single_quality_ge_090'),
                 self._confidence(info.get('confidence')) if method.startswith('paddle') else None,
                 samples=[{'at_ms':s['at_ms']} for s,_ in supported]+phase_samples)
+        self._mode_context(source, observation, 'pre_fight', phase_samples)
         if event['igd'] is None:
             event['_clock_fallback_ms'],event['_clock_region'] = source['at_ms'],region
+            event['_day_region'] = observation.get('evidence', {}).get('igd', {}).get('region')
             event['_clock_fallback_samples'] = [{'at_ms':s['at_ms']} for s,_ in self.pre_clock]+phase_samples
+
+    def _mode_context(self, source, observation, phase, samples=()):
+        event = self.active
+        mode = observation.get('game_mode')
+        if mode not in ('normal', 'tournament') or event.get('game_mode') == 'tournament':
+            return
+        fields = ('game_mode', 'tournament_wins', 'tournament_losses') if mode == 'tournament' else ('game_mode',)
+        for field in fields:
+            info = observation['evidence'][field]
+            event[field] = observation[field]
+            event['field_evidence'][field] = self._evidence(
+                source, info['region'], info['method'], phase, 'observed_clock_layout',
+                self._confidence(info.get('confidence')) if info['method'].startswith('paddle') else None,
+                samples=list(samples))
+        self._remember(source)
+        if mode == 'tournament':
+            for field in ('wins_remaining', 'lethal'):
+                event[field] = None
+                event['field_evidence'].pop(field, None)
 
     def _hero_candidate(self, source, frame, location):
         event = self.active
@@ -314,12 +336,15 @@ class EncounterPipeline:
         if phase == 'pre_fight' and len(visible_reads) == 3 and event['igd'] is None:
             event['_clock_fallback_ms'] = source['at_ms']
             event['_clock_region'] = region
+            event['_day_region'] = observation.get('evidence', {}).get('igd', {}).get('region')
             event['_clock_fallback_samples'] = [{'at_ms': r['at_ms']} for r in visible_reads]
         self._remember(source)
         field_info = observation.get('evidence', {})
         if not isinstance(field_info, dict):
             field_info = {}
         for field in FIELDS:
+            if event.get('game_mode') == 'tournament' and field in ('wins_remaining', 'lethal'):
+                continue
             if valid_field(field,event[field]):
                 continue
             value = observation.get(field)
@@ -334,6 +359,7 @@ class EncounterPipeline:
                 source, info['region'], method, phase, 'first_readable_clock_after_intro',
                 self._confidence(info.get('confidence')) if method.startswith('paddle') else None,
                 raw_text=json.dumps({'observed_value': value}))
+        self._mode_context(source, observation, phase)
         if event['igd'] is not None:
             event.pop('_clock_fallback_ms', None)
             event.pop('_clock_fallback_samples', None)
@@ -619,7 +645,8 @@ class EncounterEnricher:
         # Reserve client attempts before submission; failed/ambiguous calls count.
         self.attempts += 1
         event['_paid_attempts'] = event.get('_paid_attempts', 0) + 1
-        request_id = str(uuid5(NAMESPACE_URL, f'{event["id"]}:{task}:{source["at_ms"]}:v1'))
+        version = 'day-medallion-v2' if task == 'clock_day' else 'v1'
+        request_id = str(uuid5(NAMESPACE_URL, f'{event["id"]}:{task}:{source["at_ms"]}:{version}'))
         started = time.monotonic()
         try:
             response = self.backend.infer(event['chunk_id'], request_id=request_id, task=task,
@@ -670,7 +697,11 @@ class EncounterEnricher:
     def _enrich_day(self, event):
         if event['igd'] is None and event.get('_clock_fallback_ms') is not None:
             clock = event['_images'][event['_clock_fallback_ms']]
-            region = event['_clock_region']
+            region = event.get('_day_region')
+            if not EncounterPipeline._valid_region(region, clock):
+                x, y, w, h = event['_clock_region']
+                region = [x + round(w*82/205), y + round(h*63/275),
+                          max(1, round(w*54/205)), max(1, round(h*52/275))]
             response = self._infer(event, 'clock_day', clock, region)
             value = _raw_result(response)
             day = value.get('igd', value.get('day')) if value else None
@@ -683,7 +714,7 @@ class EncounterEnricher:
                 event['igd'] = day
                 event['field_evidence']['igd'] = EncounterPipeline._evidence(
                     clock, region, 'fixed-task-clock-day-inference', 'pre_fight',
-                    'visible_registered_clock_local_day_unknown', model=str(response.get('model', 'unknown'))[:128],
+                    'registered_day_medallion_excludes_tournament_score', model=str(response.get('model', 'unknown'))[:128],
                     prompt_version=str(response.get('prompt_version', 'unknown'))[:128],
                     raw_text=json.dumps(response.get('result'), ensure_ascii=False)[:1024])
                 event['field_evidence']['igd']['samples'] = event.get('_clock_fallback_samples', [])

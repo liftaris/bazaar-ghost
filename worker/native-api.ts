@@ -1,5 +1,6 @@
 import type { Evidence, Page, Playback, Session, SessionCard, Stats, StreamerCard, TimelineMarker } from "../contracts/public-api";
 import { canonicalMatchup } from "./coalesce";
+import { recordingIgdQuality } from "./igd";
 import { HttpError, integer, one, requireValue, rows } from "./http";
 import { boundary, page, unchanged } from "./native-cursor";
 import {
@@ -610,7 +611,7 @@ async function sessionCards(env: Env, ids: string[], state: { recordings: number
 
 /** Recognize only explicit public contracts; social/auth routes keep their private behavior. */
 export function nativePath(path: string) {
-  return /^\/api\/v1\/(search|stats|platforms|streamers(?:\/quality|\/[1-9]\d{0,15})?|recordings\/(?:lookup|[1-9]\d{0,15}\/(?:playback|timeline|detections))|channels\/(?:lookup|[0-9a-f-]{36})|matchups\/[1-9]\d{0,15}|sessions|sessions\/[0-9a-f]{32})$/.test(
+  return /^\/api\/v1\/(search|stats|platforms|streamers(?:\/quality|\/[1-9]\d{0,15})?|recordings\/(?:lookup|[1-9]\d{0,15}\/(?:playback|timeline|detections|igd-quality))|channels\/(?:lookup|[0-9a-f-]{36})|matchups\/[1-9]\d{0,15}|sessions|sessions\/[0-9a-f]{32})$/.test(
     path,
   );
 }
@@ -658,14 +659,14 @@ async function nativeLoad(req: Request, env: Env): Promise<Response> {
     );
   } else if (path.startsWith("/sessions/")) output = await sessionDetail(env, url, path.slice("/sessions/".length));
   else {
-    const match = path.match(/^\/(recordings|matchups)\/(\d+)(?:\/(playback|timeline|detections))?$/)!;
+    const match = path.match(/^\/(recordings|matchups)\/(\d+)(?:\/(playback|timeline|detections|igd-quality))?$/)!;
     const id = idValue(match[2]);
     output =
       match[1] === "matchups"
         ? await matchupDetail(env, url, id)
         : match[3] === "playback"
           ? await playback(env, url, id)
-          : (await getRecording(env, id), match[3] === "detections" ? await recordingEvidence(env, url, id) : await timeline(env, url, id));
+          : (await getRecording(env, id), match[3] === "igd-quality" ? (parameters(url, []), await recordingIgdQuality(env, id)) : match[3] === "detections" ? await recordingEvidence(env, url, id) : await timeline(env, url, id));
   }
   return Response.json(output, { headers: { "Cache-Control": "no-store" } });
 }

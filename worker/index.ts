@@ -17,6 +17,7 @@ import { claim, dispatch, plan, updateChunk, vodDetails } from "./processing";
 import { clearChunk, publish, upload } from "./detections";
 import { infer } from "./sfde-inference";
 import { retryVod, setProfile, setStreamer } from "./admin";
+import { igdAdminRoute } from "./igd";
 import { streamersAdminRoute } from "./streamers";
 import { sessionsAdminRoute } from "./sessions";
 import { matchupsAdminRoute } from "./coalesce";
@@ -285,6 +286,8 @@ async function route(req: Request, env: Env): Promise<Response> {
     }
     throw new HttpError(404, "Unknown processor endpoint");
   }
+  const igdCorrection = path.match(/^\/api\/admin\/detections\/([0-9a-f-]{36})\/igd-correction$/);
+  if (igdCorrection) return igdAdminRoute(req, env, igdCorrection[1]);
   if (path === "/api/admin/streamers" || path.startsWith("/api/admin/streamers/")) return streamersAdminRoute(req, env, path);
   if (path === "/api/admin/matchups" || path.startsWith("/api/admin/matchups/")) return matchupsAdminRoute(req, env, path);
   if (path.startsWith("/api/admin/notifications/")) return notificationsAdminRoute(req, env, path);

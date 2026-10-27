@@ -103,7 +103,27 @@ export interface ClipSource {
 export type Source = RecordingSource | ClipSource;
 export type NameState = "legacy" | "complete" | "partial" | "obstructed" | "masked" | "unreadable";
 export type Hero = "vanessa" | "pygmalien" | "dooley" | "mak" | "jules" | "stelle" | "karnok" | "the_dragons";
-export type EvidenceField = "encounter" | "username" | "rank" | "igd" | "ghostHero" | "streamerHero" | "winsRemaining" | "lethal";
+export type EvidenceField = "encounter" | "username" | "rank" | "igd" | "ghostHero" | "streamerHero" | "winsRemaining" | "lethal" | "gameMode" | "tournamentWins" | "tournamentLosses";
+export interface IgdCorrection {
+  id: string;
+  inputDigest: string;
+  reason: string;
+  createdAt: string;
+  sourceRefs: Array<{ detectionId: string; field: string }>;
+}
+/** Coverage of distinct visible Matchups in one Recording, not an accuracy estimate. Suggestions require image review. */
+export interface RecordingIgdQuality {
+  recordingId: number;
+  metric: "coverage";
+  total: number;
+  known: number;
+  missing: number;
+  corrected: number;
+  rawKnown: number;
+  rawMissing: number;
+  suggestions: Array<{ detectionId: string; at: number; currentIgd: number | null; suggestedIgd: number;
+    previousDetectionId: string; nextDetectionId: string; method: "bracketed_sequence"; requiresReview: true }>;
+}
 /** One selected observation, at its actual image time, not necessarily the encounter anchor. */
 export interface FieldEvidence {
   detectionId: string;
@@ -133,6 +153,12 @@ export interface Encounter {
   streamerHero: Hero | null;
   igd: number | null;
   winsRemaining: number | null;
+  rawIgd: number | null;
+  rawIgdEvidence: FieldEvidence | null;
+  igdCorrection: IgdCorrection | null;
+  gameMode: "normal" | "tournament" | null;
+  tournamentWins: number | null;
+  tournamentLosses: number | null;
   lethal: boolean | null;
   fieldEvidence: Partial<Record<EvidenceField, FieldEvidence>>;
 }

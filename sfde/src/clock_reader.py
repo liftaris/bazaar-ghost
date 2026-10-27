@@ -159,8 +159,9 @@ class ClockReader:
     ``locate(frame)`` is an OCR-free convenience returning source xywh or None.
     """
 
-    def __init__(self, reader, profile=None):
+    def __init__(self, reader, profile=None, text_reader=None):
         self.reader = reader
+        self.text_reader = text_reader
         self.profile = dict(profile) if isinstance(profile, dict) else {}
         self._anchor, self._mask, self._slots, self._crowns = _assets()
         self._slot_pixels = tuple(np.nonzero(slot) for slot in self._slots)
@@ -244,7 +245,8 @@ class ClockReader:
 
     def observe(self, frame):
         output = {'visible': False, 'igd': None, 'wins_remaining': None,
-                  'lethal': None, 'evidence': {}, 'clock_region': None}
+                  'lethal': None, 'game_mode': None, 'tournament_wins': None,
+                  'tournament_losses': None, 'evidence': {}, 'clock_region': None}
         location = self._location(frame)
         if location is None:
             return output
@@ -275,8 +277,12 @@ class ClockReader:
                 'region': region, 'confidence': confidence,
                 'method': ('clock_cells_native_row_structure' if field == 'wins_remaining'
                            else 'clock_crown_shape_native_quality') + ('_unknown' if value is None else '')}
-        region = self._day_region(frame, location)
-        if region is not None:
+        region, complete = self._region(frame, location, (82, 63, 136, 115))
+        value, confidence = self._color_day(frame, region) if complete else (None, None)
+        method = 'paddle_day_medallion'
+        glyph = self._day_region(frame, location)
+        if value is None and glyph is not None:
+            region = glyph
             x, y, w, h = region
             value, confidence = self._ocr(frame[y:y+h, x:x+w])
             method = 'paddle_day_glyph'
@@ -287,14 +293,58 @@ class ClockReader:
                 x, y, w, h = fallback
                 value, confidence = self._ocr(frame[y:y+h, x:x+w])
                 region, method = fallback, 'paddle_profile_day_crop'
-            output['igd'] = value
-            output['evidence']['igd'] = {'region': region, 'confidence': confidence,
-                                         'method': method + ('_unknown' if value is None else '')}
-        else:
-            region, _ = self._region(frame, location, (82, 63, 136, 115))
-            output['evidence']['igd'] = {'region': region, 'confidence': None,
-                                         'method': 'day_medallion_not_readable'}
+        output['igd'] = value
+        output['evidence']['igd'] = {'region': region, 'confidence': confidence,
+                                     'method': method + ('_unknown' if value is None else '')}
+        score_region, complete = self._region(frame, location, (64, 24, 146, 59))
+        score = self._tournament_score(frame, score_region) if complete else None
+        if score is not None:
+            output.update(game_mode='tournament', tournament_wins=score[0], tournament_losses=score[1],
+                          wins_remaining=None, lethal=None)
+            for field in ('wins_remaining', 'lethal'):
+                output['evidence'].pop(field, None)
+            for field in ('game_mode', 'tournament_wins', 'tournament_losses'):
+                output['evidence'][field] = {'region': score_region, 'confidence': score[2],
+                                             'method': 'paddle_tournament_score'}
+        elif output['wins_remaining'] is not None:
+            output['game_mode'] = 'normal'
+            output['evidence']['game_mode'] = output['evidence']['wins_remaining'].copy()
         return output
+
+    def _color_day(self, frame, region):
+        if self.reader is None:
+            return None, None
+        x, y, w, h = region
+        image = cv2.resize(frame[y:y+h, x:x+w], (w*8, h*8), interpolation=cv2.INTER_LINEAR)
+        try:
+            result = list(self.reader.predict(image, text_det_thresh=.1, text_det_box_thresh=.1))
+            if len(result) != 1:
+                return None, None
+            texts, scores = result[0].get('rec_texts', []), result[0].get('rec_scores', [])
+            if len(texts) == len(scores) == 1 and re.fullmatch(r'(?:[1-9]|1[0-9]|20)', texts[0].strip()):
+                score = scores[0]
+                if isinstance(score, Real) and not isinstance(score, bool) and .9 <= score <= 1:
+                    return int(texts[0]), float(score)
+        except Exception:
+            pass
+        return None, None
+
+    def _tournament_score(self, frame, region):
+        if self.text_reader is None:
+            return None
+        x, y, w, h = region
+        image = cv2.resize(frame[y:y+h, x:x+w], (w*8, h*8), interpolation=cv2.INTER_LINEAR)
+        try:
+            results = list(self.text_reader.predict(image))
+            if len(results) != 1:
+                return None
+            text, confidence = results[0].get('rec_text', ''), results[0].get('rec_score', 0)
+            match = re.fullmatch(r'(0|[1-9][0-9]*)\s*-\s*(0|[1-9][0-9]*)', text.strip())
+            if match and isinstance(confidence, Real) and not isinstance(confidence, bool) and .9 <= confidence <= 1:
+                return int(match[1]), int(match[2]), float(confidence)
+        except Exception:
+            pass
+        return None
 
     @staticmethod
     def _wins_quality(native):

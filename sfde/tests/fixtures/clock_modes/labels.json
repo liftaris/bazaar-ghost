@@ -1,0 +1,26 @@
+{
+  "reviewed_at": "2026-10-27",
+  "source": "Validation API field-evidence screenshots, manually reviewed. Development cases, not held-out accuracy.",
+  "tournament_recording": "twitch:2911078505",
+  "cases": [
+    {"id": 32187, "day": 12, "wins": 9, "losses": 2},
+    {"id": 32192, "day": 7, "wins": 5, "losses": 1},
+    {"id": 32193, "day": 13, "wins": 9, "losses": 3},
+    {"id": 32197, "day": 9, "wins": 7, "losses": 1},
+    {"id": 32198, "day": 2, "wins": 1, "losses": 0},
+    {"id": 32199, "day": 8, "wins": 6, "losses": 1},
+    {"id": 32206, "day": 3, "wins": 1, "losses": 1},
+    {"id": 32207, "day": 9, "wins": 7, "losses": 1},
+    {"id": 32212, "day": 3, "wins": 2, "losses": 0},
+    {"id": 32216, "day": 4, "wins": 2, "losses": 1},
+    {"id": 32220, "day": 4, "wins": 3, "losses": 0},
+    {"id": 32222, "day": 5, "wins": 3, "losses": 1},
+    {"id": 32223, "day": 11, "wins": 8, "losses": 2},
+    {"id": 32224, "day": 13, "wins": 11, "losses": 1},
+    {"id": 32229, "day": 6, "wins": 4, "losses": 1},
+    {"id": 32237, "day": 7, "wins": 6, "losses": 0},
+    {"id": 32810, "day": 1, "wins": null, "losses": null},
+    {"id": 33985, "day": 11, "wins": null, "losses": null},
+    {"id": 34127, "day": 14, "wins": null, "losses": null}
+  ]
+}

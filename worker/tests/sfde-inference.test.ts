@@ -259,7 +259,8 @@ it("returns unchanged clock raw values including zero/false/null, with a separat
   });
   const response = await infer(gateway(run), request({ task: "clock_day" }), chunkId);
   expect(response).toMatchObject({ status: "completed", result: raw });
-  expect(response.prompt_version).toMatch(/^BG116-three-numeric-v1:[0-9a-f]{64}$/);
+  expect(response.prompt_version).toMatch(/^day-medallion-v2:[0-9a-f]{64}$/);
+  expect(inferencePrompt("clock_day").state).toContain("neither number of that score is the day");
   expect((await one(env, "SELECT actual_nano_usd FROM sfde_inference"))!.actual_nano_usd).toBe(49500);
   expect(inferencePrompt("clock_day")).toHaveProperty("fields.lethal");
 });
