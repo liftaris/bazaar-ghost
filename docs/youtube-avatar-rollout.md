@@ -8,9 +8,9 @@
 - [x] Implement avatar and handle persistence without changing operator settings or ownership.
 - [x] Run Python, Worker, and type checks.
 - [x] Commit and push for independent review.
-- [ ] Deploy validation after review and CI pass.
-- [ ] Refresh the existing Kripparrian account through the deployed catalog workflow.
-- [ ] Verify the public channel and streamer expose the fetched avatar and decode the image bytes.
+- [x] Deploy validation after review and CI pass.
+- [x] Refresh the existing Kripparrian account through the deployed catalog workflow.
+- [x] Verify the public channel and streamer expose the fetched avatar and decode the image bytes.
 
 Validation is the entire target. Do not enable discovery, change the historical cutoff, or merge the separate Twitch and YouTube identities.
 
@@ -41,3 +41,21 @@ The parent independently approved `a2fc19c`. Before merge, the base advanced to 
 The incoming workflow added two inputs, a separate concurrency group, and a shorter backfill timeout. Updated its contract test to assert those inputs and concurrency expression and inspect the ingestion job's timeout. Registered the incoming platform-specific backfill script in the adapter allowlist.
 
 Combined checks pass with 232 Python tests (two skipped), 540 Worker tests, and typecheck. The changed candidate requires narrow independent re-review before merge. No deployment or live metadata refresh has occurred yet.
+
+## Deployed acceptance
+
+Independent re-review approved `a48f45e984cd3ea234eebdab2134961f7b576760`. [Current-head CI](https://github.com/liftaris/bazaar-ghost/actions/runs/40558667318) passed. [PR 84](https://github.com/liftaris/bazaar-ghost/pull/84) merged as `759785dc957c6f35cecfe80a5d061d3b8d440d9e`.
+
+[Validation deployment](https://github.com/liftaris/bazaar-ghost/actions/runs/40559647171) passed. The live `/health` endpoint returned that exact SHA and `environment=validation`. [Hosted catalog refresh](https://github.com/liftaris/bazaar-ghost/actions/runs/40560757064) passed for existing video `HklpcveV_4o`, with `enable_processing=false`. Its artifact returned existing recording ID `310520`.
+
+The [public channel lookup](https://bazaarghost-validation.kaio-8df.workers.dev/api/v1/channels/lookup?platform=youtube&sourceId=UCeBMccz-PDZf6OB4aV6a3eA) now returns `login=Kripparrian`. Both the channel and provisional streamer return this authoritative avatar URL:
+
+https://yt3.googleusercontent.com/ytc/AIdro_kpKF3ihJhLJhCPhqEPX3SKPm9X-GbvlUTcUOF2kq5OEA=s0
+
+Downloaded the returned URL, fully decoded it, and visually inspected it. The image is a 250-by-250 PNG containing 109,668 bytes. Its decoded pixels exactly match the independently extracted source avatar. SHA-256 is `a8d3eb938fc47677a0476187d2d22fce77585d74f066e3adf435e8290ef3671e`. Local image evidence is `/tmp/opencode/youtube-avatar-live.png`; API evidence is `/tmp/opencode/youtube-avatar-after.json`.
+
+Read-only live D1 checks confirm account processing remains `1`, crop profile `2`, and catalog/archive cursors `1`. Ownership row `1593` still belongs to provisional streamer `1000000000006`, with its original October 20 start time. Twitch `nl_kripp` remains separate at `29795919`. The account has four recordings, IDs `3`, `4`, `310520`, and `310521`; the two recent recordings remain completed. The refresh reused `310520` rather than adding a duplicate.
+
+YouTube switches remain ingestion `0`, discovery `0`, processing `1`, notifications `0`. The historical cutoff remains `2026-10-16T00:00:00.000Z`. Query evidence is `/tmp/opencode/youtube-avatar-settings-after.json` and `/tmp/opencode/youtube-avatar-cutoff-after.json`.
+
+Periodic profile refresh is wired and covered by lease-fenced polling tests. Its automatic schedule remains inactive because ingestion is disabled. No broad manual ingestion run was started just to prove refresh, since it could claim unrelated queued work. The deployed catalog refresh proves authoritative extraction, persistence, public propagation, and working image bytes. No production cutover was performed.
