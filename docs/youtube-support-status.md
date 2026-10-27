@@ -1,5 +1,7 @@
 # YouTube support status
 
+Latest result: [authenticated GitHub-hosted playback succeeds](youtube-po-token-experiment.md#authenticated-hosted-playback-succeeds). Run 40540195761 passed all 12 cases and 48 frame checks for one recording, including plugin-free controls. The earlier anonymous login blocker still applies. Production integration and cookie renewal remain open; broader hosted verification is running.
+
 Audited October 27, 2026 against `migration/cloudflare` at `fac316865551e9b0fc24bedb995e1956327168be`. The live validation `/health` returned that exact commit. The initial audit read source, Linear records, GitHub workflow history, and public validation endpoints. A subsequent [fresh PO-token experiment](youtube-po-token-experiment.md) tested six actual GitHub-hosted jobs. Private D1 settings were not queried.
 
 YouTube has a working catalog and processing implementation, historical full-recording acceptance, and frontend support. Reliable automatic access from the chosen runner remains the main blocker. Twitch already runs automatically. Bilibili passed automatic hosted validation on October 20.

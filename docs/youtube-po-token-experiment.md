@@ -1,5 +1,19 @@
 # YouTube PO-token experiment, October 27, 2026
 
+## Authenticated hosted playback succeeds
+
+[Run 40540195761](https://github.com/liftaris/bazaar-ghost/actions/runs/40540195761), at `df411fe`, passed all 12 authenticated cases for `jwxFzTcvWLs` on two GitHub-hosted runners. Each case decoded native-480p frames at 0, 220, 1800, and 3903 seconds. Both plugin-free default controls passed. PO tokens are therefore not required for this tested account, recording, and runner combination.
+
+The experiment used YouTube-only cookies exported from the user's authorized Firefox session. Default clients, `web_creator`, and `tv_downgraded` selected HTTPS format 135. `web_safari` selected HLS format 94. All account-cookie checks passed without rejection warnings.
+
+The first authenticated run, 40538913673, resolved formats in all 12 cases but failed decoding with generic runtime errors. The workflow did not install FFmpeg explicitly. Adding installation and version verification resolved the failures on the repeat. Those first decoding failures do not establish a YouTube media rejection.
+
+The local authenticated control also downloaded the complete recording without plugins: 3908.133333 seconds, 852 × 480, 433240994 bytes. FFmpeg decoded the entire video with exit code 0 and no error output. The local cookie export and token-service container were removed. The hosted temporary secret was deleted after the repeat.
+
+At `4ff2fbd`, full-recording hosted verification and two additional video probes are running. The workflow's `full_recording` option downloads format 135 with default clients and no plugins, decodes the entire video, records finite diagnostics, and removes the temporary media. These results are pending.
+
+This proves authenticated hosted playback for the first recording. Normal ingestion still needs cookie provisioning and renewal, current extractor dependencies, and native-resolution verification. The anonymous results below remain valid.
+
 ## Research before implementation
 
 The [upstream guide](https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide) recommends `mweb` with an automatic token provider. The current [bgutil README](https://github.com/Brainicism/bgutil-ytdlp-pot-provider#readme) distinguishes token-generation failures from an earlier `LOGIN_REQUIRED` response and suggests `mweb,tv,web_safari` as another client combination.
