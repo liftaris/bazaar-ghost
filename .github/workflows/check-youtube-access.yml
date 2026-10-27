@@ -2,7 +2,7 @@ name: Check YouTube runner access
 on:
   # Register this branch-only workflow; pushes never execute the probe.
   push:
-    branches: [migration/cloudflare]
+    branches: [migration/cloudflare, docs/youtube-support-status]
     paths: [.github/workflows/check-youtube-access.yml]
   workflow_dispatch:
     inputs:
@@ -19,10 +19,14 @@ permissions:
   contents: read
 jobs:
   check:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/migration/cloudflare'
+    if: github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/migration/cloudflare' || github.ref == 'refs/heads/docs/youtube-support-status')
     runs-on: ubuntu-latest
     environment: validation
-    timeout-minutes: 18
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: ${{ inputs.probe == 'po_token' && fromJSON('["bgutil","wpc"]') || fromJSON('["bgutil"]') }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.0.0
@@ -41,7 +45,7 @@ jobs:
           mkdir -p .ignore/youtube-pot
           python scripts/check_youtube_access.py | tee .ignore/youtube-pot/baseline.json
       - name: Install and start the pinned PO-token provider
-        if: inputs.probe == 'po_token'
+        if: inputs.probe == 'po_token' && matrix.provider == 'bgutil'
         run: |
           pip install 'bgutil-ytdlp-pot-provider==2.0.2'
           docker run --name youtube-pot-provider -d --init \
@@ -52,22 +56,32 @@ jobs:
             sleep 1
           done
           exit 1
+      - name: Install browser token provider
+        if: inputs.probe == 'po_token' && matrix.provider == 'wpc'
+        run: |
+          pip install 'yt-dlp-getpot-wpc==1.1.2'
+          google-chrome --version
+          command -v xvfb-run
+      - name: Install current extractor for the experiment
+        if: inputs.probe == 'po_token'
+        run: pip install 'yt-dlp[default]==2026.10.26' 'yt-dlp-ejs==0.8.0'
       - name: Compare baseline and token-assisted media playback
         if: inputs.probe == 'po_token'
         env:
           VIDEO_ID: ${{ inputs.video_id }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           YOUTUBE_PROBE_OUTPUT: .ignore/youtube-pot
-        run: python scripts/check_youtube_pot.py
+          YOUTUBE_POT_PROVIDER: ${{ matrix.provider }}
+        run: xvfb-run -a python scripts/check_youtube_pot.py
       - name: Save safe reports and decoded frames
         if: always() && inputs.probe == 'po_token'
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: youtube-pot-${{ inputs.video_id }}
+          name: youtube-pot-${{ inputs.video_id }}-${{ matrix.provider }}
           path: .ignore/youtube-pot/
           include-hidden-files: true
           retention-days: 7
           if-no-files-found: warn
       - name: Stop token provider
-        if: always() && inputs.probe == 'po_token'
+        if: always() && inputs.probe == 'po_token' && matrix.provider == 'bgutil'
         run: docker rm -f youtube-pot-provider

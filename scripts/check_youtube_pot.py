@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Read-only live check of yt-dlp's documented PO-token provider setup."""
 import hashlib
+from importlib.metadata import version as package_version
 import json
 import os
 from pathlib import Path
@@ -15,23 +16,34 @@ from extraction_errors import extraction_error, safe_error_category
 from media_source import ffmpeg_input_args, validate_source_id
 
 
-def check(identity, clients, output):
-    report = {'clients': clients, 'resolved': False, 'playback': False, 'frames': []}
+def token_evidence(stderr, provider):
+    marker = 'bgutil:http-' if provider == 'bgutil' else 'wpc-'
+    return {
+        'provider_loaded': marker in stderr,
+        'token_requested': bool(re.search(r'(?:Generating|Fetching).*PO Token', stderr)),
+        'token_retrieved': bool(re.search(r'Retrieved a (?:gvs|player) PO Token for', stderr)),
+        'player_statuses': sorted(set(re.findall(r'playability status: ([A-Z_]+)', stderr))),
+        'js_challenge_attempted': 'Solving JS challenges using deno' in stderr,
+    }
+
+
+def check(identity, clients, output, provider='bgutil', policy='auto'):
+    report = {'clients': clients, 'policy': policy, 'resolved': False, 'playback': False, 'frames': []}
     stage = 'extraction'
     try:
+        options = ['--no-plugin-dirs'] if policy == 'never' else []
+        if provider == 'bgutil' and policy != 'never':
+            options += ['--extractor-args', 'youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416']
         result = subprocess.run([
             'yt-dlp', '--ignore-config', '--no-playlist', '--skip-download',
             '--dump-single-json', '--verbose', '--socket-timeout', '30',
-            '--extractor-args', 'youtube:player_client=' + clients,
-            '--extractor-args', 'youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416',
+            '--js-runtimes', 'deno',
+            '--extractor-args', f'youtube:player_client={clients};fetch_pot={policy}',
+            *options,
             'https://www.youtube.com/watch?v=' + identity,
         ], capture_output=True, text=True, timeout=180)
         # Never print/store verbose output: it can include locators and tokens.
-        report.update(
-            provider_loaded='bgutil:http-2.0.2' in result.stderr,
-            token_requested='PO Token for' in result.stderr and 'via bgutil HTTP server' in result.stderr,
-            token_retrieved=bool(re.search(r'Retrieved a (?:gvs|player) PO Token for', result.stderr)),
-        )
+        report.update(token_evidence(result.stderr, provider))
         if result.returncode:
             raise extraction_error(result.stderr)
         stage = 'metadata'
@@ -56,7 +68,7 @@ def check(identity, clients, output):
         if not isinstance(duration, (int, float)) or duration < 10:
             raise ValueError('Expected a finalized recording duration')
         report.update(resolved=True, height=selected['height'], duration=duration,
-                      protocol=selected['protocol'])
+                      protocol=selected['protocol'], format_id=selected['format_id'])
         for at in sorted({0, min(220, int(duration) - 5), min(1800, int(duration) - 5), int(duration) - 5}):
             frame = {'seconds': at, 'decoded': False}
             try:
@@ -64,14 +76,14 @@ def check(identity, clients, output):
                     'ffmpeg', '-nostdin', '-nostats', '-v', 'error', '-rw_timeout', '30000000',
                     '-threads', '1', *ffmpeg_input_args({'headers': headers}), '-ss', str(at),
                     '-i', selected['url'], '-map', '0:v:0', '-frames:v', '1', '-an',
-                    '-vf', 'scale=854:480', '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1',
+                    '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1',
                 ], capture_output=True, timeout=90)
                 if decoded.returncode:
                     raise extraction_error(decoded.stderr.decode(errors='replace'))
                 if not decoded.stdout.startswith(b'\xff\xd8') or not decoded.stdout.endswith(b'\xff\xd9'):
                     raise ValueError('No decoded JPEG')
                 frame.update(decoded=True, sha256=hashlib.sha256(decoded.stdout).hexdigest())
-                (output / f'{identity}-{clients.replace(",", "_")}-{at}.jpg').write_bytes(decoded.stdout)
+                (output / f'{identity}-{clients.replace(",", "_")}-{policy}-{at}.jpg').write_bytes(decoded.stdout)
             except Exception as error:
                 frame['error'] = safe_error_category(error)
             report['frames'].append(frame)
@@ -86,26 +98,33 @@ def main():
     identity = validate_source_id('youtube', os.environ['VIDEO_ID'])
     output = Path(os.environ.get('YOUTUBE_PROBE_OUTPUT', '.ignore/youtube-pot'))
     output.mkdir(parents=True, exist_ok=True)
-    report = {'source_id': identity, 'attempts': [], 'passed': False}
+    provider = os.environ.get('YOUTUBE_POT_PROVIDER', 'bgutil')
+    if provider not in ('bgutil', 'wpc'):
+        raise ValueError('Unknown PO token provider')
+    report = {'source_id': identity, 'provider': provider, 'attempts': [], 'passed': False,
+              'yt_dlp_version': package_version('yt-dlp'),
+              'ejs_version': package_version('yt-dlp-ejs'),
+              'revision': os.environ.get('GITHUB_SHA'), 'run_id': os.environ.get('GITHUB_RUN_ID')}
     try:
-        with urlopen('http://127.0.0.1:4416/ping', timeout=10) as response:
-            version = json.loads(response.read(4096)).get('version')
-        if version != '2.0.2':
-            raise ValueError('Unexpected provider version')
-        report['provider_version'] = version
-        # CI runs the baseline before installing the plugin so its automatic
-        # discovery cannot contaminate the control measurement.
+        distribution = 'bgutil-ytdlp-pot-provider' if provider == 'bgutil' else 'yt-dlp-getpot-wpc'
+        report['provider_version'] = package_version(distribution)
+        if provider == 'bgutil':
+            with urlopen('http://127.0.0.1:4416/ping', timeout=10) as response:
+                version = json.loads(response.read(4096)).get('version')
+            if version != report['provider_version']:
+                raise ValueError('Provider plugin and server versions differ')
+            report['server_version'] = version
         baseline = output / 'baseline.json'
         if baseline.exists():
             report['baseline'] = json.loads(baseline.read_text())
-        for clients in ('mweb', 'mweb,tv,web_safari'):
+        for clients, policy in (('default', 'never'), ('mweb', 'auto'), ('mweb', 'always'),
+                                ('mweb,tv,web_safari', 'auto'), ('web_safari', 'auto')):
             time.sleep(5)
-            attempt = check(identity, clients, output)
+            attempt = check(identity, clients, output, provider, policy)
             report['attempts'].append(attempt)
             print(json.dumps({'source_id': identity, **attempt}), flush=True)
-            if attempt['playback'] and attempt.get('token_retrieved'):
+            if attempt['playback'] and attempt.get('token_retrieved') and attempt.get('provider_loaded'):
                 report['passed'] = True
-                break
     except Exception as error:
         report['error'] = safe_error_category(error)
     (output / f'{identity}.json').write_text(json.dumps(report, indent=2) + '\n')
