@@ -10,9 +10,9 @@ The first authenticated run, 40538913673, resolved formats in all 12 cases but f
 
 The local authenticated control also downloaded the complete recording without plugins: 3908.133333 seconds, 852 × 480, 433240994 bytes. FFmpeg decoded the entire video with exit code 0 and no error output. The local cookie export and token-service container were removed. The hosted temporary secret was deleted after the repeat.
 
-At `4ff2fbd`, full-recording hosted verification and two additional video probes are running. The workflow's `full_recording` option downloads format 135 with default clients and no plugins, decodes the entire video, records finite diagnostics, and removes the temporary media. These results are pending.
+The three broader hosted runs at `4ff2fbd` completed successfully: [jwxFzTcvWLs](https://github.com/liftaris/bazaar-ghost/actions/runs/40541639636), [Bfr68889LR0](https://github.com/liftaris/bazaar-ghost/actions/runs/40541653356), and [62BIbb1liSU](https://github.com/liftaris/bazaar-ghost/actions/runs/40541667387). The first included full-recording verification. The workflow's `full_recording` option downloads format 135 with default clients and no plugins, decodes the entire video, records finite diagnostics, and removes the temporary media. The probe owner confirmed deletion of the temporary `YOUTUBE_PROBE_COOKIES` secret. Normal streaming jobs retain their separate validation `YOUTUBE_COOKIES` secret. See [deployed streaming acceptance](youtube-support-status.md#october-27-deployed-rollout) for the actual scheduler/OCR results.
 
-This proves authenticated hosted playback for the first recording. Normal ingestion still needs cookie provisioning and renewal, current extractor dependencies, and native-resolution verification. The anonymous results below remain valid.
+These probes establish authenticated hosted playback. The subsequent deployed rollout provisioned the application cookie secret, updated extractor dependencies, and verified two full scheduler-driven recordings at native 480p. Cookie renewal remains an operational responsibility. The anonymous results below remain valid.
 
 ## Research before implementation
 
