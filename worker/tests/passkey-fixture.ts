@@ -22,9 +22,9 @@ const sha256 = async (value: Uint8Array | string) =>
 const u32 = (n: number) => new Uint8Array([n >>> 24, n >>> 16 & 255, n >>> 8 & 255, n & 255]);
 
 /** A software WebAuthn authenticator (Ed25519, "none" attestation) for real ceremonies in workerd. */
-export interface Authenticator { id: Uint8Array; keys: CryptoKeyPair; counter: number }
-export async function authenticator(): Promise<Authenticator> {
-  return { id: crypto.getRandomValues(new Uint8Array(16)), counter: 0,
+export interface Authenticator { id: Uint8Array; aaguid: Uint8Array; keys: CryptoKeyPair; counter: number }
+export async function authenticator(aaguid = new Uint8Array(16)): Promise<Authenticator> {
+  return { id: crypto.getRandomValues(new Uint8Array(16)), aaguid, counter: 0,
     keys: await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]) as CryptoKeyPair };
 }
 const clientData = (type: string, challenge: string, origin: string) =>
@@ -34,7 +34,7 @@ export async function attest(device: Authenticator, options: { challenge: string
   const x = new Uint8Array(await crypto.subtle.exportKey("raw", device.keys.publicKey) as ArrayBuffer);
   const key = cbor(new Map<number, CBOR>([[1, 1], [3, -8], [-1, 6], [-2, x]]));
   const authData = bytes(await sha256(options.rp.id), new Uint8Array([0x45]), u32(device.counter),
-    new Uint8Array(16), new Uint8Array([0, device.id.length]), device.id, key);
+    device.aaguid, new Uint8Array([0, device.id.length]), device.id, key);
   const id = b64url(device.id);
   return { id, rawId: id, type: "public-key", authenticatorAttachment: "platform", clientExtensionResults: {},
     response: { clientDataJSON: b64url(clientData("webauthn.create", options.challenge, origin)), transports: ["internal"],

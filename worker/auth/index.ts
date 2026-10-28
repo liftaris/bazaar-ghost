@@ -294,7 +294,7 @@ async function dispatch(req: Request, env: AuthEnv): Promise<Response> {
   if (path === "/sessions") return Response.json({ sessions: await rows(env,
     `SELECT id,createdAt,expiresAt FROM user_sessions WHERE userId=? AND expiresAt>${sqlDate} ORDER BY createdAt,id`, identity.userId) });
   if (path === "/passkeys") return Response.json({ passkeys: await rows(env,
-    "SELECT id,name,aaguid,createdAt FROM user_passkeys WHERE userId=? ORDER BY createdAt,id", identity.userId) });
+    "SELECT id,name,createdAt FROM user_passkeys WHERE userId=? ORDER BY createdAt,id", identity.userId) });
   await requireCsrf(req, env, identity);
   const credential = Object.hasOwn(credentials, path) ? credentials[path as keyof typeof credentials] : null;
   only(data, credential ? [credential.key] : path === "/revoke-session" ? ["sessionId"] : []);

@@ -107,7 +107,8 @@ it("validates the display name and parameters at the boundary", async () => {
 
 it("adds a passkey to a fresh OAuth session with CSRF, then signs in with either credential", async () => {
   mockProviders();
-  const user = await login(), device = await authenticator();
+  const googleAaguid = Uint8Array.from("ea9b8d664d011d213ce4b6b48cb575d4".match(/../g)!, byte => parseInt(byte, 16));
+  const user = await login(), device = await authenticator(googleAaguid);
   expect((await registrationOptions("?context=Other", { cookie: user.cookie })).response.status).toBe(400);
   expect((await register(device, "", { cookie: user.cookie })).verified.status).toBe(403);
   const options = await registrationOptions("", { cookie: user.cookie });
@@ -115,7 +116,7 @@ it("adds a passkey to a fresh OAuth session with CSRF, then signs in with either
   expect((await register(device, "", { cookie: user.cookie, csrfToken: user.identity.csrfToken })).verified.status).toBe(200);
   expect(await count("app_users")).toBe(1);
   const passkeys = await (await authRoute(request("/passkeys", undefined, user.cookie), authEnv())).json() as { passkeys: Array<Record<string, unknown>> };
-  expect(passkeys.passkeys).toHaveLength(1); expect(Object.keys(passkeys.passkeys[0]).sort()).toEqual(["aaguid", "createdAt", "id", "name"]);
+  expect(passkeys.passkeys).toHaveLength(1); expect(passkeys.passkeys[0]).toEqual({ id: expect.any(String), name: "Google Password Manager", createdAt: expect.any(String) });
   expect((await authenticated(request("/session", undefined, (await signIn(device)).cookie), authEnv())).userId).toBe(user.identity.userId);
   await env.DB.prepare("UPDATE user_sessions SET createdAt=?").bind(new Date(Date.now() - 600_000).toISOString()).run();
   expect((await registrationOptions("", { cookie: user.cookie })).response.status).toBe(401);

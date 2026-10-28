@@ -1,4 +1,4 @@
-import { passkey } from "@better-auth/passkey";
+import { getAuthenticatorName, passkey } from "@better-auth/passkey";
 import { APIError } from "better-auth/api";
 import type { Identity } from "./security";
 
@@ -19,12 +19,13 @@ export function passkeys({ origin, owner }: Ceremony) {
         // Provisional only: the user row is created after the attestation verifies.
         return { id: crypto.randomUUID(), name: context, displayName: context };
       },
-      afterVerification: async ({ ctx, user, context }) => {
-        if (owner) { if (user.id !== owner.userId || context) refuse(); return; }
+      afterVerification: async ({ ctx, user, context, verification }) => {
+        const name = getAuthenticatorName(verification.registrationInfo?.aaguid);
+        if (owner) { if (user.id !== owner.userId || context) refuse(); return { name }; }
         if (!context) return refuse();
         const created = await ctx.context.internalAdapter.createUser({
           name: context, email: `${user.id}@passkey.bazaarghost.invalid`, emailVerified: false }, { method: "passkey" });
-        return { userId: created.id };
+        return { userId: created.id, name };
       },
     },
   });
