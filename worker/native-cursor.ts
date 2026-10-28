@@ -8,7 +8,6 @@ export interface Boundary {
   recordings: number;
   expires: number;
 }
-/** A signed position bound to one canonical request. */
 interface Keyset {
   query: string;
   after: (string | number)[];
@@ -48,7 +47,6 @@ async function seal(env: Env, value: object) {
   const bytes = new TextEncoder().encode(JSON.stringify(value));
   return `${encode(bytes)}.${encode(new Uint8Array(await crypto.subtle.sign("HMAC", await signingKey(env), bytes)))}`;
 }
-/** Verify a signed cursor bound to this request; expired cursors are a 409 so clients restart. */
 async function unseal<T extends Keyset>(env: Env, url: URL, token: string): Promise<T> {
   try {
     requireValue(token.length <= 3000, "Invalid cursor");

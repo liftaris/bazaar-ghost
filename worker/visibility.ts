@@ -1,6 +1,5 @@
 import { one } from "./http";
 
-/** A relative R2 key with no traversal, control characters or backslashes. */
 export function safeObjectKey(key: string) {
   return !!key && key.length <= 2048 && !key.startsWith("/") && !/[\x00-\x1f\x7f\\]/.test(key) &&
     !key.split("/").some(part => part === "." || part === "..");

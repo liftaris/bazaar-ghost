@@ -41,10 +41,9 @@ const zero = {
 };
 const ingestionKinds: Record<IngestionJobKind, true> = { account: true, video: true, discovery: true };
 
-/** Counts keyed by every status of `base`; statuses the database does not know are dropped. */
 function counts<S extends string>(base: StatusCounts<S>, found: Iterable<{ status: string; n: number }>): StatusCounts<S> {
   const result = { ...base };
-  for (const { status, n } of found) if (Object.hasOwn(base, status)) result[status as S] = n;
+  for (const { status, n } of found) result[status as S] = n;
   return result;
 }
 function enumValue<S extends string>(base: Record<S, unknown>, value: string, label: string): S {
@@ -59,10 +58,6 @@ function textFilter(url: URL) {
   const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
   requireValue(q.length <= 128, "Search must be at most 128 characters");
   return q;
-}
-function keyset(after: (string | number)[], size: number) {
-  requireValue(after.length === 0 || after.length === size, "Invalid cursor");
-  return after.length > 0;
 }
 
 export async function requireOperator(req: Request, env: AuthEnv): Promise<Identity> {
@@ -125,7 +120,6 @@ function toOpsChannel(row: ChannelRow): OpsChannelRef {
   return { id: row.channel_id, platform: row.channel_platform, sourceId: row.channel_source_id, displayName: row.channel_name };
 }
 
-/** A Recording's registry identity; every watch link is built from it. */
 interface WatchRow {
   platform: string;
   source_id: string;
@@ -369,7 +363,7 @@ async function listRecordings(env: Env, url: URL): Promise<Page<OpsRecording>> {
   const found = await rows<{ id: number; last_activity_at: string }>(
     env,
     `SELECT * FROM (SELECT v.id,${lastActivity} AS last_activity_at FROM vods v WHERE ${clauses.join(" AND ")})
-    ${keyset(after, 2) ? "WHERE (last_activity_at,id)<(?,?)" : ""} ORDER BY last_activity_at DESC,id DESC LIMIT ?`,
+    ${after.length ? "WHERE (last_activity_at,id)<(?,?)" : ""} ORDER BY last_activity_at DESC,id DESC LIMIT ?`,
     ...args,
     ...after,
     limit + 1,
@@ -394,7 +388,6 @@ async function chunkDetail(env: Env, url: URL, id: string): Promise<OpsRoutes["/
   return { chunk: toOpsChunk(chunk), recording: found, detections: detections.map(toOpsDetectionRow) };
 }
 
-/** Active Channels of each Streamer, ordered by platform then name. */
 async function ownedChannels(env: Env, streamerIds: number[]) {
   const found = await rows<ChannelRow & { streamer_id: number }>(
     env,
@@ -413,7 +406,7 @@ async function listStreamers(env: Env, url: URL): Promise<Page<OpsStreamer>> {
     env,
     `SELECT * FROM (SELECT i.id,i.display_name,i.avatar_url,lower(i.display_name) AS sort_name FROM streamer_identities i
       ${q ? "WHERE instr(lower(i.display_name),?)>0" : ""})
-    ${keyset(after, 2) ? "WHERE (sort_name,id)>(?,?)" : ""} ORDER BY sort_name,id LIMIT ?`,
+    ${after.length ? "WHERE (sort_name,id)>(?,?)" : ""} ORDER BY sort_name,id LIMIT ?`,
     ...(q ? [q] : []),
     ...after,
     limit + 1,
@@ -443,7 +436,6 @@ async function listStreamers(env: Env, url: URL): Promise<Page<OpsStreamer>> {
   };
 }
 
-/** A video the platform lists for a Channel, before joining our Recordings. */
 interface Listed {
   videoId: string;
   title: string | null;
@@ -508,9 +500,10 @@ async function channelInventory(env: Env, twitch: Twitch, channel: OpsChannelRef
     channel.id,
     INVENTORY_CAP,
   );
-  let origin: InventoryChannel["origin"] = channel.platform === "twitch" ? "live" : "jobs", error: string | null = null, listed: Listed[] = [];
+  const live = channel.platform === "twitch";
+  let origin: InventoryChannel["origin"] = live ? "live" : "jobs", error: string | null = null, listed: Listed[] = [];
   try {
-    listed = channel.platform === "twitch" ? await twitchArchives(twitch, channel) : await ingestionVideos(env, channel);
+    listed = live ? await twitchArchives(twitch, channel) : await ingestionVideos(env, channel);
   } catch (failure) {
     origin = "error";
     error = failure instanceof Error ? failure.message : String(failure);
@@ -613,7 +606,7 @@ async function ingestion(env: Env, url: URL): Promise<OpsIngestion> {
       `SELECT * FROM (SELECT j.id,j.source,j.kind,j.source_id,j.account_id,j.status,j.attempts,j.last_error,${jobReason} AS reason,
         j.next_attempt_at,j.last_attempt_at,j.completed_at,j.created_at,coalesce(j.last_attempt_at,j.created_at) AS activity
         FROM platform_ingestion_jobs j WHERE ${clauses.join(" AND ")})
-      ${keyset(after, 2) ? "WHERE (activity,id)<(?,?)" : ""} ORDER BY activity DESC,id DESC LIMIT ?`,
+      ${after.length ? "WHERE (activity,id)<(?,?)" : ""} ORDER BY activity DESC,id DESC LIMIT ?`,
       ...args,
       ...after,
       limit + 1,
@@ -651,7 +644,6 @@ async function ingestion(env: Env, url: URL): Promise<OpsIngestion> {
   };
 }
 
-/** Streams any stored object, hidden and debug frames included; operators are the only audience. */
 async function image(env: Env, url: URL, encoded: string) {
   parameters(url, []);
   let key: string;
