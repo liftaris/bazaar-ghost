@@ -13,10 +13,10 @@ def run(output, *extra):
 
 
 class FrontendApiGeneratorTests(unittest.TestCase):
-    def test_emits_one_contract_and_client_that_pass_their_own_check(self):
+    def test_emits_contracts_and_client_that_pass_their_own_check(self):
         with tempfile.TemporaryDirectory() as output:
             self.assertEqual(run(output).returncode, 0)
-            self.assertEqual(sorted(path.name for path in (Path(output) / 'lib').iterdir()), ['api-client.ts', 'api-contract.ts'])
+            self.assertEqual(sorted(path.name for path in (Path(output) / 'lib').iterdir()), ['api-client.ts', 'api-contract.ts', 'operator-contract.ts'])
             self.assertEqual(run(output, '--check').returncode, 0)
             contract = (Path(output) / 'lib/api-contract.ts').read_text()
             self.assertIn('export type PlatformId = string;', contract)

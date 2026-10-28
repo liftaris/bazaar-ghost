@@ -156,7 +156,7 @@ class MultiplatformMigrationTests(unittest.TestCase):
         manifest = json.loads((self.destination / 'manifest.json').read_text())
         self.assertEqual(manifest['schema_version'], 3)
         self.assertEqual(manifest['source_schema_version'], 3)
-        self.assertEqual(manifest['target_schema_version'], 25)
+        self.assertEqual(manifest['target_schema_version'], 26)
         self.assertEqual(len(manifest['migrations']), 3)
         self.assertEqual(manifest['target_migrations'], {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                          for path in (conversion.ROOT / 'worker/migrations').glob('*.sql')})
