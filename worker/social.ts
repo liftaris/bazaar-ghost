@@ -1,7 +1,7 @@
 import { atomic } from './atomic';
 import { authenticated, identityCheck, requireCsrf, type AuthEnv, type Identity } from './auth';
 import { digest, only, privateResponse } from './auth/security';
-import { authorized, HttpError, integer, one, readBytes, requireValue, rows, statement, uuid } from './http';
+import { authorized, HttpError, integer, one, readBytes, requireValue, rows, statement, text, uuid } from './http';
 import { matchupCards, parameters } from './native-api';
 import { boundary, page as cursorPage } from './native-cursor';
 import type { MatchupRow } from './native-model';
@@ -16,15 +16,6 @@ interface CommentRow {
 const commentFields = 'c.*,u.name';
 const commentFrom = 'FROM matchup_comments c JOIN app_users u ON u.id=c.author_id JOIN matchups p ON p.id=c.matchup_id';
 
-/** Plain text remains plain text: clients must render it as text, never as HTML. */
-function text(value: unknown, label: string, max: number) {
-  requireValue(typeof value === 'string', `Invalid ${label}`);
-  const normalized = value.normalize('NFC').replace(/\r\n?/g, '\n').trim();
-  const visible = normalized.replace(/[\n\t\u200d]/g, '');
-  requireValue(!/[\p{Cc}\p{Cs}\p{Cf}]/u.test(visible) && /[^\p{White_Space}\p{M}]/u.test(visible) && [...normalized].length >= 1 && [...normalized].length <= max,
-    `${label} must contain 1–${max} Unicode characters without control characters`);
-  return normalized;
-}
 async function input(req: Request, keys: string[]) {
   requireValue(req.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() === 'application/json', 'Expected application/json');
   let data: unknown;

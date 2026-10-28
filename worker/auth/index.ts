@@ -1,10 +1,11 @@
 import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { APIError, createAuthMiddleware, getOAuthState, getSessionFromCtx } from "better-auth/api";
 import { atomic } from "../atomic";
-import { HttpError, one, rows, statement, uuid } from "../http";
+import { HttpError, one, requireValue, rows, statement, text, uuid } from "../http";
+import { passkeys, type Ceremony } from "./passkeys";
 import { availableProviders, providers } from "./providers";
-import { clearSessionCookie, configuration, csrf, digest, FRESH_MS, identityCheck, jsonBody, only,
-  privateResponse, rateLimit, requireCsrf, requireFresh, requireOrigin, sqlDate, sqlNow, type AuthEnv, type Identity } from "./security";
+import { ceremonyOrigin, clearSessionCookie, configuration, csrf, digest, FRESH_MS, hasCredential, identityCheck, jsonBody, only,
+  privateResponse, rateLimit, requireCsrf, requireFresh, requireOrigin, sessionCookie, sqlDate, sqlNow, type AuthEnv, type Identity } from "./security";
 
 export { identityCheck, requireCsrf, requireFresh } from "./security";
 export type { AuthEnv, Identity } from "./security";
@@ -12,7 +13,7 @@ export type { AuthEnv, Identity } from "./security";
 interface Flow { linkUserId: string | null; linkSessionId: string | null }
 
 /** All hook state belongs to ONE invocation; never cache this auth instance globally. */
-function createAuth(env: AuthEnv) {
+function createAuth(env: AuthEnv, ceremony: Ceremony | null = null) {
   const { base, origins, secure, secret } = configuration(env);
   const createdUsers = new Set<string>();
   let callbackFlow: Flow | null = null;
@@ -37,13 +38,15 @@ function createAuth(env: AuthEnv) {
     // custom __Host- name. Own the names instead and set Secure explicitly below.
     advanced: { useSecureCookies: false, cookiePrefix: `${secure ? "__Host-" : ""}bazaarghost`,
       crossSubDomainCookies: { enabled: false },
-      cookies: { session_token: { name: `${secure ? "__Host-" : ""}bazaarghost_session` } },
+      cookies: { session_token: { name: sessionCookie(env) } },
       defaultCookieAttributes: { httpOnly: true, secure, sameSite: "lax", path: "/" },
       ipAddress: { disableIpTracking: true }, database: { generateId: () => crypto.randomUUID() } },
     // Defense in depth: authRoute also allowlists methods and paths and never forwards these.
     disabledPaths: ["/get-session", "/list-sessions", "/list-accounts", "/get-access-token", "/refresh-token",
-      "/account-info", "/update-user", "/delete-user", "/change-email", "/unlink-account"],
+      "/account-info", "/update-user", "/delete-user", "/change-email", "/unlink-account",
+      "/passkey/list-user-passkeys", "/passkey/delete-passkey", "/passkey/update-passkey"],
     socialProviders: providers(env),
+    plugins: ceremony ? [passkeys(ceremony)] : [],
     databaseHooks: {
       user: { create: { before: async () => {
         // Better Auth defers create.after until its pseudo-transaction completes, so it
@@ -68,8 +71,7 @@ function createAuth(env: AuthEnv) {
         update: { before: dropTokens },
       },
       session: { create: { before: async (session) => {
-        if (!await one(env, `SELECT id FROM app_users u WHERE id=? AND status='active'
-          AND EXISTS(SELECT 1 FROM user_accounts a WHERE a.userId=u.id)`, session.userId))
+        if (!await one(env, `SELECT id FROM app_users u WHERE id=? AND status='active' AND ${hasCredential("u")}`, session.userId))
           throw new APIError("FORBIDDEN", { message: "User cannot sign in" });
         return { data: { ipAddress: null, userAgent: null } };
       } } },
@@ -109,8 +111,7 @@ export async function authenticated(req: Request, env: AuthEnv): Promise<Identit
   const value = await auth.api.getSession({ headers: req.headers, query: { disableCookieCache: true, disableRefresh: true } });
   if (!value) throw new HttpError(401, "Sign in required");
   const exists = await one(env, `SELECT u.id FROM app_users u JOIN user_sessions s ON s.userId=u.id
-    WHERE u.id=? AND s.id=? AND u.status='active' AND s.expiresAt>${sqlDate}
-    AND EXISTS(SELECT 1 FROM user_accounts a WHERE a.userId=u.id)`, value.user.id, value.session.id);
+    WHERE u.id=? AND s.id=? AND u.status='active' AND s.expiresAt>${sqlDate} AND ${hasCredential("u")}`, value.user.id, value.session.id);
   if (!exists) throw new HttpError(401, "Sign in required");
   return { userId: value.user.id, sessionId: value.session.id, name: value.user.name, image: value.user.image || null,
     createdAt: value.session.createdAt.toISOString(), expiresAt: value.session.expiresAt.toISOString(),
@@ -119,10 +120,10 @@ export async function authenticated(req: Request, env: AuthEnv): Promise<Identit
 
 async function recoverCreatedUsers(env: AuthEnv, ids: Set<string>) {
   if (!ids.size) return;
-  // registeredAt is written by the account INSERT trigger, in the SAME statement. A later
-  // session failure keeps the valid identity; a failed identity INSERT cannot strand signup.
+  // registeredAt is written by the credential INSERT trigger, in the SAME statement. A later
+  // session failure keeps the valid identity; a failed credential INSERT cannot strand signup.
   await statement(env, `DELETE FROM app_users WHERE id IN(SELECT value FROM json_each(?)) AND registeredAt IS NULL
-    AND NOT EXISTS(SELECT 1 FROM user_accounts WHERE userId=app_users.id)
+    AND NOT ${hasCredential("app_users")}
     AND NOT EXISTS(SELECT 1 FROM user_sessions WHERE userId=app_users.id)`, JSON.stringify([...ids])).run();
 }
 
@@ -157,7 +158,7 @@ export async function cleanupAuth(env: AuthEnv) {
     ...tables.map(table => statement(env,
       `DELETE FROM ${table} WHERE rowid IN(SELECT rowid FROM ${table} WHERE expiresAt<${table === "auth_flows" || table === "auth_rate_limits" ? sqlNow : sqlDate} ORDER BY expiresAt LIMIT 500) RETURNING 1`)),
     statement(env, `DELETE FROM app_users WHERE id IN(SELECT id FROM app_users WHERE registeredAt IS NULL
-      AND createdAt<strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 hour') AND NOT EXISTS(SELECT 1 FROM user_accounts WHERE userId=app_users.id)
+      AND createdAt<strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 hour') AND NOT ${hasCredential("app_users")}
       AND NOT EXISTS(SELECT 1 FROM user_sessions WHERE userId=app_users.id) ORDER BY createdAt LIMIT 100) RETURNING 1`),
   ]);
   // D1 meta.changes includes cascades. RETURNING a constant counts only the direct
@@ -181,6 +182,66 @@ function callbackURL(value: unknown, env: AuthEnv) {
   return url.href;
 }
 
+const ceremonies = {
+  "/passkey/generate-register-options": { method: "GET", category: "passkey-register", limit: 10 },
+  "/passkey/generate-authenticate-options": { method: "GET", category: "passkey-sign-in", limit: 30 },
+  "/passkey/verify-registration": { method: "POST", category: "passkey-verify", limit: 30 },
+  "/passkey/verify-authentication": { method: "POST", category: "passkey-verify", limit: 30 },
+} as const;
+type CeremonyPath = keyof typeof ceremonies;
+const credentials = {
+  "/unlink-account": { table: "user_accounts", key: "accountId" },
+  "/delete-passkey": { table: "user_passkeys", key: "passkeyId" },
+} as const;
+
+function displayName(value: unknown) {
+  const name = text(value, "Display name", 40);
+  requireValue(!/[\n\t]/.test(name), "Display name must be one line");
+  return name;
+}
+
+/** Signed out, registration creates an account; signed in, it adds a passkey to a fresh session's user. */
+async function ceremony(req: Request, env: AuthEnv, path: CeremonyPath): Promise<Response> {
+  const origin = ceremonyOrigin(req, env);
+  await rateLimit(req, env, ceremonies[path].category, ceremonies[path].limit);
+  const registration = path === "/passkey/generate-register-options" || path === "/passkey/verify-registration";
+  const owner = registration ? await authenticated(req, env).catch((error: unknown) => {
+    if (error instanceof HttpError && error.status === 401) return null;
+    throw error;
+  }) : null;
+  if (owner) requireFresh(owner);
+  const url = new URL(req.url), query = new URLSearchParams(url.search);
+  url.search = "";
+  let body: string | undefined;
+  if (path === "/passkey/generate-register-options" && !owner) {
+    requireValue([...query.keys()].join() === "context", "Display name required");
+    url.searchParams.set("context", displayName(query.get("context")));
+  } else requireValue(!query.size, "Unsupported request parameters");
+  if (req.method === "POST") {
+    const data = await jsonBody(req, 16_384);
+    only(data, path === "/passkey/verify-registration" ? ["response", "createSession"] : ["response"]);
+    requireValue(data.response && typeof data.response === "object" && !Array.isArray(data.response), "Invalid passkey response");
+    if (owner) await requireCsrf(req, env, owner);
+    body = JSON.stringify(path === "/passkey/verify-registration" && !owner ? { response: data.response, createSession: true } : { response: data.response });
+  }
+  const headers = new Headers(req.headers);
+  headers.delete("Content-Length");
+  // Only an owner's verification may see the session: everywhere else the library would
+  // otherwise resolve the signed-in user instead of the ceremony's user.
+  if (!(owner && path === "/passkey/verify-registration")) headers.set("Cookie", (headers.get("Cookie") || "").split(";")
+    .filter(pair => pair.split("=")[0].trim() !== sessionCookie(env)).join(";"));
+  const { auth, createdUsers } = createAuth(env, { origin, owner });
+  let response: Response;
+  try { response = await auth.handler(new Request(url, { method: req.method, headers, body })); }
+  finally { await recoverCreatedUsers(env, createdUsers); }
+  if (req.method === "GET" || !response.ok) return providerResponse(response, env);
+  // The library returns the session token, synthetic email and public key; only cookies leave.
+  void response.body?.cancel();
+  const result = new Response(JSON.stringify({ ok: true }), response);
+  result.headers.delete("Content-Length");
+  return result;
+}
+
 async function dispatch(req: Request, env: AuthEnv): Promise<Response> {
   const path = new URL(req.url).pathname.slice("/api/auth".length);
   if (path === "/providers" && req.method === "GET")
@@ -188,11 +249,13 @@ async function dispatch(req: Request, env: AuthEnv): Promise<Response> {
   if (path === "/error" && req.method === "GET")
     return Response.json({ error: "Authentication failed; start login again" }, { status: 400 });
   if (env.AUTH_ENABLED !== "true") throw new HttpError(503, "Authentication disabled");
-  const get = ["/session", "/accounts", "/sessions"].includes(path) && req.method === "GET";
+  const get = ["/session", "/accounts", "/sessions", "/passkeys"].includes(path) && req.method === "GET";
   const callback = /^\/callback\/(discord|twitch)$/.test(path) && req.method === "GET";
-  const post = ["/sign-in/social", "/link-social", "/sign-out", "/sign-out-all", "/unlink-account", "/revoke-session", "/delete-account"].includes(path) && req.method === "POST";
-  if (!get && !callback && !post) throw new HttpError(404, "Authentication endpoint not found");
+  const post = ["/sign-in/social", "/link-social", "/sign-out", "/sign-out-all", "/unlink-account", "/delete-passkey", "/revoke-session", "/delete-account"].includes(path) && req.method === "POST";
+  const passkey = Object.hasOwn(ceremonies, path) && ceremonies[path as CeremonyPath].method === req.method;
+  if (!get && !callback && !post && !passkey) throw new HttpError(404, "Authentication endpoint not found");
   if (req.url.length > 8192) throw new HttpError(414, "Request URL too long");
+  if (passkey) return ceremony(req, env, path as CeremonyPath);
   if (post) requireOrigin(req, env);
   await rateLimit(req, env, callback ? "callback" : path === "/sign-in/social" ? "start" : "account", callback ? 30 : path === "/sign-in/social" ? 10 : 120);
 
@@ -230,15 +293,19 @@ async function dispatch(req: Request, env: AuthEnv): Promise<Response> {
     "SELECT id,providerId,accountId,createdAt FROM user_accounts WHERE userId=? ORDER BY createdAt,id", identity.userId) });
   if (path === "/sessions") return Response.json({ sessions: await rows(env,
     `SELECT id,createdAt,expiresAt FROM user_sessions WHERE userId=? AND expiresAt>${sqlDate} ORDER BY createdAt,id`, identity.userId) });
+  if (path === "/passkeys") return Response.json({ passkeys: await rows(env,
+    "SELECT id,name,createdAt FROM user_passkeys WHERE userId=? ORDER BY createdAt,id", identity.userId) });
   await requireCsrf(req, env, identity);
-  only(data, path === "/unlink-account" ? ["accountId"] : path === "/revoke-session" ? ["sessionId"] : []);
+  const credential = Object.hasOwn(credentials, path) ? credentials[path as keyof typeof credentials] : null;
+  only(data, credential ? [credential.key] : path === "/revoke-session" ? ["sessionId"] : []);
   if (path !== "/sign-out") requireFresh(identity);
   const checks = [identityCheck(identity, path !== "/sign-out")];
   const success = () => Response.json({ ok: true });
-  if (path === "/unlink-account") {
-    const accountId = uuid(data.accountId);
-    checks.push({ sql: "EXISTS(SELECT 1 FROM user_accounts WHERE id=? AND userId=?) AND (SELECT count(*) FROM user_accounts WHERE userId=?)>1", args: [accountId, identity.userId, identity.userId] });
-    await atomic(env, checks, [statement(env, "DELETE FROM user_accounts WHERE id=? AND userId=?", accountId, identity.userId),
+  if (credential) {
+    const id = uuid(data[credential.key]);
+    checks.push({ sql: `EXISTS(SELECT 1 FROM ${credential.table} WHERE id=? AND userId=?) AND (SELECT count(*) FROM user_credentials WHERE userId=?)>1`,
+      args: [id, identity.userId, identity.userId] });
+    await atomic(env, checks, [statement(env, `DELETE FROM ${credential.table} WHERE id=? AND userId=?`, id, identity.userId),
       statement(env, "DELETE FROM user_sessions WHERE userId=? AND id!=?", identity.userId, identity.sessionId)]);
     return success();
   }
