@@ -11,11 +11,21 @@ import {
   external,
 } from "./http";
 import { source, videoIdentity, ingestionPlatforms } from "./platform-registry";
-import { dispatchBranch } from "./platform-ingestion-dispatch";
+import { dispatchBranch, workflowDispatchUrl } from "./platform-ingestion-dispatch";
 import { atomic } from "./atomic";
 import { automaticVideoPredicate } from "./automatic-processing";
 import { expectedProfile, profileCheck } from "./profiles";
 import { proposeForRecording } from "./session-proposals";
+import type { ChunkStatus, OperatorRunInputs, OpsRunDefaults, OpsWorkflowPayload, ProcessorMode, RunInputs, RunQuality } from "../contracts/operator-api";
+
+/** A recording that may be processed. Expects vod_processing_context aliased as v. */
+export const ELIGIBLE_RECORDING = "v.processing_enabled=1 AND v.ready_for_processing=1 AND v.availability='available'";
+export function eligibleRecording(vodId: number) {
+  return { sql: `EXISTS(SELECT 1 FROM vod_processing_context v WHERE v.id=? AND ${ELIGIBLE_RECORDING})`, args: [vodId] };
+}
+/** Statuses a chunk may be queued or reset from. Queued, processing and archived chunks are never touched. */
+export const RESETTABLE: readonly ChunkStatus[] = ["pending", "failed", "completed"];
+export const resettable = (column: string) => `${column} IN(${RESETTABLE.map((status) => `'${status}'`).join(",")})`;
 
 export function normalizeRanges(
   input: unknown,
@@ -158,25 +168,54 @@ export async function plan(
     now(),
   );
 }
+/** GitHub cancels a job that waits in its queue for 24 hours; until then a queued chunk may still start. */
+const STALE_QUEUE_MS = 24 * 60 * 60_000;
+const OPERATOR_QUEUED = "EXISTS(SELECT 1 FROM chunk_runs r WHERE r.chunk_id=chunks.id AND r.queued_at=chunks.queued_at AND r.origin='operator')";
 export async function recover(env: Env) {
-  const time = now();
-  await statement(
-    env,
-    `UPDATE chunks SET
-      status=CASE WHEN attempt_count<3 THEN 'pending' ELSE 'failed' END,
+  const time = now(), stale = new Date(Date.now() - STALE_QUEUE_MS).toISOString();
+  await env.DB.batch([
+    statement(
+      env,
+      `UPDATE chunk_runs SET status='expired',finished_at=?,error='Lease expired'
+      WHERE status='processing' AND claim_token IN(SELECT claim_token FROM chunks WHERE status='processing' AND lease_expires_at<?)`,
+      time,
+      time,
+    ),
+    statement(
+      env,
+      `UPDATE chunk_runs SET status='expired',finished_at=?,error='Queued run never started'
+      WHERE status='queued' AND EXISTS(SELECT 1 FROM chunks c WHERE c.id=chunk_runs.chunk_id AND c.status='queued' AND c.queued_at=chunk_runs.queued_at AND c.queued_at<?)`,
+      time,
+      stale,
+    ),
+    // An expired queue consumes no attempt. Operator chunks stop so they never retry with other inputs.
+    statement(
+      env,
+      `UPDATE chunks SET status=CASE WHEN ${OPERATOR_QUEUED} THEN 'failed' ELSE 'pending' END,
+        last_error=CASE WHEN ${OPERATOR_QUEUED} THEN 'Queued run never started' ELSE last_error END,
+        max_attempts=CASE WHEN ${OPERATOR_QUEUED} THEN attempt_count ELSE max_attempts END,updated_at=?
+      WHERE status='queued' AND queued_at<?`,
+      time,
+      stale,
+    ),
+    statement(
+      env,
+      `UPDATE chunks SET
+      status=CASE WHEN attempt_count<max_attempts THEN 'pending' ELSE 'failed' END,
       claim_token=NULL,lease_expires_at=NULL,
       last_error=CASE WHEN status='failed' THEN last_error ELSE 'Lease expired' END,updated_at=?
       WHERE (status='processing' AND lease_expires_at<?)
-        OR (status='failed' AND attempt_count<3 AND updated_at<=?)`,
-    time,
-    time,
-    new Date(Date.now() - 5 * 60_000).toISOString(),
-  ).run();
+        OR (status='failed' AND attempt_count<max_attempts AND updated_at<=?)`,
+      time,
+      time,
+      new Date(Date.now() - 5 * 60_000).toISOString(),
+    ),
+  ]);
 }
 export async function pendingVideos(env: Env, limit = 100, platformsOnly = false) {
   const time = now();
   return rows(env, `SELECT v.id FROM vod_processing_context v
-    WHERE v.processing_enabled=1 AND v.ready_for_processing=1 AND v.availability='available'
+    WHERE ${ELIGIBLE_RECORDING}
     AND v.status IN('pending','partial','failed') AND json_array_length(v.bazaar_chapters)>0
     AND ${automaticVideoPredicate}
     ${platformsOnly ? `AND v.source IN(${ingestionPlatforms().map(entry => `'${entry.id}'`).join(',')})` : ''}
@@ -186,101 +225,261 @@ export async function pendingVideos(env: Env, limit = 100, platformsOnly = false
       AND (scheduled_for IS NULL OR scheduled_for<=?)),CASE WHEN v.source='twitch' THEN 0 ELSE -10 END) DESC,
       v.published_at DESC,v.id LIMIT ?`, time,time,integer(limit,'pending video limit',1,100));
 }
-export async function dispatchAutomatic(env: Env, vodId: number) {
+export async function dispatchAutomatic(env: Env, vodId: number): Promise<string[]> {
   const allowed = await one(env, `SELECT 1 FROM vods v WHERE id=? AND ${automaticVideoPredicate}`, vodId);
-  return allowed ? dispatch(env, vodId, true) : [];
+  return allowed ? dispatch(env, vodId, automaticRun(env)) : [];
 }
-export async function dispatch(env: Env, vodId: number, automatic = false) {
-  const pending = await plan(env, vodId);
-  if (!pending.length) return [];
-  const branch = dispatchBranch(env.ENVIRONMENT);
+
+const QUALITY = /^(?:360|480|720|1080)p(?:60)?$/;
+const RUNTIME_IMAGE = /^ghcr\.io\/liftaris\/bazaar-ghost\/sfde-next@sha256:[a-f0-9]{64}$/;
+const OPERATOR_INPUTS: Record<keyof OperatorRunInputs, true> = { mode: true, quality: true };
+const DEFAULT_QUALITY: RunQuality = "480p";
+const isMode = (value: unknown): value is ProcessorMode => value === "next" || value === "legacy";
+const isQuality = (value: unknown): value is RunQuality => typeof value === "string" && QUALITY.test(value);
+
+export function allowedModes(env: Env): ProcessorMode[] {
+  return env.ENVIRONMENT === "validation" || env.ENVIRONMENT === "local" ? ["next", "legacy"] : ["legacy"];
+}
+const defaultMode = (env: Env, automatic: boolean): ProcessorMode => (automatic && env.ENVIRONMENT === "validation" ? "next" : "legacy");
+/** The validation runtime pin and the commit it was tested at, or why that configuration is unusable. */
+function runtimeImage(env: Env): { image: string | null; error: string | null } {
+  const image = env.ENVIRONMENT === "validation" && env.SFDE_RUNTIME_IMAGE ? env.SFDE_RUNTIME_IMAGE : null;
+  if (image === null) return { image, error: null };
+  if (!RUNTIME_IMAGE.test(image)) return { image: null, error: "Invalid SFDE runtime image" };
+  if (!/^[a-f0-9]{40}$/.test(env.BUILD_COMMIT)) return { image: null, error: "Invalid SFDE runtime revision" };
+  return { image, error: null };
+}
+/** Parse requested inputs from a request body or a dispatch path. Throws 400 on anything invalid. */
+export function resolveInputs(env: Env, requested: unknown, automatic = false): RunInputs {
+  requireValue(requested !== null && typeof requested === "object" && !Array.isArray(requested), "Invalid run inputs");
+  const given: Record<string, unknown> = { ...requested };
+  requireValue(Object.keys(given).every((key) => Object.hasOwn(OPERATOR_INPUTS, key)), "Unsupported run inputs");
+  const mode = given.mode ?? defaultMode(env, automatic);
+  requireValue(isMode(mode) && allowedModes(env).includes(mode), "Processor mode is not allowed in this environment");
+  const quality = given.quality ?? DEFAULT_QUALITY;
+  requireValue(isQuality(quality), "Invalid quality");
+  const runtime = runtimeImage(env);
+  if (runtime.error) throw new HttpError(400, runtime.error);
+  return { mode, quality, runtime_image: runtime.image };
+}
+/** Defaults for the next operator run from the latest recorded inputs. Never throws: a read must render even when config is broken. */
+export function runDefaults(env: Env, latest: RunInputs | null): OpsRunDefaults {
+  const modes = allowedModes(env), runtime = runtimeImage(env);
+  return {
+    inputs: {
+      mode: latest && modes.includes(latest.mode) ? latest.mode : defaultMode(env, false),
+      quality: latest?.quality ?? DEFAULT_QUALITY,
+      runtime_image: runtime.image,
+    },
+    allowedModes: modes,
+    configError: runtime.error,
+  };
+}
+export function requireDispatch(env: Env) {
   if (env.OUTBOUND_ENABLED !== "true" || !env.GITHUB_TOKEN)
     throw new HttpError(503, "GitHub dispatch is not configured");
+}
+
+export type RunRequest =
+  | { origin: "automatic"; inputs: RunInputs }
+  | { origin: "manual"; inputs: RunInputs }
+  | { origin: "operator"; requestedBy: string; inputs: RunInputs };
+/** What each origin may queue from, the extra fence it adds, and what queueing changes on the chunk. */
+const ORIGINS: Record<RunRequest["origin"], { from: string; fence: string; queue: string }> = {
+  automatic: {
+    from: "c.status='pending' AND (c.scheduled_for IS NULL OR c.scheduled_for<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+    fence: `AND ${automaticVideoPredicate}`,
+    queue: "",
+  },
+  manual: {
+    from: "c.status='pending' AND (c.scheduled_for IS NULL OR c.scheduled_for<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+    fence: "",
+    queue: "",
+  },
+  // An operator run gets exactly one attempt; attempt_count keeps the history.
+  operator: { from: resettable("c.status"), fence: "", queue: ",scheduled_for=NULL,max_attempts=attempt_count+1" },
+};
+/** The scheduler and the platform sweep: pending chunks inside the automatic window, NEXT in validation. */
+export function automaticRun(env: Env): RunRequest {
+  return { origin: "automatic", inputs: resolveInputs(env, {}, true) };
+}
+/** The admin key: pending chunks, legacy unless inputs say otherwise. */
+export function manualRun(env: Env, inputs: unknown = {}): RunRequest {
+  return { origin: "manual", inputs: resolveInputs(env, inputs) };
+}
+/** The operator console: pending, failed or completed chunks with the operator's parsed inputs. */
+export function operatorRun(userId: string, inputs: RunInputs): RunRequest {
+  return { origin: "operator", requestedBy: userId, inputs };
+}
+
+/** One recording's dispatch for one run request: which chunks may queue (fence on chunks c) and the workflow payload. */
+export interface Workflow {
+  vodId: number;
+  request: RunRequest;
+  fence: { sql: string; args: unknown[] };
+  payload(ids: string[], queuedAt: string | null): OpsWorkflowPayload;
+}
+export async function workflow(env: Env, vodId: number, request: RunRequest): Promise<Workflow> {
+  const branch = dispatchBranch(env.ENVIRONMENT);
   const vod = await one(env, "SELECT source,source_id FROM vods WHERE id=?", vodId);
-  const details = await vodDetails(env, vod!.source_id, vod!.source);
-  // Validation's automatic observation window uses NEXT. Other dispatch paths
-  // retain their legacy profile contract; manual NEXT remains an explicit input.
-  const next = automatic && env.ENVIRONMENT === 'validation';
-  const runtime = env.ENVIRONMENT === 'validation' && env.SFDE_RUNTIME_IMAGE;
-  if (runtime) {
-    requireValue(/^ghcr\.io\/liftaris\/bazaar-ghost\/sfde-next@sha256:[a-f0-9]{64}$/.test(runtime), 'Invalid SFDE runtime image');
-    requireValue(/^[a-f0-9]{40}$/.test(env.BUILD_COMMIT), 'Invalid SFDE runtime revision');
-  }
+  if (!vod) throw new HttpError(404, "VOD not found");
+  const details = await vodDetails(env, vod.source_id, vod.source);
+  const { inputs } = request, rules = ORIGINS[request.origin];
+  const next = inputs.mode === "next";
   const profile = next ? null : profileCheck(details.profile);
-  const profileJoin = next ? '' : 'JOIN sfde_profiles p ON p.id=v.effective_profile_id';
-  const profileFence = profile ? `AND p.id=? AND ${profile.sql}` : '';
-  const profileArgs = profile ? [details.profile.id, ...profile.args] : [];
-  const dispatched: string[] = [];
-  for (let offset = 0; offset < pending.length; offset += 256) {
-    const queuedAt = now();
-    const claims = await env.DB.batch(
-      pending
-        .slice(offset, offset + 256)
-        .map((c) =>
-          statement(
-            env,
-            `UPDATE chunks SET status='queued',queued_at=?,updated_at=? WHERE id=? AND status='pending' AND (scheduled_for IS NULL OR scheduled_for<=?) AND EXISTS(SELECT 1 FROM vod_processing_context v ${profileJoin} WHERE v.id=chunks.vod_id AND v.processing_enabled=1 AND v.ready_for_processing=1 AND v.availability='available' ${profileFence} AND v.old_templates=? ${automatic ? `AND ${automaticVideoPredicate}` : ''}) RETURNING id`,
-            queuedAt,
-            queuedAt,
-            c.id,
-            queuedAt,
-            ...profileArgs,
-            details.old_templates,
-          ),
-        ),
-    );
-    const ids = claims.flatMap((r) => r.results.map((c: any) => c.id));
-    if (!ids.length) continue;
-    try {
-      await external(
+  return {
+    vodId,
+    request,
+    fence: {
+      sql: `c.vod_id=? AND ${rules.from} AND EXISTS(SELECT 1 FROM vod_processing_context v
+        ${profile ? "JOIN sfde_profiles p ON p.id=v.effective_profile_id" : ""}
+        WHERE v.id=c.vod_id AND ${ELIGIBLE_RECORDING} AND v.old_templates=?
+        ${profile ? `AND p.id=? AND ${profile.sql}` : ""} ${rules.fence})`,
+      args: [vodId, details.old_templates, ...(profile ? [details.profile.id, ...profile.args] : [])],
+    },
+    payload: (ids, queuedAt) => ({
+      ref: branch,
+      inputs: {
+        vod_id: vod.source_id,
+        source: vod.source,
+        chunk_uuids: JSON.stringify(ids),
+        ...(queuedAt ? { queued_at: queuedAt } : {}),
+        old_templates: String(details.old_templates),
+        quality: inputs.quality,
+        ...(next ? { sfde_next: "true" } : { sfde_profile: JSON.stringify(details.streamers.sfde_profiles) }),
+        ...(inputs.runtime_image ? { runtime_image: inputs.runtime_image, processor_revision: env.BUILD_COMMIT } : {}),
+        environment: env.ENVIRONMENT,
+      },
+    }),
+  };
+}
+/** Why each chunk would not queue under this workflow right now; null when it would. Read-only. */
+export function queueability(env: Env, flow: Workflow, chunkIds: string[]) {
+  return rows<{ chunk_id: string; reason: string | null }>(
+    env,
+    `SELECT r.value AS chunk_id,CASE
+      WHEN c.id IS NULL OR c.vod_id<>? THEN 'Chunk not found in this recording'
+      WHEN NOT (${ORIGINS[flow.request.origin].from}) THEN 'Chunk is '||c.status
+      WHEN v.availability<>'available' THEN 'Recording is '||v.availability
+      WHEN NOT v.ready_for_processing THEN 'Recording is not ready for processing'
+      WHEN NOT v.processing_enabled THEN 'Recording has processing disabled'
+      WHEN NOT (${flow.fence.sql}) THEN 'Recording profile or template era no longer matches'
+      END AS reason
+    FROM json_each(?) r LEFT JOIN chunks c ON c.id=r.value LEFT JOIN vod_processing_context v ON v.id=c.vod_id`,
+    flow.vodId,
+    ...flow.fence.args,
+    JSON.stringify(chunkIds),
+  );
+}
+export interface Queued {
+  chunkIds: string[];
+  runIds: string[];
+  payload: OpsWorkflowPayload | null;
+}
+/**
+ * Queue the chunks this workflow's fence admits and record their runs in one batch, then dispatch the workflow.
+ * Automatic and manual runs queue pending chunks that are due; operator runs also queue failed and completed ones.
+ * A refused dispatch restores each chunk's prior status and max_attempts, writes the refusal to last_error,
+ * deletes the batch's runs, and throws 502.
+ */
+export async function queue(env: Env, flow: Workflow, chunkIds: string[]): Promise<Queued> {
+  requireValue(chunkIds.length <= 256, "At most 256 chunks per dispatch");
+  requireDispatch(env);
+  const { request } = flow;
+  const queuedAt = now();
+  const planned = chunkIds.map((chunk) => ({ chunk, run: crypto.randomUUID() }));
+  const [inserted] = await env.DB.batch([
+    statement(
+      env,
+      `INSERT INTO chunk_runs(id,chunk_id,vod_id,origin,requested_by,inputs,status,queued_at,prior_status,prior_max_attempts)
+      SELECT json_extract(r.value,'$.run'),c.id,c.vod_id,?,?,?,'queued',?,c.status,c.max_attempts
+      FROM json_each(?) r JOIN chunks c ON c.id=json_extract(r.value,'$.chunk') WHERE ${flow.fence.sql} RETURNING id`,
+      request.origin,
+      request.origin === "operator" ? request.requestedBy : null,
+      JSON.stringify(request.inputs),
+      queuedAt,
+      JSON.stringify(planned),
+      ...flow.fence.args,
+    ),
+    statement(
+      env,
+      `UPDATE chunks SET status='queued',queued_at=?,updated_at=?,claim_token=NULL,lease_expires_at=NULL${ORIGINS[request.origin].queue}
+      WHERE id IN(SELECT r.chunk_id FROM chunk_runs r JOIN json_each(?) j ON r.id=json_extract(j.value,'$.run'))`,
+      queuedAt,
+      queuedAt,
+      JSON.stringify(planned),
+    ),
+  ]);
+  const runs = new Set(inserted.results.map((row: any) => row.id));
+  const queued = planned.filter(({ run }) => runs.has(run));
+  if (!queued.length) return { chunkIds: [], runIds: [], payload: null };
+  const result = { chunkIds: queued.map((q) => q.chunk), runIds: queued.map((q) => q.run), payload: flow.payload(queued.map((q) => q.chunk), queuedAt) };
+  try {
+    await external(env, workflowDispatchUrl("process-vod.yml"), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.GITHUB_TOKEN}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "BazaarGhost",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(result.payload),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await env.DB.batch([
+      statement(
         env,
-        "https://api.github.com/repos/liftaris/bazaar-ghost/actions/workflows/process-vod.yml/dispatches",
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${env.GITHUB_TOKEN}`,
-            Accept: "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "BazaarGhost",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            ref: branch,
-            inputs: {
-              vod_id: vod!.source_id,
-              source: vod!.source,
-              chunk_uuids: JSON.stringify(ids),
-              queued_at: queuedAt,
-              old_templates: String(details.old_templates),
-               ...(next ? { sfde_next: 'true' } : { sfde_profile: JSON.stringify(details.streamers.sfde_profiles) }),
-               ...(runtime ? { runtime_image: runtime, processor_revision: env.BUILD_COMMIT } : {}),
-              environment: env.ENVIRONMENT,
-            },
-          }),
-        },
-      );
-      dispatched.push(...ids);
-    } catch (error) {
-      await env.DB.batch(
-        ids.map((id) =>
-          statement(
-            env,
-            "UPDATE chunks SET status='pending',queued_at=NULL WHERE id=? AND status='queued' AND queued_at=?",
-            id,
-            queuedAt,
-          ),
-        ),
-      );
-      throw error;
-    }
+        `UPDATE chunks SET status=r.prior_status,max_attempts=r.prior_max_attempts,queued_at=NULL,last_error=?,updated_at=?
+        FROM chunk_runs r WHERE r.chunk_id=chunks.id AND r.id IN(SELECT value FROM json_each(?)) AND chunks.status='queued' AND chunks.queued_at=r.queued_at`,
+        `Dispatch refused: ${message}`.slice(0, 2000),
+        now(),
+        JSON.stringify(result.runIds),
+      ),
+      statement(env, "DELETE FROM chunk_runs WHERE id IN(SELECT value FROM json_each(?)) AND status='queued'", JSON.stringify(result.runIds)),
+    ]);
+    throw new HttpError(502, message.slice(0, 2000));
   }
-  return dispatched;
+  return result;
+}
+/** Plan the recording and queue its pending chunks. */
+export async function dispatch(env: Env, vodId: number, request: RunRequest): Promise<string[]> {
+  const pending = await plan(env, vodId);
+  if (!pending.length) return [];
+  const flow = await workflow(env, vodId, request);
+  const queued: string[] = [];
+  for (let offset = 0; offset < pending.length; offset += 256)
+    queued.push(...(await queue(env, flow, pending.slice(offset, offset + 256).map((c) => String(c.id)))).chunkIds);
+  return queued;
+}
+/** A GitHub run identity from untrusted input; absent fields stay null. */
+export function githubRun(input: { github_run_id?: unknown; github_run_attempt?: unknown }) {
+  return {
+    runId: input.github_run_id == null ? null : integer(input.github_run_id, "github_run_id", 1),
+    runAttempt: input.github_run_attempt == null ? null : integer(input.github_run_attempt, "github_run_attempt", 1),
+  };
+}
+export type GithubRun = ReturnType<typeof githubRun>;
+/** The runner reports its GitHub run while preparing a dispatch, before any claim. */
+export async function recordGithubRun(env: Env, ids: string[], queuedAt: string, github: GithubRun) {
+  const result = await statement(
+    env,
+    `UPDATE chunk_runs SET github_run_id=coalesce(?,github_run_id),github_run_attempt=coalesce(?,github_run_attempt)
+    WHERE chunk_id IN(SELECT value FROM json_each(?)) AND queued_at=? AND status IN('queued','processing')`,
+    github.runId,
+    github.runAttempt,
+    JSON.stringify(ids),
+    queuedAt,
+  ).run();
+  return result.meta.changes;
 }
 export async function claim(
   env: Env,
   id: string,
   queuedAt: string | null = null,
   expected?: { profile: unknown; oldTemplates: unknown; processorMode?: unknown },
+  github: GithubRun = { runId: null, runAttempt: null },
 ) {
   requireValue(
     queuedAt === null ||
@@ -308,20 +507,88 @@ export async function claim(
   }
   const token = crypto.randomUUID(),
     time = now();
-  const chunk = await one(
-    env,
-    `UPDATE chunks SET status='processing',claim_token=?,attempt_count=attempt_count+1,started_at=?,updated_at=?,lease_expires_at=?,last_error=NULL,completed_at=NULL
-    WHERE id=? AND status IN('pending','queued') AND (? IS NULL OR (status='queued' AND queued_at=?)) AND EXISTS(SELECT 1 FROM vod_processing_context v WHERE v.id=chunks.vod_id AND v.processing_enabled=1 AND v.ready_for_processing=1 AND v.availability='available'${fence.sql}) RETURNING id`,
-    token,
-    time,
-    time,
-    new Date(Date.now() + 35 * 60_000).toISOString(),
-    uuid(id),
-    queuedAt,
-    queuedAt,
-    ...fence.args,
-  );
+  // A tracked claim adopts its dispatched run. An untracked claim supersedes any queued run; either way, a claim without a run records a manual one.
+  const [claimed] = await env.DB.batch([
+    statement(
+      env,
+      `UPDATE chunks SET status='processing',claim_token=?,attempt_count=attempt_count+1,started_at=?,updated_at=?,lease_expires_at=?,last_error=NULL,completed_at=NULL,
+        frames_processed=0,detections_count=0,processing_duration_ms=NULL
+      WHERE id=? AND status IN('pending','queued') AND (? IS NULL OR (status='queued' AND queued_at=?)) AND EXISTS(SELECT 1 FROM vod_processing_context v WHERE v.id=chunks.vod_id AND ${ELIGIBLE_RECORDING}${fence.sql}) RETURNING id`,
+      token,
+      time,
+      time,
+      new Date(Date.now() + 35 * 60_000).toISOString(),
+      uuid(id),
+      queuedAt,
+      queuedAt,
+      ...fence.args,
+    ),
+    queuedAt === null
+      ? statement(
+        env,
+        `UPDATE chunk_runs SET status='expired',finished_at=?,error='Superseded by an untracked claim'
+        WHERE chunk_id=? AND status='queued' AND queued_at=(SELECT queued_at FROM chunks WHERE id=? AND claim_token=?)`,
+        time,
+        id,
+        id,
+        token,
+      )
+      : statement(
+        env,
+        `UPDATE chunk_runs SET status='processing',claim_token=?,claimed_at=?,github_run_id=coalesce(?,github_run_id),github_run_attempt=coalesce(?,github_run_attempt)
+        WHERE chunk_id=? AND queued_at=? AND status='queued' AND EXISTS(SELECT 1 FROM chunks c WHERE c.id=chunk_runs.chunk_id AND c.claim_token=?)`,
+        token,
+        time,
+        github.runId,
+        github.runAttempt,
+        id,
+        queuedAt,
+        token,
+      ),
+    statement(
+      env,
+      `INSERT INTO chunk_runs(id,chunk_id,vod_id,origin,status,queued_at,claim_token,claimed_at,github_run_id,github_run_attempt)
+      SELECT ?,c.id,c.vod_id,'manual','processing',?,?,?,?,? FROM chunks c
+      WHERE c.id=? AND c.claim_token=? AND NOT EXISTS(SELECT 1 FROM chunk_runs WHERE claim_token=?)`,
+      crypto.randomUUID(),
+      time,
+      token,
+      time,
+      github.runId,
+      github.runAttempt,
+      id,
+      token,
+      token,
+    ),
+  ]);
+  const chunk = claimed.results[0];
   return { claimed: Boolean(chunk), claim_token: chunk ? token : null };
+}
+export async function failQueued(env: Env, ids: string[], queuedAt: string, error: string, github: GithubRun) {
+  const time = now();
+  const [failed] = await env.DB.batch([
+    statement(
+      env,
+      `UPDATE chunks SET status='failed',attempt_count=attempt_count+1,last_error=?,updated_at=? WHERE id IN(SELECT value FROM json_each(?)) AND status='queued' AND queued_at=? RETURNING id`,
+      error,
+      time,
+      JSON.stringify(ids),
+      queuedAt,
+    ),
+    statement(
+      env,
+      `UPDATE chunk_runs SET status='failed',finished_at=?,error=?,github_run_id=coalesce(?,github_run_id),github_run_attempt=coalesce(?,github_run_attempt)
+      WHERE chunk_id IN(SELECT value FROM json_each(?)) AND queued_at=? AND status='queued'
+      AND EXISTS(SELECT 1 FROM chunks c WHERE c.id=chunk_runs.chunk_id AND c.status='failed' AND c.queued_at=chunk_runs.queued_at)`,
+      time,
+      error,
+      github.runId,
+      github.runAttempt,
+      JSON.stringify(ids),
+      queuedAt,
+    ),
+  ]);
+  return failed.results.length;
 }
 export async function owned(env: Env, id: string, token: string | null) {
   if (!token) throw new HttpError(409, "Claim token required");
@@ -375,18 +642,27 @@ export async function updateChunk(
     changes.lease_expires_at = null;
     changes.completed_at = data.status === "completed" ? now() : null;
   }
-  const result = await statement(
-    env,
-    `UPDATE chunks SET ${Object.keys(changes)
-      .map((k) => `${k}=?`)
-      .join(
-        ",",
-      )} WHERE id=? AND claim_token=? AND status='processing' AND lease_expires_at>?`,
-    ...Object.values(changes),
-    id,
-    token,
-    now(),
-  ).run();
+  const [result] = await env.DB.batch([
+    statement(
+      env,
+      `UPDATE chunks SET ${Object.keys(changes)
+        .map((k) => `${k}=?`)
+        .join(
+          ",",
+        )} WHERE id=? AND claim_token=? AND status='processing' AND lease_expires_at>?`,
+      ...Object.values(changes),
+      id,
+      token,
+      now(),
+    ),
+    statement(
+      env,
+      `UPDATE chunk_runs SET status=c.status,finished_at=c.updated_at,error=c.last_error,frames_processed=c.frames_processed,detections_count=c.detections_count
+      FROM chunks c WHERE c.id=? AND c.claim_token=chunk_runs.claim_token AND chunk_runs.claim_token=? AND chunk_runs.status='processing' AND c.status IN('completed','failed')`,
+      id,
+      token,
+    ),
+  ]);
   if (!result.meta.changes) throw new HttpError(409, "Lost chunk claim");
   if (data.status === "completed") {
     // A finished Recording may match another Recording; failures are retried by the scheduled sweep.

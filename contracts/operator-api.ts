@@ -88,16 +88,109 @@ export interface OpsDetectionRow {
   matchupId: number | null;
 }
 
+/** "next" is the evidence-based processor and runs only in validation and local. */
+export type ProcessorMode = "next" | "legacy";
+/** Requested template height; a 60 suffix prefers the 60 FPS rendition. */
+export type RunQuality = `${"360" | "480" | "720" | "1080"}p${"" | "60"}`;
+
+/** What a chunk run was dispatched with. The saved profile and template era always come from the recording. */
+export interface RunInputs {
+  mode: ProcessorMode;
+  /** The requested quality. Old-template recordings process at 480p whatever was requested. */
+  quality: RunQuality;
+  /** The digest-pinned SFDE image this deployment dispatched, or null when the workflow built the processor from the branch. Not an operator input. */
+  runtime_image: string | null;
+}
+/** The inputs an operator chooses. */
+export type OperatorRunInputs = Pick<RunInputs, "mode" | "quality">;
+
+/** A run GitHub refused to dispatch is not recorded; the refusal lands on the chunk's lastError. */
+export type RunStatus = "queued" | "processing" | "completed" | "failed" | "expired";
+/** "automatic" is the scheduler and platform sweep, "operator" the console, "manual" the admin key or a runner claim the backend did not dispatch. */
+export type RunOrigin = "automatic" | "operator" | "manual";
+
+export interface OpsRun {
+  id: string;
+  chunkId: string;
+  origin: RunOrigin;
+  /** Operator user ID; set only when origin is "operator". */
+  requestedBy: string | null;
+  /** null for a manual claim the backend did not dispatch. */
+  inputs: RunInputs | null;
+  status: RunStatus;
+  queuedAt: string;
+  claimedAt: string | null;
+  finishedAt: string | null;
+  /** GitHub Actions run, reported by the runner when it prepares or claims the chunk. */
+  githubRunUrl: string | null;
+  error: string | null;
+  framesProcessed: number | null;
+  detections: number | null;
+}
+
+/** Inputs a new operator run of this chunk starts from, and the modes this environment allows. */
+export interface OpsRunDefaults {
+  inputs: RunInputs;
+  allowedModes: ProcessorMode[];
+  /** Why this deployment's runtime image configuration is unusable; reprocess fails with this message until it is fixed. */
+  configError: string | null;
+}
+
 export interface OpsRecordingDetail {
   recording: OpsRecording;
   chunks: OpsChunk[];
   detections: OpsDetectionRow[];
+  /** Newest first, at most 50. */
+  runs: OpsRun[];
 }
 
 export interface OpsChunkDetail {
   chunk: OpsChunk;
   recording: OpsRecording;
   detections: OpsDetectionRow[];
+  /** Newest first, at most 50. */
+  runs: OpsRun[];
+  runDefaults: OpsRunDefaults;
+}
+
+/** POST /api/v1/ops/reprocess with the X-CSRF-Token header. */
+export interface OpsReprocessRequest {
+  /** 1 to 50 chunk IDs. Unknown IDs are a 404; queued, processing or archived chunks are a 409. */
+  chunk_ids: string[];
+  inputs?: Partial<OperatorRunInputs>;
+  /** Report what would queue, and the payloads, without writing anything. */
+  dry_run?: boolean;
+}
+
+/** The GitHub workflow_dispatch body. A dry run omits inputs.queued_at, which is assigned at dispatch. */
+export interface OpsWorkflowPayload {
+  ref: string;
+  inputs: Record<string, string>;
+}
+
+/**
+ * One recording's share of a reprocess request. An operator run gets one attempt: the chunk is not
+ * retried automatically, and its attempt count keeps counting.
+ */
+export interface OpsReprocessRecording {
+  recordingId: number;
+  /** Chunks queued, or in a dry run the chunks that would queue. */
+  chunkIds: string[];
+  runIds: string[];
+  /** null when no chunk queued. */
+  payload: OpsWorkflowPayload | null;
+  /** Requested chunks that did not (or would not) queue, with the reason. */
+  skipped: Array<{ chunkId: string; reason: string }>;
+  /** Set when the whole recording failed, for example when GitHub refused the dispatch. Its chunks keep their prior status. */
+  error?: string;
+}
+
+/** 200 when any recording queued (or would queue). Otherwise, with the same body: 502 if GitHub refused a dispatch, 500 if a recording hit an internal error, else 409. */
+export interface OpsReprocessResponse {
+  dispatched: boolean;
+  recordings: OpsReprocessRecording[];
+  /** Set on 409, 500 and 502. */
+  error?: string;
 }
 
 export interface OpsDetection extends OpsDetectionRow {
@@ -127,11 +220,17 @@ export type OpsAttentionKind =
   | "catalog_failed"
   | "dispatch_unconfirmed";
 
+/** What a sample links to. Streamer IDs are streamer identity IDs; the dispatch target is the ingestion dispatcher singleton. */
+export interface OpsAttentionTarget {
+  kind: "chunk" | "recording" | "streamer" | "ingestion_job" | "dispatch";
+  id: string;
+}
+
 export interface OpsAttention {
   kind: OpsAttentionKind;
   count: number;
   /** Up to five examples, newest first. */
-  samples: Array<{ id: string; recordingId: number | null; label: string; error: string | null; at: string | null }>;
+  samples: Array<{ id: string; recordingId: number | null; label: string; error: string | null; at: string | null; target: OpsAttentionTarget }>;
 }
 
 export interface OpsOverview {
@@ -233,7 +332,16 @@ export interface OpsIngestion {
 
 /** Query parameters accepted by each list route. Unknown parameters are a 400. */
 export interface OpsQueries {
-  "/recordings": { status?: RecordingStatus | "attention"; platform?: PlatformId; q?: string; streamerId?: number; cursor?: string; limit?: number };
+  /** q matches title or source ID; chunkStatus keeps recordings with at least one chunk in that status. */
+  "/recordings": {
+    status?: RecordingStatus | "attention";
+    chunkStatus?: ChunkStatus;
+    platform?: PlatformId;
+    q?: string;
+    streamerId?: number;
+    cursor?: string;
+    limit?: number;
+  };
   "/streamers": { q?: string; cursor?: string; limit?: number };
   "/ingestion": { platform?: PlatformId; kind?: IngestionJobKind; status?: IngestionJobStatus; cursor?: string; limit?: number };
 }
@@ -249,4 +357,9 @@ export interface OpsRoutes {
   "/streamers": Page<OpsStreamer>;
   "/streamers/:id/inventory": OpsInventory;
   "/ingestion": OpsIngestion;
+}
+
+/** POST routes. Each requires the X-CSRF-Token header and a JSON body. */
+export interface OpsMutations {
+  "/reprocess": { request: OpsReprocessRequest; response: OpsReprocessResponse };
 }

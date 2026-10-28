@@ -10,6 +10,7 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from uuid import NAMESPACE_URL, uuid5
 
+from github_run import github_run
 from telemetry import create_span, record_counter, record_histogram
 
 _MISSING_PROFILE = object()
@@ -74,6 +75,7 @@ class BackendClient:
             'queued_at': os.getenv('QUEUED_AT') or None,
             'expected_old_templates': expected_old_templates,
         }
+        payload.update(github_run())
         if processor_mode == 'next':
             target = urlparse(self.url)
             local = target.hostname in ('localhost', '127.0.0.1', '::1', 'host.docker.internal')

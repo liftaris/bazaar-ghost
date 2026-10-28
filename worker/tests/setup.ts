@@ -35,6 +35,7 @@ beforeEach(async () => {
     "detections",
     "search_grams",
     "search_names",
+    "chunk_runs",
     "chunks",
     "vods",
     "proposal_evidence",

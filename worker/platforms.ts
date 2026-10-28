@@ -1,7 +1,7 @@
 import { atomic } from './atomic';
 import { body, decodeRow, HttpError, integer, now, one, requireValue, rows, statement, uuid } from './http';
 import { accountIdentity, ingestionPlatforms, listPlatforms, platform as platformEntry, requireIngestion, submissionIdentity, videoIdentity } from './platform-registry';
-import { dispatch, normalizeRanges, pendingVideos, plan, recover } from './processing';
+import { automaticRun, dispatch, normalizeRanges, pendingVideos, plan, recover } from './processing';
 import { linkStatements, unlinkStatement } from './streamers';
 import { renewSubscription } from './youtube-websub';
 import { CLAIMABLE_INGESTION, finishIngestionRunner, runnerOwnership, startIngestionRunner } from './platform-ingestion-dispatch';
@@ -271,7 +271,7 @@ export async function catalogRoute(req:Request,env:Env) {
     await recover(env);
     const due=await pendingVideos(env,limit,true);
     let count=0;
-    for(const v of due) {if(data.dry_run) await plan(env,v.id);else if((await dispatch(env,v.id)).length) count++;}
+    for(const v of due) {if(data.dry_run) await plan(env,v.id);else if((await dispatch(env,v.id,automaticRun(env))).length) count++;}
     result={dispatched:count};
   } else if(path==='/maintenance') {
     // WebSub has no signed timestamp. Keep digest tombstones for the account lifetime.
