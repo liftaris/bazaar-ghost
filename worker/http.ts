@@ -14,6 +14,15 @@ export function requireValue(
 ): asserts condition {
   if (!condition) throw new HttpError(400, message);
 }
+/** Plain text remains plain text: clients must render it as text, never as HTML. */
+export function text(value: unknown, label: string, max: number) {
+  requireValue(typeof value === "string", `Invalid ${label}`);
+  const normalized = value.normalize("NFC").replace(/\r\n?/g, "\n").trim();
+  const visible = normalized.replace(/[\n\t\u200d]/g, "");
+  requireValue(!/[\p{Cc}\p{Cs}\p{Cf}]/u.test(visible) && /[^\p{White_Space}\p{M}]/u.test(visible) && [...normalized].length >= 1 && [...normalized].length <= max,
+    `${label} must contain 1–${max} Unicode characters without control characters`);
+  return normalized;
+}
 export async function authorized(
   req: Request,
   secret: string,
