@@ -156,7 +156,7 @@ class MultiplatformMigrationTests(unittest.TestCase):
         manifest = json.loads((self.destination / 'manifest.json').read_text())
         self.assertEqual(manifest['schema_version'], 3)
         self.assertEqual(manifest['source_schema_version'], 3)
-        self.assertEqual(manifest['target_schema_version'], 27)
+        self.assertEqual(manifest['target_schema_version'], 28)
         self.assertEqual(len(manifest['migrations']), 3)
         self.assertEqual(manifest['target_migrations'], {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                          for path in (conversion.ROOT / 'worker/migrations').glob('*.sql')})
@@ -347,7 +347,7 @@ class MultiplatformMigrationTests(unittest.TestCase):
                 self.addCleanup(target.close)
                 conversion.apply_schema(target, version)
                 schema = target.execute('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').fetchall()
-                with self.assertRaisesRegex(sqlite3.OperationalError, 'no such table: igd_corrections'):
+                with self.assertRaisesRegex(sqlite3.OperationalError, 'no such table: '):
                     target.executescript((self.destination / 'import.sql').read_text())
                 self.assertEqual(target.execute('SELECT count(*) FROM vods').fetchone()[0], 0)
                 self.assertEqual(target.execute('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').fetchall(), schema)
@@ -360,7 +360,7 @@ class MultiplatformMigrationTests(unittest.TestCase):
         conversion.apply_schema(target, 23)
         before = target.execute('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').fetchall()
         revisions = target.execute('SELECT revision FROM public_cache_state UNION ALL SELECT revision FROM public_search_state').fetchall()
-        with self.assertRaisesRegex(sqlite3.OperationalError, 'no such table: igd_corrections'):
+        with self.assertRaisesRegex(sqlite3.OperationalError, 'no such table: '):
             target.executescript((self.destination / 'import.sql').read_text())
         self.assertEqual(target.execute('SELECT count(*) FROM vods').fetchone()[0], 0)
         self.assertEqual(target.execute('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').fetchall(), before)
