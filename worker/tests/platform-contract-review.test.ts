@@ -132,7 +132,7 @@ it('does not reserve or dispatch work after an account is disabled between plann
       return typeof value==='function'?value.bind(target):value;
     },
   });
-  const result=await dispatch({...env,DB:database,ENVIRONMENT:'validation',OUTBOUND_ENABLED:'true',GITHUB_TOKEN:'test-only'},video.id);
+  const result=(await dispatch({...env,DB:database,ENVIRONMENT:'validation',OUTBOUND_ENABLED:'true',GITHUB_TOKEN:'test-only'},video.id)).chunkIds;
   expect(disabled).toBe(true);
   expect(result).toEqual([]);
   expect(fetch).not.toHaveBeenCalled();

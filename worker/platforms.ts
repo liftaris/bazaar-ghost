@@ -271,7 +271,7 @@ export async function catalogRoute(req:Request,env:Env) {
     await recover(env);
     const due=await pendingVideos(env,limit,true);
     let count=0;
-    for(const v of due) {if(data.dry_run) await plan(env,v.id);else if((await dispatch(env,v.id)).length) count++;}
+    for(const v of due) {if(data.dry_run) await plan(env,v.id);else if((await dispatch(env,v.id)).chunkIds.length) count++;}
     result={dispatched:count};
   } else if(path==='/maintenance') {
     // WebSub has no signed timestamp. Keep digest tombstones for the account lifetime.

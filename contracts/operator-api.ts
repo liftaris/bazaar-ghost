@@ -88,6 +88,52 @@ export interface OpsDetectionRow {
   matchupId: number | null;
 }
 
+/** "next" is the evidence-based processor and runs only in validation and local. */
+export type ProcessorMode = "next" | "legacy";
+/** Requested template height; a 60 suffix prefers the 60 FPS rendition. Old-template recordings always process at 480p. */
+export type RunQuality = `${"360" | "480" | "720" | "1080"}p${"" | "60"}`;
+
+/** What a chunk run was asked to do. The saved profile and template era always come from the recording. */
+export interface RunInputs {
+  mode: ProcessorMode;
+  quality: RunQuality;
+  /** Digest-pinned SFDE image; null builds the processor from the dispatched branch. Editable only in validation. */
+  runtime_image: string | null;
+}
+
+export type RunStatus = "queued" | "dispatch_failed" | "processing" | "completed" | "failed" | "expired";
+
+export interface OpsRun {
+  id: string;
+  chunkId: string;
+  origin: "automatic" | "operator";
+  /** Operator user ID, or null for automatic and admin-key dispatches. */
+  requestedBy: string | null;
+  inputs: RunInputs;
+  status: RunStatus;
+  queuedAt: string;
+  claimedAt: string | null;
+  finishedAt: string | null;
+  /** GitHub Actions run, reported by the runner when it claims the chunk. */
+  githubRunUrl: string | null;
+  error: string | null;
+  framesProcessed: number | null;
+  detections: number | null;
+}
+
+/** Inputs a new run of this chunk starts from, and the choices this environment allows. */
+export interface OpsRunDefaults {
+  inputs: RunInputs;
+  allowedModes: ProcessorMode[];
+  runtimeImageEditable: boolean;
+}
+
+/** The GitHub workflow_dispatch body. A dry run omits inputs.queued_at, which is assigned at dispatch. */
+export interface OpsWorkflowPayload {
+  ref: string;
+  inputs: Record<string, string>;
+}
+
 export interface OpsRecordingDetail {
   recording: OpsRecording;
   chunks: OpsChunk[];

@@ -13,7 +13,7 @@ import {
   statement,
   uuid,
 } from "./http";
-import { claim, dispatch, plan, updateChunk, vodDetails } from "./processing";
+import { claim, dispatch, failQueued, plan, updateChunk, vodDetails } from "./processing";
 import { clearChunk, publish, upload } from "./detections";
 import { infer } from "./sfde-inference";
 import { retryVod, setProfile, setStreamer } from "./admin";
@@ -223,15 +223,8 @@ async function route(req: Request, env: Env): Promise<Response> {
           Number.isFinite(Date.parse(input.queued_at)),
         "Invalid dispatch timestamp",
       );
-      const result = await statement(
-        env,
-        `UPDATE chunks SET status='failed',attempt_count=attempt_count+1,last_error=?,updated_at=? WHERE id IN(SELECT value FROM json_each(?)) AND status='queued' AND queued_at=? RETURNING id`,
-        String(input.error || "Runner preparation failed").slice(0, 2000),
-        now(),
-        JSON.stringify(input.ids),
-        input.queued_at,
-      ).all();
-      return Response.json({ updated: result.results.length });
+      const updated = await failQueued(env, input.ids, input.queued_at, String(input.error || "Runner preparation failed").slice(0, 2000));
+      return Response.json({ updated });
     }
     const match = path.match(
       /^\/api\/processor\/chunks\/([^/]+)(?:\/(claim|detections|images|inference))?$/,
@@ -255,7 +248,7 @@ async function route(req: Request, env: Env): Promise<Response> {
           await claim(env, id, input.queued_at ?? null, {
             profile: input.expected_profile, oldTemplates: input.expected_old_templates,
             processorMode: input.processor_mode,
-          }),
+          }, { runId: input.github_run_id, runAttempt: input.github_run_attempt }),
         );
       }
       if (!action && req.method === "PATCH")
@@ -333,7 +326,7 @@ async function route(req: Request, env: Env): Promise<Response> {
     );
     const ids = input.dry_run
       ? (await plan(env, vod.id)).map((c) => c.id)
-      : await dispatch(env, vod.id);
+      : (await dispatch(env, vod.id)).chunkIds;
     return Response.json({
       success: true,
       vod_id: vod.id,

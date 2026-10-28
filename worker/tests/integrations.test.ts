@@ -285,7 +285,7 @@ it('limits automatic dispatch to reviewed VODs and keeps platform ingestion paus
   const { hasDueIngestionDispatch, dispatchIngestion } = await import('../platform-ingestion-dispatch');
   const vods = await rows(env, 'SELECT id,source_id FROM vods ORDER BY id');
   expect(await pendingVideos(env)).toEqual([{ id: vods[0].id }]);
-  expect(await dispatchAutomatic(env, vods[1].id)).toEqual([]);
+  expect((await dispatchAutomatic(env, vods[1].id)).chunkIds).toEqual([]);
   const runtime = { ...env, ENVIRONMENT: 'validation', OUTBOUND_ENABLED: 'true', GITHUB_TOKEN: 'test' };
   expect(await hasDueIngestionDispatch(runtime)).toBe(false);
   expect(await dispatchIngestion(runtime)).toEqual({ dispatched: false });

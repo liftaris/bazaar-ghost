@@ -16,6 +16,7 @@ import { atomic } from "./atomic";
 import { automaticVideoPredicate } from "./automatic-processing";
 import { expectedProfile, profileCheck } from "./profiles";
 import { proposeForRecording } from "./session-proposals";
+import type { OpsRunDefaults, OpsWorkflowPayload, ProcessorMode, RunInputs, RunQuality } from "../contracts/operator-api";
 
 export function normalizeRanges(
   input: unknown,
@@ -160,18 +161,27 @@ export async function plan(
 }
 export async function recover(env: Env) {
   const time = now();
-  await statement(
-    env,
-    `UPDATE chunks SET
+  await env.DB.batch([
+    statement(
+      env,
+      `UPDATE chunk_runs SET status='expired',finished_at=?,error='Lease expired'
+      WHERE status='processing' AND claim_token IN(SELECT claim_token FROM chunks WHERE status='processing' AND lease_expires_at<?)`,
+      time,
+      time,
+    ),
+    statement(
+      env,
+      `UPDATE chunks SET
       status=CASE WHEN attempt_count<3 THEN 'pending' ELSE 'failed' END,
       claim_token=NULL,lease_expires_at=NULL,
       last_error=CASE WHEN status='failed' THEN last_error ELSE 'Lease expired' END,updated_at=?
       WHERE (status='processing' AND lease_expires_at<?)
         OR (status='failed' AND attempt_count<3 AND updated_at<=?)`,
-    time,
-    time,
-    new Date(Date.now() - 5 * 60_000).toISOString(),
-  ).run();
+      time,
+      time,
+      new Date(Date.now() - 5 * 60_000).toISOString(),
+    ),
+  ]);
 }
 export async function pendingVideos(env: Env, limit = 100, platformsOnly = false) {
   const time = now();
@@ -186,51 +196,129 @@ export async function pendingVideos(env: Env, limit = 100, platformsOnly = false
       AND (scheduled_for IS NULL OR scheduled_for<=?)),CASE WHEN v.source='twitch' THEN 0 ELSE -10 END) DESC,
       v.published_at DESC,v.id LIMIT ?`, time,time,integer(limit,'pending video limit',1,100));
 }
-export async function dispatchAutomatic(env: Env, vodId: number) {
+export async function dispatchAutomatic(env: Env, vodId: number): Promise<Dispatched> {
   const allowed = await one(env, `SELECT 1 FROM vods v WHERE id=? AND ${automaticVideoPredicate}`, vodId);
-  return allowed ? dispatch(env, vodId, true) : [];
+  return allowed ? dispatch(env, vodId, { automatic: true }) : { chunkIds: [], batches: [] };
 }
-export async function dispatch(env: Env, vodId: number, automatic = false) {
-  const pending = await plan(env, vodId);
-  if (!pending.length) return [];
-  const branch = dispatchBranch(env.ENVIRONMENT);
+
+const QUALITY = /^(?:360|480|720|1080)p(?:60)?$/;
+const RUNTIME_IMAGE = /^ghcr\.io\/liftaris\/bazaar-ghost\/sfde-next@sha256:[a-f0-9]{64}$/;
+const INPUT_KEYS: Record<keyof RunInputs, true> = { mode: true, quality: true, runtime_image: true };
+
+export function runRules(env: Env): Omit<OpsRunDefaults, "inputs"> {
+  return {
+    allowedModes: env.ENVIRONMENT === "validation" || env.ENVIRONMENT === "local" ? ["next", "legacy"] : ["legacy"],
+    runtimeImageEditable: env.ENVIRONMENT === "validation",
+  };
+}
+/** Automatic validation runs use NEXT; every other run defaults to legacy. */
+export function resolveInputs(env: Env, partial: unknown = {}, automatic = false): RunInputs {
+  const rules = runRules(env);
+  requireValue(partial !== null && typeof partial === "object" && !Array.isArray(partial), "Invalid run inputs");
+  const given: Record<string, unknown> = { ...partial };
+  requireValue(Object.keys(given).every((key) => Object.hasOwn(INPUT_KEYS, key)), "Unsupported run inputs");
+  const mode = given.mode ?? (automatic && env.ENVIRONMENT === "validation" ? "next" : "legacy");
+  requireValue(rules.allowedModes.some((allowed) => allowed === mode), "Processor mode is not allowed in this environment");
+  const quality = given.quality ?? "480p";
+  requireValue(typeof quality === "string" && QUALITY.test(quality), "Invalid quality");
+  const pinned = rules.runtimeImageEditable ? env.SFDE_RUNTIME_IMAGE || null : null;
+  const runtime = given.runtime_image === undefined ? pinned : given.runtime_image;
+  requireValue(rules.runtimeImageEditable || runtime === pinned, "Runtime image is editable only in validation");
+  requireValue(runtime === null || (typeof runtime === "string" && RUNTIME_IMAGE.test(runtime)), "Invalid SFDE runtime image");
+  return { mode: mode as ProcessorMode, quality: quality as RunQuality, runtime_image: runtime };
+}
+export function requireDispatch(env: Env) {
   if (env.OUTBOUND_ENABLED !== "true" || !env.GITHUB_TOKEN)
     throw new HttpError(503, "GitHub dispatch is not configured");
+}
+export async function workflow(env: Env, vodId: number, inputs: RunInputs) {
+  const branch = dispatchBranch(env.ENVIRONMENT);
   const vod = await one(env, "SELECT source,source_id FROM vods WHERE id=?", vodId);
   const details = await vodDetails(env, vod!.source_id, vod!.source);
-  // Validation's automatic observation window uses NEXT. Other dispatch paths
-  // retain their legacy profile contract; manual NEXT remains an explicit input.
-  const next = automatic && env.ENVIRONMENT === 'validation';
-  const runtime = env.ENVIRONMENT === 'validation' && env.SFDE_RUNTIME_IMAGE;
-  if (runtime) {
-    requireValue(/^ghcr\.io\/liftaris\/bazaar-ghost\/sfde-next@sha256:[a-f0-9]{64}$/.test(runtime), 'Invalid SFDE runtime image');
-    requireValue(/^[a-f0-9]{40}$/.test(env.BUILD_COMMIT), 'Invalid SFDE runtime revision');
-  }
+  if (inputs.runtime_image) requireValue(/^[a-f0-9]{40}$/.test(env.BUILD_COMMIT), "Invalid SFDE runtime revision");
+  const next = inputs.mode === "next";
   const profile = next ? null : profileCheck(details.profile);
-  const profileJoin = next ? '' : 'JOIN sfde_profiles p ON p.id=v.effective_profile_id';
-  const profileFence = profile ? `AND p.id=? AND ${profile.sql}` : '';
-  const profileArgs = profile ? [details.profile.id, ...profile.args] : [];
-  const dispatched: string[] = [];
+  return {
+    oldTemplates: details.old_templates,
+    fence: {
+      join: next ? "" : "JOIN sfde_profiles p ON p.id=v.effective_profile_id",
+      sql: profile ? `AND p.id=? AND ${profile.sql}` : "",
+      args: profile ? [details.profile.id, ...profile.args] : [],
+    },
+    payload: (ids: string[], queuedAt: string | null): OpsWorkflowPayload => ({
+      ref: branch,
+      inputs: {
+        vod_id: vod!.source_id,
+        source: vod!.source,
+        chunk_uuids: JSON.stringify(ids),
+        ...(queuedAt ? { queued_at: queuedAt } : {}),
+        old_templates: String(details.old_templates),
+        quality: inputs.quality,
+        ...(next ? { sfde_next: "true" } : { sfde_profile: JSON.stringify(details.streamers.sfde_profiles) }),
+        ...(inputs.runtime_image ? { runtime_image: inputs.runtime_image, processor_revision: env.BUILD_COMMIT } : {}),
+        environment: env.ENVIRONMENT,
+      },
+    }),
+  };
+}
+export interface DispatchOptions {
+  automatic?: boolean;
+  /** Queue only these chunk IDs from the recording's pending set. */
+  only?: string[];
+  inputs?: Partial<RunInputs>;
+  requestedBy?: string;
+}
+export interface DispatchBatch {
+  chunkIds: string[];
+  runIds: string[];
+  payload: OpsWorkflowPayload;
+}
+export interface Dispatched {
+  chunkIds: string[];
+  batches: DispatchBatch[];
+}
+export async function dispatch(env: Env, vodId: number, options: DispatchOptions = {}): Promise<Dispatched> {
+  const { automatic = false, only, requestedBy = null } = options;
+  const planned = await plan(env, vodId);
+  const pending = only ? planned.filter((c) => only.includes(c.id)) : planned;
+  if (!pending.length) return { chunkIds: [], batches: [] };
+  const inputs = resolveInputs(env, options.inputs, automatic);
+  const { oldTemplates, fence, payload } = await workflow(env, vodId, inputs);
+  requireDispatch(env);
+  const origin = automatic ? "automatic" : "operator", recorded = JSON.stringify(inputs);
+  const batches: DispatchBatch[] = [];
   for (let offset = 0; offset < pending.length; offset += 256) {
     const queuedAt = now();
-    const claims = await env.DB.batch(
-      pending
-        .slice(offset, offset + 256)
-        .map((c) =>
-          statement(
-            env,
-            `UPDATE chunks SET status='queued',queued_at=?,updated_at=? WHERE id=? AND status='pending' AND (scheduled_for IS NULL OR scheduled_for<=?) AND EXISTS(SELECT 1 FROM vod_processing_context v ${profileJoin} WHERE v.id=chunks.vod_id AND v.processing_enabled=1 AND v.ready_for_processing=1 AND v.availability='available' ${profileFence} AND v.old_templates=? ${automatic ? `AND ${automaticVideoPredicate}` : ''}) RETURNING id`,
-            queuedAt,
-            queuedAt,
-            c.id,
-            queuedAt,
-            ...profileArgs,
-            details.old_templates,
-          ),
+    const slice: Array<{ chunk: string; run: string }> = pending.slice(offset, offset + 256).map((c) => ({ chunk: c.id, run: crypto.randomUUID() }));
+    const results = await env.DB.batch([
+      ...slice.map(({ chunk }) =>
+        statement(
+          env,
+          `UPDATE chunks SET status='queued',queued_at=?,updated_at=? WHERE id=? AND status='pending' AND (scheduled_for IS NULL OR scheduled_for<=?) AND EXISTS(SELECT 1 FROM vod_processing_context v ${fence.join} WHERE v.id=chunks.vod_id AND v.processing_enabled=1 AND v.ready_for_processing=1 AND v.availability='available' ${fence.sql} AND v.old_templates=? ${automatic ? `AND ${automaticVideoPredicate}` : ''}) RETURNING id`,
+          queuedAt,
+          queuedAt,
+          chunk,
+          queuedAt,
+          ...fence.args,
+          oldTemplates,
         ),
-    );
-    const ids = claims.flatMap((r) => r.results.map((c: any) => c.id));
-    if (!ids.length) continue;
+      ),
+      statement(
+        env,
+        `INSERT INTO chunk_runs(id,chunk_id,vod_id,origin,requested_by,inputs,status,queued_at)
+        SELECT json_extract(r.value,'$.run'),c.id,c.vod_id,?,?,?,'queued',c.queued_at
+        FROM json_each(?) r JOIN chunks c ON c.id=json_extract(r.value,'$.chunk') WHERE c.status='queued' AND c.queued_at=?
+        AND NOT EXISTS(SELECT 1 FROM chunk_runs x WHERE x.chunk_id=c.id AND x.queued_at=c.queued_at)`,
+        origin,
+        requestedBy,
+        recorded,
+        JSON.stringify(slice),
+        queuedAt,
+      ),
+    ]);
+    const queued = slice.filter((_, i) => results[i].results.length);
+    if (!queued.length) continue;
+    const batch = { chunkIds: queued.map((q) => q.chunk), runIds: queued.map((q) => q.run), payload: payload(queued.map((q) => q.chunk), queuedAt) };
     try {
       await external(
         env,
@@ -244,25 +332,13 @@ export async function dispatch(env: Env, vodId: number, automatic = false) {
             "User-Agent": "BazaarGhost",
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            ref: branch,
-            inputs: {
-              vod_id: vod!.source_id,
-              source: vod!.source,
-              chunk_uuids: JSON.stringify(ids),
-              queued_at: queuedAt,
-              old_templates: String(details.old_templates),
-               ...(next ? { sfde_next: 'true' } : { sfde_profile: JSON.stringify(details.streamers.sfde_profiles) }),
-               ...(runtime ? { runtime_image: runtime, processor_revision: env.BUILD_COMMIT } : {}),
-              environment: env.ENVIRONMENT,
-            },
-          }),
+          body: JSON.stringify(batch.payload),
         },
       );
-      dispatched.push(...ids);
+      batches.push(batch);
     } catch (error) {
-      await env.DB.batch(
-        ids.map((id) =>
+      await env.DB.batch([
+        ...batch.chunkIds.map((id) =>
           statement(
             env,
             "UPDATE chunks SET status='pending',queued_at=NULL WHERE id=? AND status='queued' AND queued_at=?",
@@ -270,18 +346,28 @@ export async function dispatch(env: Env, vodId: number, automatic = false) {
             queuedAt,
           ),
         ),
-      );
+        statement(
+          env,
+          "UPDATE chunk_runs SET status='dispatch_failed',finished_at=?,error=? WHERE id IN(SELECT value FROM json_each(?)) AND status='queued'",
+          now(),
+          String(error).slice(0, 2000),
+          JSON.stringify(batch.runIds),
+        ),
+      ]);
       throw error;
     }
   }
-  return dispatched;
+  return { chunkIds: batches.flatMap((b) => b.chunkIds), batches };
 }
 export async function claim(
   env: Env,
   id: string,
   queuedAt: string | null = null,
   expected?: { profile: unknown; oldTemplates: unknown; processorMode?: unknown },
+  github: { runId?: unknown; runAttempt?: unknown } = {},
 ) {
+  const runId = github.runId == null ? null : integer(github.runId, "github_run_id", 1);
+  const runAttempt = github.runAttempt == null ? null : integer(github.runAttempt, "github_run_attempt", 1);
   requireValue(
     queuedAt === null ||
       (typeof queuedAt === "string" && Number.isFinite(Date.parse(queuedAt))),
@@ -308,20 +394,58 @@ export async function claim(
   }
   const token = crypto.randomUUID(),
     time = now();
-  const chunk = await one(
-    env,
-    `UPDATE chunks SET status='processing',claim_token=?,attempt_count=attempt_count+1,started_at=?,updated_at=?,lease_expires_at=?,last_error=NULL,completed_at=NULL
-    WHERE id=? AND status IN('pending','queued') AND (? IS NULL OR (status='queued' AND queued_at=?)) AND EXISTS(SELECT 1 FROM vod_processing_context v WHERE v.id=chunks.vod_id AND v.processing_enabled=1 AND v.ready_for_processing=1 AND v.availability='available'${fence.sql}) RETURNING id`,
-    token,
-    time,
-    time,
-    new Date(Date.now() + 35 * 60_000).toISOString(),
-    uuid(id),
-    queuedAt,
-    queuedAt,
-    ...fence.args,
-  );
+  const [claimed] = await env.DB.batch([
+    statement(
+      env,
+      `UPDATE chunks SET status='processing',claim_token=?,attempt_count=attempt_count+1,started_at=?,updated_at=?,lease_expires_at=?,last_error=NULL,completed_at=NULL
+      WHERE id=? AND status IN('pending','queued') AND (? IS NULL OR (status='queued' AND queued_at=?)) AND EXISTS(SELECT 1 FROM vod_processing_context v WHERE v.id=chunks.vod_id AND v.processing_enabled=1 AND v.ready_for_processing=1 AND v.availability='available'${fence.sql}) RETURNING id`,
+      token,
+      time,
+      time,
+      new Date(Date.now() + 35 * 60_000).toISOString(),
+      uuid(id),
+      queuedAt,
+      queuedAt,
+      ...fence.args,
+    ),
+    statement(
+      env,
+      `UPDATE chunk_runs SET status='processing',claim_token=?,claimed_at=?,github_run_id=?,github_run_attempt=?
+      WHERE chunk_id=? AND queued_at=? AND status='queued' AND EXISTS(SELECT 1 FROM chunks c WHERE c.id=chunk_runs.chunk_id AND c.claim_token=?)`,
+      token,
+      time,
+      runId,
+      runAttempt,
+      id,
+      queuedAt,
+      token,
+    ),
+  ]);
+  const chunk = claimed.results[0];
   return { claimed: Boolean(chunk), claim_token: chunk ? token : null };
+}
+export async function failQueued(env: Env, ids: string[], queuedAt: string, error: string) {
+  const time = now();
+  const [failed] = await env.DB.batch([
+    statement(
+      env,
+      `UPDATE chunks SET status='failed',attempt_count=attempt_count+1,last_error=?,updated_at=? WHERE id IN(SELECT value FROM json_each(?)) AND status='queued' AND queued_at=? RETURNING id`,
+      error,
+      time,
+      JSON.stringify(ids),
+      queuedAt,
+    ),
+    statement(
+      env,
+      `UPDATE chunk_runs SET status='failed',finished_at=?,error=? WHERE chunk_id IN(SELECT value FROM json_each(?)) AND queued_at=? AND status='queued'
+      AND EXISTS(SELECT 1 FROM chunks c WHERE c.id=chunk_runs.chunk_id AND c.status='failed' AND c.queued_at=chunk_runs.queued_at)`,
+      time,
+      error,
+      JSON.stringify(ids),
+      queuedAt,
+    ),
+  ]);
+  return failed.results.length;
 }
 export async function owned(env: Env, id: string, token: string | null) {
   if (!token) throw new HttpError(409, "Claim token required");
@@ -375,18 +499,27 @@ export async function updateChunk(
     changes.lease_expires_at = null;
     changes.completed_at = data.status === "completed" ? now() : null;
   }
-  const result = await statement(
-    env,
-    `UPDATE chunks SET ${Object.keys(changes)
-      .map((k) => `${k}=?`)
-      .join(
-        ",",
-      )} WHERE id=? AND claim_token=? AND status='processing' AND lease_expires_at>?`,
-    ...Object.values(changes),
-    id,
-    token,
-    now(),
-  ).run();
+  const [result] = await env.DB.batch([
+    statement(
+      env,
+      `UPDATE chunks SET ${Object.keys(changes)
+        .map((k) => `${k}=?`)
+        .join(
+          ",",
+        )} WHERE id=? AND claim_token=? AND status='processing' AND lease_expires_at>?`,
+      ...Object.values(changes),
+      id,
+      token,
+      now(),
+    ),
+    statement(
+      env,
+      `UPDATE chunk_runs SET status=c.status,finished_at=c.updated_at,error=c.last_error,frames_processed=c.frames_processed,detections_count=c.detections_count
+      FROM chunks c WHERE c.id=? AND c.claim_token=chunk_runs.claim_token AND chunk_runs.claim_token=? AND chunk_runs.status='processing' AND c.status IN('completed','failed')`,
+      id,
+      token,
+    ),
+  ]);
   if (!result.meta.changes) throw new HttpError(409, "Lost chunk claim");
   if (data.status === "completed") {
     // A finished Recording may match another Recording; failures are retried by the scheduled sweep.
