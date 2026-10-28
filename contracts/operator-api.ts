@@ -128,22 +128,42 @@ export interface OpsRunDefaults {
   runtimeImageEditable: boolean;
 }
 
-/** The GitHub workflow_dispatch body. A dry run omits inputs.queued_at, which is assigned at dispatch. */
-export interface OpsWorkflowPayload {
-  ref: string;
-  inputs: Record<string, string>;
-}
-
 export interface OpsRecordingDetail {
   recording: OpsRecording;
   chunks: OpsChunk[];
   detections: OpsDetectionRow[];
+  /** Newest first, at most 50. */
+  runs: OpsRun[];
 }
 
 export interface OpsChunkDetail {
   chunk: OpsChunk;
   recording: OpsRecording;
   detections: OpsDetectionRow[];
+  /** Newest first, at most 50. */
+  runs: OpsRun[];
+  runDefaults: OpsRunDefaults;
+}
+
+/** POST /api/v1/ops/reprocess with the X-CSRF-Token header. */
+export interface OpsReprocessRequest {
+  /** 1 to 50 chunk IDs. Queued or processing chunks are refused with 409. */
+  chunk_ids: string[];
+  inputs?: Partial<RunInputs>;
+  /** Validate and return the workflow payloads without writing anything. */
+  dry_run?: boolean;
+}
+
+/** The GitHub workflow_dispatch body. A dry run omits inputs.queued_at, which is assigned at dispatch. */
+export interface OpsWorkflowPayload {
+  ref: string;
+  inputs: Record<string, string>;
+}
+
+export interface OpsReprocessResponse {
+  dispatched: boolean;
+  /** One entry per recording. chunkIds lists what was (or would be) dispatched; payload is null only when none were. */
+  recordings: Array<{ recordingId: number; chunkIds: string[]; payload: OpsWorkflowPayload | null; runIds: string[] }>;
 }
 
 export interface OpsDetection extends OpsDetectionRow {
@@ -173,11 +193,17 @@ export type OpsAttentionKind =
   | "catalog_failed"
   | "dispatch_unconfirmed";
 
+/** What a sample links to. Streamer IDs are streamer identity IDs; the dispatch target is the ingestion dispatcher singleton. */
+export interface OpsAttentionTarget {
+  kind: "chunk" | "recording" | "streamer" | "ingestion_job" | "dispatch";
+  id: string;
+}
+
 export interface OpsAttention {
   kind: OpsAttentionKind;
   count: number;
   /** Up to five examples, newest first. */
-  samples: Array<{ id: string; recordingId: number | null; label: string; error: string | null; at: string | null }>;
+  samples: Array<{ id: string; recordingId: number | null; label: string; error: string | null; at: string | null; target: OpsAttentionTarget }>;
 }
 
 export interface OpsOverview {
@@ -279,7 +305,16 @@ export interface OpsIngestion {
 
 /** Query parameters accepted by each list route. Unknown parameters are a 400. */
 export interface OpsQueries {
-  "/recordings": { status?: RecordingStatus | "attention"; platform?: PlatformId; q?: string; streamerId?: number; cursor?: string; limit?: number };
+  /** q matches title or source ID; chunkStatus keeps recordings with at least one chunk in that status. */
+  "/recordings": {
+    status?: RecordingStatus | "attention";
+    chunkStatus?: ChunkStatus;
+    platform?: PlatformId;
+    q?: string;
+    streamerId?: number;
+    cursor?: string;
+    limit?: number;
+  };
   "/streamers": { q?: string; cursor?: string; limit?: number };
   "/ingestion": { platform?: PlatformId; kind?: IngestionJobKind; status?: IngestionJobStatus; cursor?: string; limit?: number };
 }
@@ -295,4 +330,9 @@ export interface OpsRoutes {
   "/streamers": Page<OpsStreamer>;
   "/streamers/:id/inventory": OpsInventory;
   "/ingestion": OpsIngestion;
+}
+
+/** POST routes. Each requires the X-CSRF-Token header and a JSON body. */
+export interface OpsMutations {
+  "/reprocess": { request: OpsReprocessRequest; response: OpsReprocessResponse };
 }

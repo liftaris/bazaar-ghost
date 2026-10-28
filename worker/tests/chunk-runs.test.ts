@@ -1,9 +1,11 @@
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { OpsChunkDetail, OpsOverview, OpsRecording, OpsRecordingDetail, OpsReprocessResponse } from "../../contracts/operator-api";
+import type { Page } from "../../contracts/public-api";
 import worker from "../index";
 import { one, rows, statement } from "../http";
 import { claim, dispatch, recover, resolveInputs } from "../processing";
-import { authEnv, ORIGIN } from "./auth-fixture";
+import { authEnv, login, mockProviders, ORIGIN } from "./auth-fixture";
 
 const RUNTIME = "ghcr.io/liftaris/bazaar-ghost/sfde-next@sha256:" + "c".repeat(64);
 const hosted = () => ({ ...authEnv(), GITHUB_TOKEN: "test-only", SFDE_RUNTIME_IMAGE: RUNTIME, BUILD_COMMIT: "d".repeat(40) });
@@ -123,4 +125,179 @@ it("resolves run inputs from one table of environment rules", () => {
     [hosted(), { profile: 2 }],
     [hosted(), []],
   ] as const) expect(() => resolveInputs(environment, inputs)).toThrow();
+});
+
+async function operator() {
+  mockProviders();
+  const signed = await login("discord");
+  const grant = await worker.fetch(new Request(ORIGIN + `/api/admin/operators/${signed.identity.userId}`, {
+    method: "PUT", headers: { Authorization: `Bearer ${env.ADMIN_KEY}` },
+  }), authEnv());
+  expect(grant.status).toBe(200);
+  stubGitHub();
+  return signed;
+}
+function reprocess(data: unknown, user: { cookie: string; identity: { csrfToken: string } } | null, csrf = user?.identity.csrfToken ?? "") {
+  return worker.fetch(new Request(ORIGIN + "/api/v1/ops/reprocess", {
+    method: "POST",
+    headers: { Cookie: user?.cookie ?? "", Origin: ORIGIN, "Content-Type": "application/json", "X-CSRF-Token": csrf },
+    body: JSON.stringify(data),
+  }), hosted());
+}
+async function read<T>(path: string, cookie: string) {
+  const response = await worker.fetch(new Request(ORIGIN + path, { headers: { Cookie: cookie, Origin: ORIGIN } }), hosted());
+  expect(response.status, await response.clone().text()).toBe(200);
+  return response.json<T>();
+}
+async function failedChunks() {
+  const ids: string[] = [];
+  for (const vodId of [10, 11]) {
+    const id = crypto.randomUUID();
+    await statement(env, "INSERT INTO chunks(id,vod_id,start_seconds,end_seconds,chunk_index,status,attempt_count,last_error,queued_at) VALUES(?,?,0,600,0,'failed',3,'decoder crashed','2026-10-20T00:00:00.000Z')",
+      id, vodId).run();
+    ids.push(id);
+  }
+  return ids;
+}
+
+it("requires an operator session and a CSRF token, and only accepts POST", async () => {
+  const [id] = await failedChunks();
+  expect((await reprocess({ chunk_ids: [id] }, null)).status).toBe(401);
+  mockProviders();
+  const user = await login("twitch");
+  const forbidden = await reprocess({ chunk_ids: [id] }, user);
+  expect(forbidden.status).toBe(403);
+  expect(await forbidden.json()).toEqual({ error: "Operator access required" });
+  const signed = await operator();
+  const missing = await reprocess({ chunk_ids: [id] }, signed, "");
+  expect(missing.status).toBe(403);
+  expect(await missing.json()).toEqual({ error: "Invalid CSRF token" });
+  expect((await worker.fetch(new Request(ORIGIN + "/api/v1/ops/reprocess", { headers: { Cookie: signed.cookie, Origin: ORIGIN } }), hosted())).status).toBe(405);
+  expect((await reprocess({ chunk_ids: [id], extra: true }, signed)).status).toBe(400);
+  expect((await reprocess({ chunk_ids: [] }, signed)).status).toBe(400);
+  expect((await reprocess({ chunk_ids: Array.from({ length: 51 }, () => crypto.randomUUID()) }, signed)).status).toBe(400);
+  expect(github()).toHaveLength(0);
+});
+
+it("returns the exact workflow payload on a dry run and writes nothing", async () => {
+  const [id] = await failedChunks();
+  const signed = await operator();
+  const before = await rows(env, "SELECT * FROM chunks ORDER BY id");
+  const response = await reprocess({ chunk_ids: [id.toUpperCase()], inputs: { quality: "720p" }, dry_run: true }, signed);
+  expect(response.status, await response.clone().text()).toBe(200);
+  const value = await response.json<OpsReprocessResponse>();
+  expect(value).toEqual({
+    dispatched: false,
+    recordings: [{
+      recordingId: 10,
+      chunkIds: [id],
+      runIds: [],
+      payload: {
+        ref: "migration/cloudflare",
+        inputs: {
+          vod_id: "1001", source: "twitch", chunk_uuids: JSON.stringify([id]), old_templates: "false", quality: "720p",
+          sfde_profile: expect.any(String), runtime_image: RUNTIME, processor_revision: "d".repeat(40), environment: "validation",
+        },
+      },
+    }],
+  });
+  expect(await rows(env, "SELECT * FROM chunks ORDER BY id")).toEqual(before);
+  expect(await rows(env, "SELECT * FROM chunk_runs")).toEqual([]);
+  expect(github()).toHaveLength(0);
+});
+
+it("refuses unknown and active chunks and ineligible recordings without writing", async () => {
+  const [failed, other] = await failedChunks();
+  const signed = await operator();
+  const unknown = crypto.randomUUID();
+  const notFound = await reprocess({ chunk_ids: [failed, unknown] }, signed);
+  expect(notFound.status).toBe(404);
+  expect((await notFound.json<{ error: string }>()).error).toContain(unknown);
+  await statement(env, "UPDATE chunks SET status='queued' WHERE id=?", other).run();
+  const active = await reprocess({ chunk_ids: [failed, other] }, signed);
+  expect(active.status).toBe(409);
+  expect(await active.json()).toEqual({ error: `Chunks already queued or processing: ${other}` });
+  await statement(env, "UPDATE vods SET availability='unavailable' WHERE id=10").run();
+  const ineligible = await reprocess({ chunk_ids: [failed] }, signed);
+  expect(ineligible.status).toBe(409);
+  expect(await ineligible.json()).toEqual({ error: "Recording 10 is unavailable" });
+  expect((await one(env, "SELECT status,attempt_count FROM chunks WHERE id=?", failed))).toEqual({ status: "failed", attempt_count: 3 });
+  expect(github()).toHaveLength(0);
+});
+
+it("resets and dispatches each recording's chunks in its own workflow, recording the operator", async () => {
+  const ids = await failedChunks();
+  await statement(env, "UPDATE vods SET duration_seconds=1200,bazaar_chapters='[0,1200]' WHERE id=10").run();
+  const signed = await operator();
+  const response = await reprocess({ chunk_ids: ids, inputs: { mode: "legacy", quality: "360p" } }, signed);
+  expect(response.status, await response.clone().text()).toBe(200);
+  const value = await response.json<OpsReprocessResponse>();
+  expect(value.dispatched).toBe(true);
+  expect(value.recordings.map((r) => [r.recordingId, r.chunkIds])).toEqual([[10, [ids[0]]], [11, [ids[1]]]]);
+  expect(github()).toHaveLength(2);
+  for (const [index, recording] of value.recordings.entries()) {
+    const payload = sent(index);
+    expect(payload).toEqual(recording.payload);
+    expect(JSON.parse(payload.inputs.chunk_uuids)).toEqual(recording.chunkIds);
+    expect(payload.inputs).toMatchObject({ quality: "360p", sfde_profile: expect.any(String) });
+    expect(payload.inputs.sfde_next).toBeUndefined();
+    expect(JSON.parse(payload.inputs.sfde_profile).id).toBe(1);
+    const stored = await rows(env, "SELECT id,origin,requested_by,status,queued_at FROM chunk_runs WHERE chunk_id=?", recording.chunkIds[0]);
+    expect(stored).toEqual([{ id: recording.runIds[0], origin: "operator", requested_by: signed.identity.userId, status: "queued", queued_at: payload.inputs.queued_at }]);
+  }
+  expect(await rows(env, "SELECT status,attempt_count,last_error FROM chunks WHERE id IN(?,?)", ...ids))
+    .toEqual([{ status: "queued", attempt_count: 0, last_error: null }, { status: "queued", attempt_count: 0, last_error: null }]);
+  expect((await one(env, "SELECT status FROM chunks WHERE vod_id=10 AND id<>?", ids[0]))!.status).toBe("pending");
+});
+
+it("dispatches NEXT on request and lists runs newest first with the defaults for the next run", async () => {
+  const [id] = await failedChunks();
+  const signed = await operator();
+  const first = await reprocess({ chunk_ids: [id], inputs: { mode: "next", quality: "720p60" } }, signed);
+  expect(first.status, await first.clone().text()).toBe(200);
+  expect(sent().inputs).toMatchObject({ sfde_next: "true", quality: "720p60" });
+  expect(sent().inputs.sfde_profile).toBeUndefined();
+  const token = (await claim(env, id, sent().inputs.queued_at, undefined, { runId: 42 })).claim_token!;
+  await processor(`/api/processor/chunks/${id}`, "PATCH", { status: "completed", frames_processed: 10, detections_count: 0 }, token);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await reprocess({ chunk_ids: [id] }, signed);
+
+  const detail = await read<OpsChunkDetail>(`/api/v1/ops/chunks/${id}`, signed.cookie);
+  expect(detail.runs.map((r) => [r.status, r.inputs.mode, r.inputs.quality])).toEqual([["queued", "legacy", "480p"], ["completed", "next", "720p60"]]);
+  expect(detail.runs[1]).toMatchObject({
+    origin: "operator", requestedBy: signed.identity.userId, framesProcessed: 10, detections: 0,
+    githubRunUrl: "https://github.com/liftaris/bazaar-ghost/actions/runs/42", claimedAt: expect.any(String), finishedAt: expect.any(String),
+  });
+  expect(detail.runDefaults).toEqual({
+    inputs: { mode: "legacy", quality: "480p", runtime_image: RUNTIME }, allowedModes: ["next", "legacy"], runtimeImageEditable: true,
+  });
+  const recording = await read<OpsRecordingDetail>("/api/v1/ops/recordings/10", signed.cookie);
+  expect(recording.runs.map((r) => r.id)).toEqual(detail.runs.map((r) => r.id));
+});
+
+it("filters recordings by chunk status, matches source IDs, and targets every attention sample", async () => {
+  const [failed] = await failedChunks();
+  await statement(env, "UPDATE chunks SET status='completed' WHERE vod_id=11").run();
+  const signed = await operator();
+  const byChunk = await read<Page<OpsRecording>>("/api/v1/ops/recordings?chunkStatus=failed", signed.cookie);
+  expect(byChunk.items.map((r) => r.id)).toEqual([10]);
+  expect((await worker.fetch(new Request(ORIGIN + "/api/v1/ops/recordings?chunkStatus=done", { headers: { Cookie: signed.cookie, Origin: ORIGIN } }), hosted())).status).toBe(400);
+  const bySource = await read<Page<OpsRecording>>("/api/v1/ops/recordings?q=1002", signed.cookie);
+  expect(bySource.items.map((r) => r.id)).toEqual([11]);
+
+  await env.DB.batch([
+    statement(env, "INSERT INTO platform_ingestion_jobs(id,source,kind,source_id,status,attempts,last_error,state) VALUES('job-fail','youtube','discovery','UCx','pending',4,'quota','{}')"),
+    statement(env, "INSERT INTO twitch_catalog_work(streamer_id,state,due_at,attempt_count,last_error,updated_at) VALUES(1,'failed',0,5,'Helix 500',0)"),
+    statement(env, "INSERT INTO platform_ingestion_dispatch(id,ticket_id,state,next_attempt_at,last_attempt_at,run_id,outcome) VALUES(1,'ticket','idle','2026-10-01T00:00:00.000Z','2026-10-01T00:00:00.000Z','42','failure')"),
+  ]);
+  const overview = await read<OpsOverview>("/api/v1/ops/overview", signed.cookie);
+  const targets = Object.fromEntries(overview.attention.map((group) => [group.kind, group.samples.map((s) => s.target)]));
+  expect(targets).toEqual({
+    exhausted_chunk: [{ kind: "chunk", id: failed }],
+    expired_lease: [],
+    stale_queued: [],
+    failing_ingestion: [{ kind: "ingestion_job", id: "job-fail" }],
+    catalog_failed: [{ kind: "streamer", id: "1" }],
+    dispatch_unconfirmed: [{ kind: "dispatch", id: "1" }],
+  });
 });
