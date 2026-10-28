@@ -34,7 +34,7 @@ import { keysetAfter, keysetPage } from "./native-cursor";
 import { objectPath, projectEncounter, streamerRef, type EncounterRow, type ImageUrl, type StreamerRefRow } from "./native-model";
 import { listPlatforms, platform, watchUrl, type RecordingRef } from "./platform-registry";
 import { actionsRunUrl } from "./platform-ingestion-dispatch";
-import { allowedModes, queue, queueability, requireDispatch, RESETTABLE, resolveInputs, workflow } from "./processing";
+import { operatorRun, queue, queueability, requireDispatch, RESETTABLE, resolveInputs, runDefaults, workflow, type Queued } from "./processing";
 import { Twitch } from "./twitch";
 import { safeObjectKey } from "./visibility";
 
@@ -447,17 +447,18 @@ async function chunkDetail(env: Env, url: URL, id: string): Promise<OpsRoutes["/
     recording: found,
     detections: detections.map(toOpsDetectionRow),
     runs: history,
-    runDefaults: { inputs: resolveInputs(env, latest ? { mode: latest.mode, quality: latest.quality } : {}), allowedModes: allowedModes(env) },
+    runDefaults: runDefaults(env, latest ?? null),
   };
 }
 
 const REPROCESS_LIMIT = 50;
-async function reprocessRecording(env: Env, identity: Identity, vodId: number, ids: string[], inputs: RunInputs, dryRun: boolean): Promise<OpsReprocessRecording> {
-  const refused = (error: HttpError) => ({
-    recordingId: vodId, chunkIds: [], runIds: [], payload: null, skipped: ids.map((chunkId) => ({ chunkId, reason: error.message })), error: error.message, status: error.status,
-  });
+type RecordingResult = OpsReprocessRecording & { status?: number };
+/** One recording of a reprocess request. Every failure is reported on the recording, so earlier recordings still report. */
+async function reprocessRecording(env: Env, identity: Identity, vodId: number, ids: string[], inputs: RunInputs, dryRun: boolean): Promise<RecordingResult> {
+  let queued: Queued = { chunkIds: [], runIds: [], payload: null };
+  const missing = () => ids.filter((id) => !queued.chunkIds.includes(id));
   try {
-    const flow = await workflow(env, vodId, inputs);
+    const flow = await workflow(env, vodId, operatorRun(identity.userId, inputs));
     if (dryRun) {
       const reasons = await queueability(env, flow, ids);
       const queueable = reasons.filter((row) => row.reason === null).map((row) => row.chunk_id);
@@ -469,13 +470,13 @@ async function reprocessRecording(env: Env, identity: Identity, vodId: number, i
         skipped: reasons.flatMap((row) => (row.reason === null ? [] : [{ chunkId: row.chunk_id, reason: row.reason }])),
       };
     }
-    const queued = await queue(env, flow, ids, { origin: "operator", requestedBy: identity.userId });
-    const missed = ids.filter((id) => !queued.chunkIds.includes(id));
-    const reasons = missed.length ? await queueability(env, flow, missed) : [];
+    queued = await queue(env, flow, ids);
+    const reasons = missing().length ? await queueability(env, flow, missing()) : [];
     return { recordingId: vodId, ...queued, skipped: reasons.map((row) => ({ chunkId: row.chunk_id, reason: row.reason ?? "Chunk changed while queueing" })) };
   } catch (error) {
-    if (error instanceof HttpError) return refused(error);
-    throw error;
+    if (!(error instanceof HttpError)) console.error(JSON.stringify({ event: "ops_reprocess_failed", recording_id: vodId, error: String(error) }));
+    const message = error instanceof Error ? error.message : String(error);
+    return { recordingId: vodId, ...queued, skipped: missing().map((chunkId) => ({ chunkId, reason: message })), error: message, status: error instanceof HttpError ? error.status : 500 };
   }
 }
 async function reprocess(req: Request, env: AuthEnv, identity: Identity): Promise<Response> {
@@ -501,11 +502,11 @@ async function reprocess(req: Request, env: AuthEnv, identity: Identity): Promis
   if (busy.length) throw new HttpError(409, `Chunks cannot be reprocessed: ${busy.map((chunk) => `${chunk.id} is ${chunk.status}`).join(", ")}`);
   const groups = new Map<number, string[]>();
   for (const chunk of ids.map((id) => byId.get(id)!)) groups.set(chunk.vod_id, [...(groups.get(chunk.vod_id) ?? []), chunk.id]);
-  const recordings: Array<OpsReprocessRecording & { status?: number }> = [];
+  const recordings: RecordingResult[] = [];
   for (const [vodId, chunkIds] of groups) recordings.push(await reprocessRecording(env, identity, vodId, chunkIds, inputs, dryRun));
   const body: OpsReprocessResponse = { dispatched: !dryRun, recordings: recordings.map(({ status: _, ...recording }) => recording) };
   if (recordings.some((recording) => recording.chunkIds.length)) return Response.json(body);
-  const status = recordings.some((recording) => recording.status === 502) ? 502 : 409;
+  const status = recordings.some((recording) => recording.status === 502) ? 502 : recordings.some((recording) => recording.status === 500) ? 500 : 409;
   return Response.json({ ...body, error: dryRun ? "No chunk would queue" : "No chunk was queued" }, { status });
 }
 

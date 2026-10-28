@@ -19,10 +19,10 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 it('selects only forward ingestion and fences queued historical messages while accepting equivalent UTC timestamps', async () => {
   expect(await pendingVideos(env)).toEqual([{ id: 2 }]);
   const hosted = { ...env, ENVIRONMENT: 'validation', OUTBOUND_ENABLED: 'true', GITHUB_TOKEN: 'test-only' };
-  expect((await dispatchAutomatic(hosted, 1)).chunkIds).toEqual([]);
-  expect((await dispatchAutomatic(hosted, 3)).chunkIds).toEqual([]);
+  expect(await dispatchAutomatic(hosted, 1)).toEqual([]);
+  expect(await dispatchAutomatic(hosted, 3)).toEqual([]);
   expect(fetch).not.toHaveBeenCalled();
-  expect((await dispatchAutomatic(hosted, 2)).chunkIds).toHaveLength(1);
+  expect(await dispatchAutomatic(hosted, 2)).toHaveLength(1);
   const payload = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string);
   expect(payload.ref).toBe('migration/cloudflare');
   expect(payload.inputs.environment).toBe('validation');
@@ -34,7 +34,7 @@ it('selects only forward ingestion and fences queued historical messages while a
 it('dispatches automatic validation NEXT without interpreting legacy crop settings', async () => {
   await statement(env, "UPDATE sfde_profiles SET crop_region='[0,0,0,0]' WHERE id=1").run();
   const hosted = { ...env, ENVIRONMENT: 'validation', OUTBOUND_ENABLED: 'true', GITHUB_TOKEN: 'test-only' };
-  const ids = (await dispatchAutomatic(hosted, 2)).chunkIds;
+  const ids = await dispatchAutomatic(hosted, 2);
   expect(ids).toHaveLength(1);
   const payload = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string);
   expect(payload.inputs).toMatchObject({sfde_next:'true', old_templates:'false', chunk_uuids:JSON.stringify(ids)});
@@ -59,9 +59,9 @@ it('dispatches an entire recording despite unrelated queued and processing chunk
   await statement(env, "UPDATE chunks SET status='queued' WHERE vod_id=1").run();
   await statement(env, "UPDATE chunks SET status='processing' WHERE vod_id=3").run();
   const hosted = { ...env, ENVIRONMENT: 'validation', OUTBOUND_ENABLED: 'true', GITHUB_TOKEN: 'test-only' };
-  const first = (await dispatchAutomatic(hosted, 2)).chunkIds;
+  const first = await dispatchAutomatic(hosted, 2);
   expect(first).toHaveLength(10);
-  expect((await dispatchAutomatic(hosted, 2)).chunkIds).toEqual([]);
+  expect(await dispatchAutomatic(hosted, 2)).toEqual([]);
   expect(await one(env,"SELECT count(*) AS n FROM chunks WHERE status='pending'")).toEqual({n:0});
   expect(fetch).toHaveBeenCalledOnce();
 });
@@ -70,26 +70,26 @@ it('splits a large recording into workflow matrices without dropping or repeatin
   const duration = 257 * 1800;
   await statement(env, 'UPDATE vods SET duration_seconds=?,bazaar_chapters=? WHERE id=2', duration, JSON.stringify([0, duration])).run();
   const hosted = { ...env, ENVIRONMENT: 'validation', OUTBOUND_ENABLED: 'true', GITHUB_TOKEN: 'test-only' };
-  const ids = (await dispatchAutomatic(hosted, 2)).chunkIds;
+  const ids = await dispatchAutomatic(hosted, 2);
   const batches = vi.mocked(fetch).mock.calls.map(([, init]) => JSON.parse(JSON.parse(String(init!.body)).inputs.chunk_uuids));
   expect(batches.map(batch => batch.length)).toEqual([256, 1]);
   expect(batches.flat()).toEqual(ids);
   expect(new Set(ids).size).toBe(257);
-  expect((await dispatchAutomatic(hosted, 2)).chunkIds).toEqual([]);
+  expect(await dispatchAutomatic(hosted, 2)).toEqual([]);
   expect(fetch).toHaveBeenCalledTimes(2);
 });
 
 it('respects an operator pause before dispatching pending recordings', async () => {
   const hosted = { ...env, ENVIRONMENT: 'validation', OUTBOUND_ENABLED: 'true', GITHUB_TOKEN: 'test-only' };
   await statement(env,"UPDATE vods SET published_at='2026-10-17T00:00:00Z' WHERE id=3").run();
-  const [id] = (await dispatchAutomatic(hosted, 2)).chunkIds;
+  const [id] = await dispatchAutomatic(hosted, 2);
   const token = (await claim(env, id)).claim_token!;
   await updateChunk(env, id, token, {status:'completed'});
   await statement(env,"INSERT INTO processing_config(key,value) VALUES('automatic_vods','[]')").run();
-  expect((await dispatchAutomatic(hosted, 3)).chunkIds).toEqual([]);
+  expect(await dispatchAutomatic(hosted, 3)).toEqual([]);
   expect(fetch).toHaveBeenCalledTimes(1);
   await statement(env,"DELETE FROM processing_config WHERE key='automatic_vods'").run();
-  expect((await dispatchAutomatic(hosted, 3)).chunkIds).toHaveLength(1);
+  expect(await dispatchAutomatic(hosted, 3)).toHaveLength(1);
   expect(fetch).toHaveBeenCalledTimes(2);
   const payload = JSON.parse(vi.mocked(fetch).mock.calls[1][1]!.body as string);
   expect(payload.inputs.vod_id).toBe('3');
@@ -139,7 +139,7 @@ it('rechecks the start boundary inside dispatch reservations', async () => {
     };
     const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;
   }});
-  expect((await dispatchAutomatic({...env,DB:db,ENVIRONMENT:'validation',OUTBOUND_ENABLED:'true',GITHUB_TOKEN:'test-only'},2)).chunkIds).toEqual([]);
+  expect(await dispatchAutomatic({...env,DB:db,ENVIRONMENT:'validation',OUTBOUND_ENABLED:'true',GITHUB_TOKEN:'test-only'},2)).toEqual([]);
   expect(fetch).not.toHaveBeenCalled();
   expect((await one(env,'SELECT status FROM chunks WHERE vod_id=2'))!.status).toBe('pending');
 });

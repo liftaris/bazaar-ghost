@@ -104,7 +104,8 @@ export interface RunInputs {
 /** The inputs an operator chooses. */
 export type OperatorRunInputs = Pick<RunInputs, "mode" | "quality">;
 
-export type RunStatus = "queued" | "dispatch_failed" | "processing" | "completed" | "failed" | "expired";
+/** A run GitHub refused to dispatch is not recorded; the refusal lands on the chunk's lastError. */
+export type RunStatus = "queued" | "processing" | "completed" | "failed" | "expired";
 /** "automatic" is the scheduler and platform sweep, "operator" the console, "manual" the admin key or a runner claim the backend did not dispatch. */
 export type RunOrigin = "automatic" | "operator" | "manual";
 
@@ -131,6 +132,8 @@ export interface OpsRun {
 export interface OpsRunDefaults {
   inputs: RunInputs;
   allowedModes: ProcessorMode[];
+  /** Why this deployment's runtime image configuration is unusable; reprocess fails with this message until it is fixed. */
+  configError: string | null;
 }
 
 export interface OpsRecordingDetail {
@@ -178,15 +181,15 @@ export interface OpsReprocessRecording {
   payload: OpsWorkflowPayload | null;
   /** Requested chunks that did not (or would not) queue, with the reason. */
   skipped: Array<{ chunkId: string; reason: string }>;
-  /** Set when the whole recording failed, for example when GitHub refused the dispatch. */
+  /** Set when the whole recording failed, for example when GitHub refused the dispatch. Its chunks keep their prior status. */
   error?: string;
 }
 
-/** 200 when any recording queued (or would queue); otherwise 502 if GitHub refused a dispatch, else 409, with the same body. */
+/** 200 when any recording queued (or would queue). Otherwise, with the same body: 502 if GitHub refused a dispatch, 500 if a recording hit an internal error, else 409. */
 export interface OpsReprocessResponse {
   dispatched: boolean;
   recordings: OpsReprocessRecording[];
-  /** Set on 409 and 502. */
+  /** Set on 409, 500 and 502. */
   error?: string;
 }
 

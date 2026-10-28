@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:test';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { setProfile, setStreamer } from '../admin';
-import { claim, dispatch, plan, vodDetails } from '../processing';
+import { claim, dispatch, manualRun, plan, vodDetails } from '../processing';
 import { one, statement } from '../http';
 import { saveVideo, upsertAccount } from '../platforms';
 
@@ -85,7 +85,7 @@ it('rejects a same-ID crop change between dispatch read and reservation even wit
     await setProfile(env, { ...profile(), crop_region: [0.1, 0, 0.9, 1] });
     await statement(env, 'UPDATE sfde_profiles SET updated_at=? WHERE id=1', previous).run();
   });
-  expect((await dispatch({ ...env, DB: db, ENVIRONMENT: 'validation', OUTBOUND_ENABLED: 'true', GITHUB_TOKEN: 'test-only' }, vodId, { origin: "manual", inputs: { mode: "legacy", quality: "480p", runtime_image: null } })).chunkIds).toEqual([]);
+  expect(await dispatch({ ...env, DB: db, ENVIRONMENT: 'validation', OUTBOUND_ENABLED: 'true', GITHUB_TOKEN: 'test-only' }, vodId, manualRun(env))).toEqual([]);
   expect(fetch).not.toHaveBeenCalled();
   expect((await vodDetails(env, '123')).profile.crop_region).toEqual([0.1, 0, 0.9, 1]);
   expect((await one(env, 'SELECT status FROM chunks WHERE id=?', chunkId))!.status).toBe('pending');
@@ -93,7 +93,7 @@ it('rejects a same-ID crop change between dispatch read and reservation even wit
 
 it('allows a metadata-only edit between dispatch read and reservation', async () => {
   const db = afterDispatchRead(() => setProfile(env, { ...profile(), profile_name: 'renamed' }));
-  expect((await dispatch({ ...env, DB: db, ENVIRONMENT: 'validation', OUTBOUND_ENABLED: 'true', GITHUB_TOKEN: 'test-only' }, vodId, { origin: "manual", inputs: { mode: "legacy", quality: "480p", runtime_image: null } })).chunkIds).toEqual([chunkId]);
+  expect(await dispatch({ ...env, DB: db, ENVIRONMENT: 'validation', OUTBOUND_ENABLED: 'true', GITHUB_TOKEN: 'test-only' }, vodId, manualRun(env))).toEqual([chunkId]);
   expect(fetch).toHaveBeenCalledOnce();
   expect((await vodDetails(env, '123')).profile.profile_name).toBe('renamed');
 });

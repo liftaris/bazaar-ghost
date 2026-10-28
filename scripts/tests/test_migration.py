@@ -338,16 +338,17 @@ class MultiplatformMigrationTests(unittest.TestCase):
                 self.assertEqual(target.execute('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').fetchall(), schema)
                 self.assertEqual(target.execute('SELECT revision FROM public_cache_state UNION ALL SELECT revision FROM public_search_state').fetchall(), revisions)
 
-    def test_schema_21_through_24_are_refused_before_any_import_changes(self):
+    def test_schemas_before_0028_are_refused_before_any_import_changes(self):
         self.snapshot(self.records())
         conversion.convert(self.source, self.destination)
-        for version in (21, 22, 23, 24):
+        # The empty-target guard probes tables alphabetically; chunk_runs (0028) is the first one these schemas lack.
+        for version in (21, 22, 23, 24, 27):
             with self.subTest(version=version):
                 target = sqlite3.connect(':memory:')
                 self.addCleanup(target.close)
                 conversion.apply_schema(target, version)
                 schema = target.execute('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').fetchall()
-                with self.assertRaisesRegex(sqlite3.OperationalError, 'no such table: '):
+                with self.assertRaisesRegex(sqlite3.OperationalError, 'no such table: chunk_runs'):
                     target.executescript((self.destination / 'import.sql').read_text())
                 self.assertEqual(target.execute('SELECT count(*) FROM vods').fetchone()[0], 0)
                 self.assertEqual(target.execute('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').fetchall(), schema)
@@ -360,7 +361,7 @@ class MultiplatformMigrationTests(unittest.TestCase):
         conversion.apply_schema(target, 23)
         before = target.execute('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').fetchall()
         revisions = target.execute('SELECT revision FROM public_cache_state UNION ALL SELECT revision FROM public_search_state').fetchall()
-        with self.assertRaisesRegex(sqlite3.OperationalError, 'no such table: '):
+        with self.assertRaisesRegex(sqlite3.OperationalError, 'no such table: chunk_runs'):
             target.executescript((self.destination / 'import.sql').read_text())
         self.assertEqual(target.execute('SELECT count(*) FROM vods').fetchone()[0], 0)
         self.assertEqual(target.execute('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').fetchall(), before)

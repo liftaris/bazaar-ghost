@@ -2,7 +2,7 @@ import { env } from 'cloudflare:test';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { nativeRoute } from '../native-api';
 import { catalogRoute, saveVideo, updateAccount, upsertAccount } from '../platforms';
-import { dispatch, pendingVideos, plan } from '../processing';
+import { dispatch, manualRun, pendingVideos, plan } from '../processing';
 import { one, rows, statement } from '../http';
 
 beforeEach(async () => {
@@ -132,7 +132,7 @@ it('does not reserve or dispatch work after an account is disabled between plann
       return typeof value==='function'?value.bind(target):value;
     },
   });
-  const result=(await dispatch({...env,DB:database,ENVIRONMENT:'validation',OUTBOUND_ENABLED:'true',GITHUB_TOKEN:'test-only'},video.id, { origin: "manual", inputs: { mode: "legacy", quality: "480p", runtime_image: null } })).chunkIds;
+  const result=await dispatch({...env,DB:database,ENVIRONMENT:'validation',OUTBOUND_ENABLED:'true',GITHUB_TOKEN:'test-only'},video.id, manualRun(env));
   expect(disabled).toBe(true);
   expect(result).toEqual([]);
   expect(fetch).not.toHaveBeenCalled();

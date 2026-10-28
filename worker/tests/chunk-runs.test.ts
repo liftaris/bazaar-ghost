@@ -4,12 +4,11 @@ import type { OpsChunkDetail, OpsOverview, OpsRecording, OpsRecordingDetail, Ops
 import type { Page } from "../../contracts/public-api";
 import worker from "../index";
 import { one, rows, statement } from "../http";
-import { claim, dispatch, dispatchAutomatic, recover, resolveInputs, type RunRequest } from "../processing";
+import { automaticRun, claim, dispatch, dispatchAutomatic, manualRun, operatorRun, queue, recover, resolveInputs, runDefaults, workflow, type RunRequest } from "../processing";
 import { authEnv, login, mockProviders, ORIGIN } from "./auth-fixture";
 
 const RUNTIME = "ghcr.io/liftaris/bazaar-ghost/sfde-next@sha256:" + "c".repeat(64);
 const LEGACY: RunInputs = { mode: "legacy", quality: "480p", runtime_image: RUNTIME };
-const MANUAL: RunRequest = { origin: "manual", inputs: LEGACY };
 const hosted = () => ({ ...authEnv(), GITHUB_TOKEN: "test-only", SFDE_RUNTIME_IMAGE: RUNTIME, BUILD_COMMIT: "d".repeat(40) });
 const github = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).startsWith("https://api.github.com/"));
 const sent = (index = 0) => JSON.parse(String(github()[index][1]!.body));
@@ -33,9 +32,9 @@ async function call(path: string, method: string, data: unknown, key: string, to
   }), hosted());
 }
 const processor = (path: string, method: string, data: unknown, token?: string) => call(path, method, data, env.PROCESSOR_KEY, token);
-async function queued(vodId = 10, request: RunRequest = MANUAL) {
+async function queued(vodId = 10, request: RunRequest = manualRun(hosted())) {
   stubGitHub();
-  const { chunkIds } = await dispatch(hosted(), vodId, request);
+  const chunkIds = await dispatch(hosted(), vodId, request);
   return (await one<{ id: string; queued_at: string }>(env, "SELECT id,queued_at FROM chunks WHERE id=?", chunkIds[0]))!;
 }
 
@@ -50,6 +49,7 @@ beforeEach(async () => {
   ]);
 });
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -102,14 +102,15 @@ it("records failure, unclaimed dispatch failure with its GitHub run, and lease e
   expect((await rows(env, "SELECT status FROM chunk_runs WHERE chunk_id=? ORDER BY queued_at", leased.id)).map((r) => r.status)).toEqual(["failed", "expired"]);
 });
 
-it("restores the chunk and marks its run dispatch_failed when GitHub refuses the dispatch", async () => {
+it("restores the chunk, records the refusal on it, and keeps no run when GitHub refuses the dispatch", async () => {
   stubGitHub(500);
-  await expect(dispatch(hosted(), 10, MANUAL)).rejects.toThrow("500");
+  await expect(dispatch(hosted(), 10, manualRun(hosted()))).rejects.toThrow("500");
   const [chunk] = await rows(env, "SELECT id FROM chunks WHERE vod_id=10");
-  expect(await chunkRow(chunk.id)).toMatchObject({ status: "pending", queued_at: null, max_attempts: 3 });
-  expect(await run(chunk.id)).toMatchObject({ status: "dispatch_failed", error: expect.stringContaining("500"), finished_at: expect.any(String) });
+  expect(await chunkRow(chunk.id)).toMatchObject({
+    status: "pending", queued_at: null, max_attempts: 3, attempt_count: 0, last_error: "Dispatch refused: Upstream api.github.com returned 500",
+  });
+  expect(await rows(env, "SELECT * FROM chunk_runs")).toEqual([]);
 });
-
 it("rejects malformed GitHub run identities on claim", async () => {
   const chunk = await queued();
   for (const github_run_id of [0, -1, "x", 1.5]) {
@@ -119,19 +120,26 @@ it("rejects malformed GitHub run identities on claim", async () => {
   expect((await processor("/api/processor/github-run", "POST", { ids: [chunk.id], queued_at: chunk.queued_at, github_run_attempt: 0 })).status).toBe(400);
 });
 
-it("adopts the queued run for a claim without queued_at, and records a manual run for a pending chunk", async () => {
+it("supersedes the dispatched run on an untracked claim of a queued chunk, and records manual runs", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-10-28T12:00:00.000Z"));
   const chunk = await queued();
-  const adopted = await claim(env, chunk.id, null, undefined, { runId: 7, runAttempt: null });
-  expect(await run(chunk.id)).toMatchObject({ status: "processing", claim_token: adopted.claim_token, github_run_id: 7, origin: "manual", queued_at: chunk.queued_at });
-  expect(await rows(env, "SELECT id FROM chunk_runs WHERE chunk_id=?", chunk.id)).toHaveLength(1);
+  const dispatched = (await run(chunk.id))!;
+  const untracked = await claim(env, chunk.id, null, undefined, { runId: 7, runAttempt: 1 });
+  expect(untracked.claimed).toBe(true);
+  vi.useRealTimers();
+  expect(await one(env, "SELECT status,error,claim_token FROM chunk_runs WHERE id=?", dispatched.id))
+    .toEqual({ status: "expired", error: "Superseded by an untracked claim", claim_token: null });
+  expect(await one(env, "SELECT origin,requested_by,inputs,status,claim_token,github_run_id,github_run_attempt FROM chunk_runs WHERE id<>? AND chunk_id=?", dispatched.id, chunk.id)).toEqual({
+    origin: "manual", requested_by: null, inputs: null, status: "processing", claim_token: untracked.claim_token, github_run_id: 7, github_run_attempt: 1,
+  });
 
   const [pending] = await rows(env, "INSERT INTO chunks(id,vod_id,start_seconds,end_seconds,chunk_index) VALUES(?,11,0,600,0) RETURNING id", crypto.randomUUID());
-  const untracked = await claim(env, pending.id, null, undefined, { runId: 8, runAttempt: 1 });
-  expect(await run(pending.id)).toMatchObject({
-    origin: "manual", requested_by: null, inputs: null, status: "processing", claim_token: untracked.claim_token, github_run_id: 8, github_run_attempt: 1,
-  });
+  const claimed = await claim(env, pending.id, null, undefined, { runId: 8, runAttempt: 1 });
+  expect(await rows(env, "SELECT origin,inputs,status,claim_token,github_run_id FROM chunk_runs WHERE chunk_id=?", pending.id)).toEqual([
+    { origin: "manual", inputs: null, status: "processing", claim_token: claimed.claim_token, github_run_id: 8 },
+  ]);
 });
-
 it("clears the previous run's counts when a new run claims the chunk", async () => {
   const chunk = await queued();
   await statement(env, "UPDATE chunks SET frames_processed=50,detections_count=2,processing_duration_ms=999 WHERE id=?", chunk.id).run();
@@ -141,31 +149,68 @@ it("clears the previous run's counts when a new run claims the chunk", async () 
   expect(await run(chunk.id)).toMatchObject({ status: "failed", frames_processed: 0, detections_count: 0 });
 });
 
-it("fails a chunk queued for an hour without a runner and expires its run", async () => {
-  const chunk = await queued();
-  const stale = ago(61);
+it("expires a queue only after 24 hours, without consuming an attempt, and stops operator chunks", async () => {
+  const automatic = await queued(10, automaticRun(hosted()));
+  const [operatorChunk] = await rows(env, "INSERT INTO chunks(id,vod_id,start_seconds,end_seconds,chunk_index,status,attempt_count) VALUES(?,11,0,600,0,'failed',2) RETURNING id", crypto.randomUUID());
+  stubGitHub();
+  await queue(hosted(), await workflow(hosted(), 11, operatorRun("user", LEGACY)), [operatorChunk.id]);
+  const backlog = ago(23 * 60), stale = ago(24 * 60 + 1);
+  for (const [id, at] of [[automatic.id, stale], [operatorChunk.id, stale]] as const)
+    await env.DB.batch([
+      statement(env, "UPDATE chunks SET queued_at=? WHERE id=?", at, id),
+      statement(env, "UPDATE chunk_runs SET queued_at=? WHERE chunk_id=?", at, id),
+    ]);
+  await statement(env, "UPDATE vods SET duration_seconds=1200,bazaar_chapters='[0,1200]' WHERE id=10").run();
+  const delayed = await queued(10);
   await env.DB.batch([
-    statement(env, "UPDATE chunks SET queued_at=? WHERE id=?", stale, chunk.id),
-    statement(env, "UPDATE chunk_runs SET queued_at=? WHERE chunk_id=?", stale, chunk.id),
+    statement(env, "UPDATE chunks SET queued_at=? WHERE id=?", backlog, delayed.id),
+    statement(env, "UPDATE chunk_runs SET queued_at=? WHERE chunk_id=?", backlog, delayed.id),
   ]);
-  const fresh = await queued(11);
   await recover(env);
-  expect(await chunkRow(chunk.id)).toMatchObject({ status: "failed", attempt_count: 1, last_error: "Queued run never started" });
-  expect(await run(chunk.id)).toMatchObject({ status: "expired", error: "Queued run never started" });
-  expect(await chunkRow(fresh.id)).toMatchObject({ status: "queued" });
-  expect(await run(fresh.id)).toMatchObject({ status: "queued" });
-  await statement(env, "UPDATE chunks SET updated_at=? WHERE id=?", ago(6), chunk.id).run();
+  expect(await chunkRow(automatic.id)).toMatchObject({ status: "pending", attempt_count: 0, max_attempts: 3 });
+  expect(await run(automatic.id)).toMatchObject({ status: "expired", error: "Queued run never started" });
+  expect(await chunkRow(operatorChunk.id)).toMatchObject({ status: "failed", attempt_count: 2, max_attempts: 2, last_error: "Queued run never started" });
+  expect(await run(operatorChunk.id)).toMatchObject({ origin: "operator", status: "expired" });
+  expect(await chunkRow(delayed.id)).toMatchObject({ status: "queued" });
+  expect(await run(delayed.id)).toMatchObject({ status: "queued" });
+  await statement(env, "UPDATE chunks SET updated_at=? WHERE id=?", ago(6), operatorChunk.id).run();
   await recover(env);
-  expect(await chunkRow(chunk.id)).toMatchObject({ status: "pending", attempt_count: 1 });
+  expect(await chunkRow(operatorChunk.id)).toMatchObject({ status: "failed" });
 });
 
+it("queues only due pending chunks for automatic and manual runs, even when they change after planning", async () => {
+  const ids = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
+  await env.DB.batch(ids.map((id, i) => statement(env, "INSERT INTO chunks(id,vod_id,start_seconds,end_seconds,chunk_index) VALUES(?,10,?,?,?)", id, i * 200, (i + 1) * 200, i)));
+  stubGitHub();
+  let changed = false;
+  const DB = new Proxy(env.DB, { get(target, key) {
+    if (key === "batch") return async (statements: D1PreparedStatement[]) => {
+      if (!changed) {
+        changed = true;
+        await target.batch([
+          statement(env, "UPDATE chunks SET status='failed',attempt_count=1 WHERE id=?", ids[0]),
+          statement(env, "UPDATE chunks SET scheduled_for=? WHERE id=?", new Date(Date.now() + 3_600_000).toISOString(), ids[1]),
+        ]);
+      }
+      return target.batch(statements);
+    };
+    const value = Reflect.get(target, key);
+    return typeof value === "function" ? value.bind(target) : value;
+  } });
+  expect(await dispatch({ ...hosted(), DB }, 10, automaticRun(hosted()))).toEqual([ids[2]]);
+  expect(await chunkRow(ids[0])).toMatchObject({ status: "failed", attempt_count: 1 });
+  expect(await chunkRow(ids[1])).toMatchObject({ status: "pending" });
+  expect((await rows(env, "SELECT chunk_id FROM chunk_runs")).map((r) => r.chunk_id)).toEqual([ids[2]]);
+  await statement(env, "UPDATE chunks SET status='completed' WHERE id=?", ids[2]).run();
+  expect(await dispatch(hosted(), 10, manualRun(hosted()))).toEqual([]);
+});
 it("retries automatic failures up to max_attempts", async () => {
-  const chunk = await queued(10, { origin: "automatic", inputs: LEGACY });
+  const chunk = await queued(10, automaticRun(hosted()));
   for (let attempt = 1; attempt <= 3; attempt++) {
     const { queued_at } = (await chunkRow(chunk.id))!;
     if (attempt > 1) {
       stubGitHub();
-      await dispatch(hosted(), 10, { origin: "automatic", inputs: LEGACY });
+      await dispatch(hosted(), 10, automaticRun(hosted()));
     }
     const current = (await chunkRow(chunk.id))!;
     expect(current.status).toBe("queued");
@@ -197,7 +242,7 @@ it("resolves run inputs at the boundary from environment rules", () => {
 
 it("records who started each run: cron and platform sweep are automatic, the admin key is manual", async () => {
   stubGitHub();
-  const [automatic] = (await dispatchAutomatic(hosted(), 10)).chunkIds;
+  const [automatic] = await dispatchAutomatic(hosted(), 10);
   expect(await run(automatic)).toMatchObject({ origin: "automatic", requested_by: null });
   expect(JSON.parse((await run(automatic))!.inputs).mode).toBe("next");
 
@@ -205,6 +250,7 @@ it("records who started each run: cron and platform sweep are automatic, the adm
   expect(admin.status, await admin.clone().text()).toBe(200);
   const [manual] = (await admin.json<{ chunk_uuids: string[] }>()).chunk_uuids;
   expect(await run(manual)).toMatchObject({ origin: "manual", requested_by: null });
+  expect(JSON.parse((await run(manual))!.inputs).mode).toBe("legacy");
 
   const account = crypto.randomUUID();
   await env.DB.batch([
@@ -216,6 +262,7 @@ it("records who started each run: cron and platform sweep are automatic, the adm
   expect(await sweep.json()).toEqual({ dispatched: 1 });
   const [swept] = await rows(env, "SELECT id FROM chunks WHERE vod_id=12");
   expect(await run(swept.id)).toMatchObject({ origin: "automatic", requested_by: null });
+  expect(JSON.parse((await run(swept.id))!.inputs).mode).toBe("next");
 });
 
 async function operator() {
@@ -361,7 +408,7 @@ it("keeps the operator's run when the scheduler dispatches the same recording mi
   let interleaved: string[] | null = null;
   const DB = new Proxy(env.DB, { get(target, key) {
     if (key === "batch") return async (statements: D1PreparedStatement[]) => {
-      interleaved ??= (await dispatchAutomatic(hosted(), 10)).chunkIds;
+      interleaved ??= await dispatchAutomatic(hosted(), 10);
       return target.batch(statements);
     };
     const value = Reflect.get(target, key);
@@ -391,8 +438,10 @@ it("reports a refused GitHub dispatch per recording and restores that recording'
     error: "Upstream api.github.com returned 500", skipped: [{ chunkId: ids[1], reason: "Upstream api.github.com returned 500" }],
   });
   expect(await chunkRow(ids[0])).toMatchObject({ status: "queued" });
-  expect(await chunkRow(ids[1])).toMatchObject({ status: "failed", attempt_count: 3, max_attempts: 3, queued_at: null });
-  expect(await run(ids[1])).toMatchObject({ origin: "operator", status: "dispatch_failed", error: "Upstream api.github.com returned 500" });
+  expect(await chunkRow(ids[1])).toMatchObject({
+    status: "failed", attempt_count: 3, max_attempts: 3, queued_at: null, last_error: "Dispatch refused: Upstream api.github.com returned 500",
+  });
+  expect(await rows(env, "SELECT * FROM chunk_runs WHERE chunk_id=?", ids[1])).toEqual([]);
 
   await statement(env, "UPDATE chunks SET updated_at=? WHERE id=?", ago(6), ids[1]).run();
   await recover(env);
@@ -402,6 +451,59 @@ it("reports a refused GitHub dispatch per recording and restores that recording'
   const refused = await reprocess({ chunk_ids: [ids[1]] }, signed);
   expect(refused.status).toBe(502);
   expect(await refused.json()).toMatchObject({ error: "No chunk was queued", recordings: [{ recordingId: 11, error: "Upstream api.github.com returned 500" }] });
+});
+
+it("reports an internal failure on one recording without losing the recordings before it", async () => {
+  const ids = await failedChunks();
+  const signed = await operator();
+  let queues = 0;
+  const DB = new Proxy(env.DB, { get(target, key) {
+    if (key === "prepare") return (sql: string) => {
+      if (sql.includes("INSERT INTO chunk_runs") && ++queues === 2) throw new Error("D1_ERROR: storage unavailable");
+      return target.prepare(sql);
+    };
+    const value = Reflect.get(target, key);
+    return typeof value === "function" ? value.bind(target) : value;
+  } });
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  const response = await reprocess({ chunk_ids: ids }, signed, signed.identity.csrfToken, { ...hosted(), DB });
+  expect(response.status, await response.clone().text()).toBe(200);
+  const value = await response.json<OpsReprocessResponse>();
+  expect(value.recordings[0]).toMatchObject({ recordingId: 10, chunkIds: [ids[0]], skipped: [] });
+  expect(value.recordings[1]).toMatchObject({
+    recordingId: 11, chunkIds: [], error: "D1_ERROR: storage unavailable", skipped: [{ chunkId: ids[1], reason: "D1_ERROR: storage unavailable" }],
+  });
+  expect(await chunkRow(ids[1])).toMatchObject({ status: "failed", max_attempts: 3 });
+
+  const failing = new Proxy(env.DB, { get(target, key) {
+    if (key === "prepare") return (sql: string) => {
+      if (sql.includes("INSERT INTO chunk_runs")) throw new Error("D1_ERROR: storage unavailable");
+      return target.prepare(sql);
+    };
+    const value = Reflect.get(target, key);
+    return typeof value === "function" ? value.bind(target) : value;
+  } });
+  const none = await reprocess({ chunk_ids: [ids[1]] }, signed, signed.identity.csrfToken, { ...hosted(), DB: failing });
+  expect(none.status).toBe(500);
+});
+
+it("builds run defaults without throwing when configuration or stored inputs are no longer valid", async () => {
+  const [id] = await failedChunks();
+  const signed = await operator();
+  const broken = { ...hosted(), SFDE_RUNTIME_IMAGE: "ghcr.io/other/image:latest" };
+  const response = await worker.fetch(new Request(ORIGIN + `/api/v1/ops/chunks/${id}`, { headers: { Cookie: signed.cookie, Origin: ORIGIN } }), broken);
+  expect(response.status, await response.clone().text()).toBe(200);
+  expect((await response.json<OpsChunkDetail>()).runDefaults).toEqual({
+    inputs: { mode: "legacy", quality: "480p", runtime_image: null }, allowedModes: ["next", "legacy"], configError: "Invalid SFDE runtime image",
+  });
+  expect(runDefaults({ ...hosted(), BUILD_COMMIT: "unreleased" }, null).configError).toBe("Invalid SFDE runtime revision");
+  const production = { ...hosted(), ENVIRONMENT: "production" };
+  expect(runDefaults(production, { mode: "next", quality: "720p", runtime_image: RUNTIME })).toEqual({
+    inputs: { mode: "legacy", quality: "720p", runtime_image: null }, allowedModes: ["legacy"], configError: null,
+  });
+  const refused = await reprocess({ chunk_ids: [id] }, signed, signed.identity.csrfToken, broken);
+  expect(refused.status).toBe(400);
+  expect(await refused.json()).toEqual({ error: "Invalid SFDE runtime image" });
 });
 
 it("dispatches NEXT on request and lists runs newest first with the defaults for the next run", async () => {
@@ -422,7 +524,7 @@ it("dispatches NEXT on request and lists runs newest first with the defaults for
     origin: "operator", requestedBy: signed.identity.userId, framesProcessed: 10, detections: 0,
     githubRunUrl: "https://github.com/liftaris/bazaar-ghost/actions/runs/42", claimedAt: expect.any(String), finishedAt: expect.any(String),
   });
-  expect(detail.runDefaults).toEqual({ inputs: { mode: "legacy", quality: "480p", runtime_image: RUNTIME }, allowedModes: ["next", "legacy"] });
+  expect(detail.runDefaults).toEqual({ inputs: { mode: "legacy", quality: "480p", runtime_image: RUNTIME }, allowedModes: ["next", "legacy"], configError: null });
   const recording = await read<OpsRecordingDetail>("/api/v1/ops/recordings/10", signed.cookie);
   expect(recording.runs.map((r) => r.id)).toEqual(detail.runs.map((r) => r.id));
 });

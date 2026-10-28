@@ -7,6 +7,7 @@ import {
   plan,
   recover,
   dispatch,
+  manualRun,
 } from "../processing";
 import { trigrams } from "../search";
 import { one, rows, statement } from "../http";
@@ -297,7 +298,7 @@ it("failed GitHub dispatch releases only its queued chunks", async () => {
         GITHUB_TOKEN: "test",
       },
       1,
-      { origin: "manual", inputs: { mode: "legacy", quality: "480p", runtime_image: null } },
+      manualRun(env),
     ),
   ).rejects.toThrow("500");
   expect(
@@ -356,7 +357,7 @@ it("concurrent GitHub dispatches submit all chunks exactly once regardless of th
         GITHUB_TOKEN: "test",
       },
       1,
-      { origin: "manual", inputs: { mode: "legacy", quality: "480p", runtime_image: null } },
+      manualRun(env),
     ),
     dispatch(
       {
@@ -366,7 +367,7 @@ it("concurrent GitHub dispatches submit all chunks exactly once regardless of th
         GITHUB_TOKEN: "test",
       },
       1,
-      { origin: "manual", inputs: { mode: "legacy", quality: "480p", runtime_image: null } },
+      manualRun(env),
     ),
   ]);
   expect(
