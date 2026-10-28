@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the public TypeScript contract and fetch client into a frontend checkout."""
+"""Generate the public and operator TypeScript contracts and the fetch client into a frontend checkout."""
 import argparse
 from pathlib import Path
 
@@ -33,6 +33,7 @@ def main():
     generated = {
         "api-contract.ts": (ROOT / "contracts/public-api.ts").read_text(),
         "api-client.ts": CLIENT,
+        "operator-contract.ts": (ROOT / "contracts/operator-api.ts").read_text().replace('from "./public-api"', 'from "./api-contract"'),
     }
     for name, content in generated.items():
         target = args.output / "lib" / name
