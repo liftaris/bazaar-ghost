@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 spec = importlib.util.spec_from_file_location('workflow', Path(__file__).resolve().parents[1] / 'vod_workflow.py')
 workflow = importlib.util.module_from_spec(spec)
@@ -97,6 +97,26 @@ class WorkflowTests(unittest.TestCase):
             workflow.fail_chunk()
             self.assertEqual(api.call_args.kwargs['body']['queued_at'], '2026-09-07T12:00:00Z')
             self.assertEqual(api.call_args.kwargs['body']['ids'], [chunk])
+
+    def test_prepare_and_failure_report_the_github_run(self):
+        chunk = '2e032210-c665-4e6c-9f97-80b4c930c153'
+        vod = {'id': 1, 'source': 'bilibili', 'processing_enabled': True, 'ready_for_processing': True,
+               'availability': 'available', 'old_templates': True, 'profile': {'id': 1, 'crop_region': [0, 0, 1, 1], 'opaque_edge': True}}
+        run = {'GITHUB_RUN_ID': '18000000001', 'GITHUB_RUN_ATTEMPT': '2', 'QUEUED_AT': '2026-09-07T12:00:00Z'}
+        expected = {'ids': [chunk], 'queued_at': run['QUEUED_AT'], 'github_run_id': 18000000001, 'github_run_attempt': 2}
+        with patch.dict(workflow.os.environ, {**run, 'VOD_ID': 'BV1FfL5zPEbH:20', 'VIDEO_SOURCE': 'bilibili', 'LOCAL': 'true'}, clear=True), \
+                patch.object(workflow, 'get_vod', return_value=vod), patch.object(workflow, 'output'), \
+                patch.object(workflow, 'api', return_value=[{'id': chunk}]) as api:
+            workflow.prepare()
+            self.assertIn(call('github-run', body=expected, method='POST'), api.call_args_list)
+        with patch.dict(workflow.os.environ, {**run, 'INPUT_CHUNKS': json.dumps([chunk])}, clear=True), patch.object(workflow, 'api') as api:
+            workflow.fail_queued()
+            self.assertEqual(api.call_args.kwargs['body'], {**expected, 'error': 'Workflow preparation failed'})
+        with patch.dict(workflow.os.environ, {'QUEUED_AT': run['QUEUED_AT'], 'VOD_ID': 'BV1FfL5zPEbH:20', 'VIDEO_SOURCE': 'bilibili', 'LOCAL': 'true'}, clear=True), \
+                patch.object(workflow, 'get_vod', return_value=vod), patch.object(workflow, 'output'), \
+                patch.object(workflow, 'api', return_value=[{'id': chunk}]) as api:
+            workflow.prepare()
+            self.assertEqual([entry.args[0] for entry in api.call_args_list], ['chunks'])
 
     def test_differing_saved_profile_is_rejected_before_any_media_resolution(self):
         saved = {'id': 1, 'crop_region': [0, 0, 1, 1], 'igd_crop_region': None, 'custom_edge': None, 'opaque_edge': True}
