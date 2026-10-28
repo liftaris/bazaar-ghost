@@ -92,6 +92,12 @@ export interface SourceRow {
   channel_avatar: string | null;
   channel_streamer_id: number | null;
 }
+/** The detection columns an Encounter projection reads; any detection query can supply them. */
+export type EncounterRow = Pick<SourceRow, "detection_id" | "vod_id" | "at" | "username" | "confidence" | "name_state"
+  | "encounter_confidence" | "ghost_hero" | "streamer_hero" | "wins_remaining" | "lethal" | "game_mode" | "tournament_wins"
+  | "tournament_losses" | "raw_igd" | "igd_correction_id" | "igd_correction_evidence" | "igd_correction_source_refs"
+  | "igd_correction_input_digest" | "igd_correction_reason" | "igd_correction_created_at" | "field_evidence" | "indexed_at"
+  | "rank" | "igd" | "storage_path" | "available">;
 /** One row of the public_matchups view plus search relevance. */
 export interface MatchupRow {
   matchup_id: number;
@@ -238,17 +244,17 @@ export function matchup(row: MatchupRow, sources: SourceRow[], streamer: Streame
 const publicField: Record<FieldKey, EvidenceField> = { encounter: "encounter", username: "username", rank: "rank", igd: "igd",
   ghost_hero: "ghostHero", streamer_hero: "streamerHero", wins_remaining: "winsRemaining", lethal: "lethal",
   game_mode: "gameMode", tournament_wins: "tournamentWins", tournament_losses: "tournamentLosses" };
-function observations(row: SourceRow): FieldObservations {
+function observations(row: EncounterRow): FieldObservations {
   const raw: FieldObservations = JSON.parse(row.field_evidence || "{}");
   return row.igd_correction_evidence ? { ...raw, igd: JSON.parse(row.igd_correction_evidence) } : raw;
 }
-type Candidate = { row: SourceRow; observation?: FieldObservation };
+type Candidate = { row: EncounterRow; observation?: FieldObservation };
 /** Scores only compare within the same method/model, never across unrelated scales.
  * New direct observations precede legacy unknown-quality fallback; stable time/ID ties.
  * Legacy-only projection retains the old display ordering, without relabeling its score.
  */
-function selectField(sources: SourceRow[], field: FieldKey, observed: Map<SourceRow, FieldObservations>): Candidate | undefined {
-  const value = (r: SourceRow) => field === "encounter" ? r.encounter_confidence : r[field];
+function selectField(sources: EncounterRow[], field: FieldKey, observed: Map<EncounterRow, FieldObservations>): Candidate | undefined {
+  const value = (r: EncounterRow) => field === "encounter" ? r.encounter_confidence : r[field];
   return sources.flatMap(row => {
     const observation = observed.get(row)?.[field];
     if (value(row) == null && field !== "encounter" && !(field === "username" && observation) && !(field === "igd" && row.igd_correction_id)) return [];
@@ -272,8 +278,11 @@ function selectField(sources: SourceRow[], field: FieldKey, observed: Map<Source
       || (y.confidence ?? -1) - (x.confidence ?? -1) || x.at_ms - y.at_ms || a.row.detection_id.localeCompare(b.row.detection_id);
   })[0];
 }
-function fieldEvidence({ row, observation: o }: Candidate, field: FieldKey): FieldEvidence {
-  const visible = (path: string | null) => row.available ? screenshot(path) : null;
+/** Turns a stored image path into a client URL; public projection hides images of unavailable Recordings. */
+export type ImageUrl = (path: string | null, row: EncounterRow) => string | null;
+const publicImage: ImageUrl = (path, row) => row.available ? screenshot(path) : null;
+function fieldEvidence({ row, observation: o }: Candidate, field: FieldKey, image: ImageUrl): FieldEvidence {
+  const visible = (path: string | null) => image(path, row);
   return { detectionId: row.detection_id, recordingId: row.vod_id, atMs: o?.at_ms ?? row.at * 1000,
     confidence: o ? o.confidence : (field === "username" ? row.confidence : null), method: o?.method ?? "legacy",
     screenshotUrl: visible(o?.image_path ?? row.storage_path), phase: o?.phase ?? "unknown",
@@ -286,7 +295,7 @@ function fieldEvidence({ row, observation: o }: Candidate, field: FieldKey): Fie
       runSegmentId: o.inherited_from.run_segment_id, atMs: o.inherited_from.at_ms } } : {}) };
 }
 /** Independent per-field winners within an already-established Matchup only. */
-export function projectEncounter(sources: SourceRow[]): Encounter {
+export function projectEncounter(sources: EncounterRow[], image: ImageUrl = publicImage): Encounter {
   const observed = new Map(sources.map(row => [row, observations(row)]));
   const chosen = Object.fromEntries((Object.keys(publicField) as FieldKey[]).map(k => [k, selectField(sources, k, observed)])) as Partial<Record<FieldKey, Candidate>>;
   const mode = chosen.game_mode?.row.game_mode ?? null;
@@ -302,14 +311,14 @@ export function projectEncounter(sources: SourceRow[]): Encounter {
     for (const key of ["wins_remaining", "lethal"] as const) chosen[key] = selectField(compatible, key, observed);
   }
   const fieldEvidenceMap: Encounter["fieldEvidence"] = {};
-  for (const key of Object.keys(chosen) as FieldKey[]) if (chosen[key]) fieldEvidenceMap[publicField[key]] = fieldEvidence(chosen[key]!, key);
+  for (const key of Object.keys(chosen) as FieldKey[]) if (chosen[key]) fieldEvidenceMap[publicField[key]] = fieldEvidence(chosen[key]!, key, image);
   const day = chosen.igd?.row;
   const rawDay: FieldObservations = day ? JSON.parse(day.field_evidence || "{}") : {};
   return { confidence: chosen.encounter?.row.encounter_confidence ?? null,
     ghostHero: chosen.ghost_hero?.row.ghost_hero ?? null, streamerHero: chosen.streamer_hero?.row.streamer_hero ?? null,
     igd: chosen.igd?.row.igd ?? null, winsRemaining: chosen.wins_remaining?.row.wins_remaining ?? null,
     rawIgd: day ? (day.raw_igd === undefined ? day.igd : day.raw_igd) : null,
-    rawIgdEvidence: day && (rawDay.igd || day.name_state === "legacy") ? fieldEvidence({ row: day, observation: rawDay.igd }, "igd") : null,
+    rawIgdEvidence: day && (rawDay.igd || day.name_state === "legacy") ? fieldEvidence({ row: day, observation: rawDay.igd }, "igd", image) : null,
     igdCorrection: day?.igd_correction_id ? { id: day.igd_correction_id, inputDigest: day.igd_correction_input_digest!,
       reason: day.igd_correction_reason!, createdAt: day.igd_correction_created_at!, sourceRefs: JSON.parse(day.igd_correction_source_refs!) } : null,
     gameMode: mode, tournamentWins: chosen.tournament_wins?.row.tournament_wins ?? null,
