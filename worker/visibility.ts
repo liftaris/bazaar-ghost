@@ -1,12 +1,17 @@
 import { one } from "./http";
 
+/** A relative R2 key with no traversal, control characters or backslashes. */
+export function safeObjectKey(key: string) {
+  return !!key && key.length <= 2048 && !key.startsWith("/") && !/[\x00-\x1f\x7f\\]/.test(key) &&
+    !key.split("/").some(part => part === "." || part === "..");
+}
+
 /** Public delivery requires a CURRENT published detection reference. Historical, orphan
  * and debug objects remain in private R2 for operator access, never public URL guessing.
  * If one object is referenced at multiple anchors, any hidden reference wins.
  */
 export async function publicImageVisible(env: Env, key: string): Promise<boolean> {
-  if (!key || key.length > 2048 || key.startsWith("/") || /[\x00-\x1f\x7f\\]/.test(key) ||
-      key.split("/").some(part => part === "." || part === "..")) return false;
+  if (!safeObjectKey(key)) return false;
   const paths = JSON.stringify([key, `/detections/${key}`, `/storage/v1/object/public/detections/${key}`]);
   const result = await one<{ visible: number }>(env, `SELECT
     EXISTS(SELECT 1 FROM public_sources s WHERE available=1 AND (

@@ -173,14 +173,13 @@ export function recording(row: RecordingRow): Recording {
     matchupCount: row.matchup_count ?? null,
   };
 }
+/** The R2 key of a stored image path, which may carry a legacy public route prefix, as a URL path. */
+export function objectPath(path: string) {
+  return path.replace(/^\/(?:storage\/v1\/object\/public\/detections|detections)\//, "").split("/").map(encodeURIComponent).join("/");
+}
 /** Resolve object keys only through the visibility-checked screenshot endpoint. */
 function screenshot(path: string | null) {
-  if (!path) return null;
-  const key = path.replace(
-    /^\/(?:storage\/v1\/object\/public\/detections|detections)\//,
-    "",
-  );
-  return `/detections/${key.split("/").map(encodeURIComponent).join("/")}`;
+  return path ? `/detections/${objectPath(path)}` : null;
 }
 function recordingRef(row: { source_id: string; source_video_id: string; source_part_id: string | null; source_part_index: number | null }) {
   return { sourceId: row.source_id, videoId: row.source_video_id, partId: row.source_part_id, partIndex: row.source_part_index };
