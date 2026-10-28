@@ -39,6 +39,7 @@ import { authRoute, authenticated } from "./auth";
 import { socialRoute } from "./social";
 import { publicImageVisible } from "./visibility";
 import { nativePath, nativeRoute } from "./native-api";
+import { operatorsAdminRoute, opsRoute } from "./ops";
 
 async function eventsub(req: Request, env: Env) {
   const raw = await readText(req),
@@ -130,6 +131,7 @@ async function route(req: Request, env: Env): Promise<Response> {
     await one(env, "SELECT 1");
     return Response.json({ ok: true, environment: env.ENVIRONMENT, build_commit: env.BUILD_COMMIT });
   }
+  if (path.startsWith("/api/v1/ops/")) return opsRoute(req, env);
   if (nativePath(path)) return nativeRoute(req, env);
   if (path === "/api/auth" || path.startsWith("/api/auth/")) return authRoute(req, env);
   if (path === "/api/v1/me" && req.method === "GET") return Response.json(await authenticated(req, env));
@@ -289,6 +291,7 @@ async function route(req: Request, env: Env): Promise<Response> {
   const igdCorrection = path.match(/^\/api\/admin\/detections\/([0-9a-f-]{36})\/igd-correction$/);
   if (igdCorrection) return igdAdminRoute(req, env, igdCorrection[1]);
   if (path === "/api/admin/streamers" || path.startsWith("/api/admin/streamers/")) return streamersAdminRoute(req, env, path);
+  if (path === "/api/admin/operators" || path.startsWith("/api/admin/operators/")) return operatorsAdminRoute(req, env, path);
   if (path === "/api/admin/matchups" || path.startsWith("/api/admin/matchups/")) return matchupsAdminRoute(req, env, path);
   if (path.startsWith("/api/admin/notifications/")) return notificationsAdminRoute(req, env, path);
   if (path === "/api/admin/sessions" || path.startsWith("/api/admin/sessions/")) return sessionsAdminRoute(req, env, path);
@@ -424,7 +427,7 @@ export default {
     vary.add("Origin");
     headers.set("Vary", [...vary].join(", "));
     headers.set("X-Content-Type-Options", "nosniff");
-    if (userRoute) headers.set("Cache-Control", "no-store");
+    if (userRoute && !path.startsWith("/api/v1/ops/images/")) headers.set("Cache-Control", "no-store");
     if (allowed) {
       headers.set("Access-Control-Allow-Origin", origin!);
       headers.set("Access-Control-Allow-Methods", userRoute ? "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS" : "GET,HEAD,POST,OPTIONS");

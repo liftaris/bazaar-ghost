@@ -74,7 +74,7 @@ class FullTargetD1Tests(unittest.TestCase):
             conversion.convert(source, destination)
         self.assertEqual({path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in source.iterdir()}, source_hashes)
         manifest = json.loads((destination / 'manifest.json').read_text())
-        self.assertEqual(manifest['target_schema_version'], 25)
+        self.assertEqual(manifest['target_schema_version'], 26)
         self.assertEqual(manifest['target_migrations'], {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                          for path in (conversion.ROOT / 'worker/migrations').glob('*.sql')})
         self.migrate()

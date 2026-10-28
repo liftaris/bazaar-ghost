@@ -22,6 +22,7 @@ beforeEach(async () => {
     "auth_verifications",
     "user_sessions",
     "user_accounts",
+    "operators",
     "app_users",
     "matchup_overrides",
     "matchup_events",
