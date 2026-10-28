@@ -129,7 +129,11 @@ def prepare() -> None:
     if len(ids) > 256:
         raise ValueError('More than 256 chunks; dispatch bounded batches through process-vod')
     if ids and os.getenv('QUEUED_AT') and github_run():
-        api('github-run', body={'ids': ids, 'queued_at': os.environ['QUEUED_AT'], **github_run()}, method='POST')
+        try:
+            api('github-run', body={'ids': ids, 'queued_at': os.environ['QUEUED_AT'], **github_run()}, method='POST')
+        except Exception as error:
+            # The run history is informational; a failed report must not fail the dispatch.
+            print(f'GitHub run report failed: {error}', file=sys.stderr)
     output('chunk_uuids', ids)
     if not ids:
         return

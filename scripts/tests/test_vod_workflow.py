@@ -118,6 +118,23 @@ class WorkflowTests(unittest.TestCase):
             workflow.prepare()
             self.assertEqual([entry.args[0] for entry in api.call_args_list], ['chunks'])
 
+    def test_failed_github_run_report_does_not_fail_prepare(self):
+        chunk = '2e032210-c665-4e6c-9f97-80b4c930c153'
+        vod = {'id': 1, 'source': 'bilibili', 'processing_enabled': True, 'ready_for_processing': True,
+               'availability': 'available', 'old_templates': True, 'profile': {'id': 1, 'crop_region': [0, 0, 1, 1], 'opaque_edge': True}}
+
+        def api(path, *args, **kwargs):
+            if path == 'github-run':
+                raise RuntimeError('Backend POST github-run failed: HTTP 500')
+            return [{'id': chunk}]
+        with patch.dict(workflow.os.environ, {'GITHUB_RUN_ID': '1', 'QUEUED_AT': '2026-09-07T12:00:00Z', 'VOD_ID': 'BV1FfL5zPEbH:20',
+                                              'VIDEO_SOURCE': 'bilibili', 'LOCAL': 'true'}, clear=True), \
+                patch.object(workflow, 'get_vod', return_value=vod), patch.object(workflow, 'api', side_effect=api), \
+                patch.object(workflow, 'output') as output, patch('sys.stderr') as stderr:
+            workflow.prepare()
+            self.assertEqual(dict(call.args for call in output.call_args_list)['chunk_uuids'], [chunk])
+            self.assertIn('GitHub run report failed', ''.join(str(entry.args[0]) for entry in stderr.write.call_args_list))
+
     def test_differing_saved_profile_is_rejected_before_any_media_resolution(self):
         saved = {'id': 1, 'crop_region': [0, 0, 1, 1], 'igd_crop_region': None, 'custom_edge': None, 'opaque_edge': True}
         for source in ('youtube', 'twitch'):
