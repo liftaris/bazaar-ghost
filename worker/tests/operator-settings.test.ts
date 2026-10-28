@@ -123,7 +123,7 @@ it('does not queue a stale profile when the account changes after dispatch loads
     await updateAccount(env,account.id,{sfde_profile_id:3});
     changed=true;
   });
-  expect((await dispatch({...env,DB:database,ENVIRONMENT:'validation',OUTBOUND_ENABLED:'true',GITHUB_TOKEN:'test-only'},video.id)).chunkIds).toEqual([]);
+  expect((await dispatch({...env,DB:database,ENVIRONMENT:'validation',OUTBOUND_ENABLED:'true',GITHUB_TOKEN:'test-only'},video.id, { origin: "manual", inputs: { mode: "legacy", quality: "480p", runtime_image: null } })).chunkIds).toEqual([]);
   expect(changed).toBe(true);
   expect(fetch).not.toHaveBeenCalled();
   expect(await rows(env,'SELECT status FROM chunks WHERE vod_id=?',video.id)).toEqual([{status:'pending'}]);

@@ -90,42 +90,47 @@ export interface OpsDetectionRow {
 
 /** "next" is the evidence-based processor and runs only in validation and local. */
 export type ProcessorMode = "next" | "legacy";
-/** Requested template height; a 60 suffix prefers the 60 FPS rendition. Old-template recordings always process at 480p. */
+/** Requested template height; a 60 suffix prefers the 60 FPS rendition. */
 export type RunQuality = `${"360" | "480" | "720" | "1080"}p${"" | "60"}`;
 
-/** What a chunk run was asked to do. The saved profile and template era always come from the recording. */
+/** What a chunk run was dispatched with. The saved profile and template era always come from the recording. */
 export interface RunInputs {
   mode: ProcessorMode;
+  /** The requested quality. Old-template recordings process at 480p whatever was requested. */
   quality: RunQuality;
-  /** Digest-pinned SFDE image; null builds the processor from the dispatched branch. Editable only in validation. */
+  /** The digest-pinned SFDE image this deployment dispatched, or null when the workflow built the processor from the branch. Not an operator input. */
   runtime_image: string | null;
 }
+/** The inputs an operator chooses. */
+export type OperatorRunInputs = Pick<RunInputs, "mode" | "quality">;
 
 export type RunStatus = "queued" | "dispatch_failed" | "processing" | "completed" | "failed" | "expired";
+/** "automatic" is the scheduler and platform sweep, "operator" the console, "manual" the admin key or a runner claim the backend did not dispatch. */
+export type RunOrigin = "automatic" | "operator" | "manual";
 
 export interface OpsRun {
   id: string;
   chunkId: string;
-  origin: "automatic" | "operator";
-  /** Operator user ID, or null for automatic and admin-key dispatches. */
+  origin: RunOrigin;
+  /** Operator user ID; set only when origin is "operator". */
   requestedBy: string | null;
-  inputs: RunInputs;
+  /** null for a manual claim the backend did not dispatch. */
+  inputs: RunInputs | null;
   status: RunStatus;
   queuedAt: string;
   claimedAt: string | null;
   finishedAt: string | null;
-  /** GitHub Actions run, reported by the runner when it claims the chunk. */
+  /** GitHub Actions run, reported by the runner when it prepares or claims the chunk. */
   githubRunUrl: string | null;
   error: string | null;
   framesProcessed: number | null;
   detections: number | null;
 }
 
-/** Inputs a new run of this chunk starts from, and the choices this environment allows. */
+/** Inputs a new operator run of this chunk starts from, and the modes this environment allows. */
 export interface OpsRunDefaults {
   inputs: RunInputs;
   allowedModes: ProcessorMode[];
-  runtimeImageEditable: boolean;
 }
 
 export interface OpsRecordingDetail {
@@ -147,10 +152,10 @@ export interface OpsChunkDetail {
 
 /** POST /api/v1/ops/reprocess with the X-CSRF-Token header. */
 export interface OpsReprocessRequest {
-  /** 1 to 50 chunk IDs. Queued or processing chunks are refused with 409. */
+  /** 1 to 50 chunk IDs. Unknown IDs are a 404; queued, processing or archived chunks are a 409. */
   chunk_ids: string[];
-  inputs?: Partial<RunInputs>;
-  /** Validate and return the workflow payloads without writing anything. */
+  inputs?: Partial<OperatorRunInputs>;
+  /** Report what would queue, and the payloads, without writing anything. */
   dry_run?: boolean;
 }
 
@@ -160,10 +165,29 @@ export interface OpsWorkflowPayload {
   inputs: Record<string, string>;
 }
 
+/**
+ * One recording's share of a reprocess request. An operator run gets one attempt: the chunk is not
+ * retried automatically, and its attempt count keeps counting.
+ */
+export interface OpsReprocessRecording {
+  recordingId: number;
+  /** Chunks queued, or in a dry run the chunks that would queue. */
+  chunkIds: string[];
+  runIds: string[];
+  /** null when no chunk queued. */
+  payload: OpsWorkflowPayload | null;
+  /** Requested chunks that did not (or would not) queue, with the reason. */
+  skipped: Array<{ chunkId: string; reason: string }>;
+  /** Set when the whole recording failed, for example when GitHub refused the dispatch. */
+  error?: string;
+}
+
+/** 200 when any recording queued (or would queue); otherwise 502 if GitHub refused a dispatch, else 409, with the same body. */
 export interface OpsReprocessResponse {
   dispatched: boolean;
-  /** One entry per recording. chunkIds lists what was (or would be) dispatched; payload is null only when none were. */
-  recordings: Array<{ recordingId: number; chunkIds: string[]; payload: OpsWorkflowPayload | null; runIds: string[] }>;
+  recordings: OpsReprocessRecording[];
+  /** Set on 409 and 502. */
+  error?: string;
 }
 
 export interface OpsDetection extends OpsDetectionRow {

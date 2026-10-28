@@ -16,23 +16,25 @@ import type {
   OpsIngestion,
   OpsIngestionJob,
   OpsRecording,
+  OpsReprocessRecording,
   OpsReprocessResponse,
   OpsRoutes,
   OpsRun,
   OpsStreamer,
   RecordingStatus,
+  RunInputs,
   StatusCounts,
 } from "../contracts/operator-api";
 import type { Page } from "../contracts/public-api";
-import { atomic } from "./atomic";
 import { authenticated, requireCsrf, type AuthEnv, type Identity } from "./auth";
 import { jsonBody, only, privateResponse } from "./auth/security";
-import { body, HttpError, now, one, readText, requireValue, rows, statement, uuid } from "./http";
+import { body, HttpError, one, readText, requireValue, rows, statement, uuid } from "./http";
 import { parameters } from "./native-api";
 import { keysetAfter, keysetPage } from "./native-cursor";
 import { objectPath, projectEncounter, streamerRef, type EncounterRow, type ImageUrl, type StreamerRefRow } from "./native-model";
 import { listPlatforms, platform, watchUrl, type RecordingRef } from "./platform-registry";
-import { dispatch, requireDispatch, resolveInputs, runRules, workflow } from "./processing";
+import { actionsRunUrl } from "./platform-ingestion-dispatch";
+import { allowedModes, queue, queueability, requireDispatch, RESETTABLE, resolveInputs, workflow } from "./processing";
 import { Twitch } from "./twitch";
 import { safeObjectKey } from "./visibility";
 
@@ -284,7 +286,7 @@ const chunkAttention = (where: string, at: string) => `SELECT c.id,c.vod_id AS r
   v.source||' '||v.source_id||' chunk '||c.chunk_index AS label,c.last_error AS error,${at} AS at
   FROM chunks c JOIN vods v ON v.id=c.vod_id WHERE ${where}`;
 const attentionGroups: Record<OpsAttentionKind, { sql: string; target: OpsAttentionTarget["kind"] }> = {
-  exhausted_chunk: { target: "chunk", sql: chunkAttention("c.status='failed' AND c.attempt_count>=3", "c.updated_at") },
+  exhausted_chunk: { target: "chunk", sql: chunkAttention("c.status='failed' AND c.attempt_count>=c.max_attempts", "c.updated_at") },
   expired_lease: { target: "chunk", sql: chunkAttention(`c.status='processing' AND c.lease_expires_at<${sqlNow}`, "c.lease_expires_at") },
   stale_queued: { target: "chunk", sql: chunkAttention("c.status='queued' AND c.queued_at<strftime('%Y-%m-%dT%H:%M:%fZ','now','-30 minutes')", "c.queued_at") },
   failing_ingestion: { target: "ingestion_job", sql: `SELECT j.id,NULL AS recording_id,j.source||' '||j.kind||' '||j.source_id AS label,j.last_error AS error,
@@ -392,7 +394,7 @@ interface RunRow {
   chunk_id: string;
   origin: OpsRun["origin"];
   requested_by: string | null;
-  inputs: string;
+  inputs: string | null;
   status: OpsRun["status"];
   queued_at: string;
   claimed_at: string | null;
@@ -404,18 +406,17 @@ interface RunRow {
   detections_count: number | null;
 }
 function toOpsRun(row: RunRow): OpsRun {
-  const run = row.github_run_id && `https://github.com/liftaris/bazaar-ghost/actions/runs/${row.github_run_id}`;
   return {
     id: row.id,
     chunkId: row.chunk_id,
     origin: row.origin,
     requestedBy: row.requested_by,
-    inputs: JSON.parse(row.inputs),
+    inputs: row.inputs === null ? null : JSON.parse(row.inputs),
     status: row.status,
     queuedAt: row.queued_at,
     claimedAt: row.claimed_at,
     finishedAt: row.finished_at,
-    githubRunUrl: run ? run + (row.github_run_attempt ? `/attempts/${row.github_run_attempt}` : "") : null,
+    githubRunUrl: row.github_run_id === null ? null : actionsRunUrl(row.github_run_id, row.github_run_attempt),
     error: row.error,
     framesProcessed: row.frames_processed,
     detections: row.detections_count,
@@ -440,27 +441,54 @@ async function chunkDetail(env: Env, url: URL, id: string): Promise<OpsRoutes["/
   const chunk = await one<ChunkRow>(env, `SELECT ${chunkColumns} FROM chunks WHERE id=?`, id);
   if (!chunk) throw new HttpError(404, "Chunk not found");
   const [found, detections, history] = await Promise.all([recording(env, chunk.vod_id), detectionRows(env, "d.chunk_id", id), runs(env, "chunk_id", id)]);
-  // The workflow verifies the runtime image against this deployment's commit, so only mode and quality carry over from the latest run.
-  const latest = history[0]?.inputs;
+  const latest = history.find((run) => run.inputs)?.inputs;
   return {
     chunk: toOpsChunk(chunk),
     recording: found,
     detections: detections.map(toOpsDetectionRow),
     runs: history,
-    runDefaults: { inputs: resolveInputs(env, latest ? { mode: latest.mode, quality: latest.quality } : {}), ...runRules(env) },
+    runDefaults: { inputs: resolveInputs(env, latest ? { mode: latest.mode, quality: latest.quality } : {}), allowedModes: allowedModes(env) },
   };
 }
 
 const REPROCESS_LIMIT = 50;
-async function reprocess(req: Request, env: AuthEnv, identity: Identity): Promise<OpsReprocessResponse> {
+async function reprocessRecording(env: Env, identity: Identity, vodId: number, ids: string[], inputs: RunInputs, dryRun: boolean): Promise<OpsReprocessRecording> {
+  const refused = (error: HttpError) => ({
+    recordingId: vodId, chunkIds: [], runIds: [], payload: null, skipped: ids.map((chunkId) => ({ chunkId, reason: error.message })), error: error.message, status: error.status,
+  });
+  try {
+    const flow = await workflow(env, vodId, inputs);
+    if (dryRun) {
+      const reasons = await queueability(env, flow, ids);
+      const queueable = reasons.filter((row) => row.reason === null).map((row) => row.chunk_id);
+      return {
+        recordingId: vodId,
+        chunkIds: queueable,
+        runIds: [],
+        payload: queueable.length ? flow.payload(queueable, null) : null,
+        skipped: reasons.flatMap((row) => (row.reason === null ? [] : [{ chunkId: row.chunk_id, reason: row.reason }])),
+      };
+    }
+    const queued = await queue(env, flow, ids, { origin: "operator", requestedBy: identity.userId });
+    const missed = ids.filter((id) => !queued.chunkIds.includes(id));
+    const reasons = missed.length ? await queueability(env, flow, missed) : [];
+    return { recordingId: vodId, ...queued, skipped: reasons.map((row) => ({ chunkId: row.chunk_id, reason: row.reason ?? "Chunk changed while queueing" })) };
+  } catch (error) {
+    if (error instanceof HttpError) return refused(error);
+    throw error;
+  }
+}
+async function reprocess(req: Request, env: AuthEnv, identity: Identity): Promise<Response> {
   await requireCsrf(req, env, identity);
   const data = await jsonBody(req);
   only(data, ["chunk_ids", "inputs", "dry_run"]);
   requireValue(Array.isArray(data.chunk_ids) && data.chunk_ids.length >= 1 && data.chunk_ids.length <= REPROCESS_LIMIT,
     `chunk_ids must list 1 to ${REPROCESS_LIMIT} chunks`);
   requireValue(data.dry_run === undefined || typeof data.dry_run === "boolean", "Invalid dry_run");
+  const dryRun = data.dry_run === true;
   const ids = [...new Set(data.chunk_ids.map((id) => uuid(id).toLowerCase()))];
   const inputs = resolveInputs(env, data.inputs ?? {});
+  if (!dryRun) requireDispatch(env);
   const found = await rows<{ id: string; vod_id: number; status: ChunkStatus }>(
     env,
     "SELECT id,vod_id,status FROM chunks WHERE id IN(SELECT value FROM json_each(?))",
@@ -469,51 +497,16 @@ async function reprocess(req: Request, env: AuthEnv, identity: Identity): Promis
   const byId = new Map(found.map((chunk) => [chunk.id, chunk]));
   const missing = ids.filter((id) => !byId.has(id));
   if (missing.length) throw new HttpError(404, `Unknown chunks: ${missing.join(",")}`);
-  const active = found.filter((chunk) => chunk.status === "queued" || chunk.status === "processing").map((chunk) => chunk.id);
-  if (active.length) throw new HttpError(409, `Chunks already queued or processing: ${active.join(",")}`);
+  const busy = found.filter((chunk) => !RESETTABLE.includes(chunk.status));
+  if (busy.length) throw new HttpError(409, `Chunks cannot be reprocessed: ${busy.map((chunk) => `${chunk.id} is ${chunk.status}`).join(", ")}`);
   const groups = new Map<number, string[]>();
-  for (const id of ids) {
-    const vodId = byId.get(id)!.vod_id;
-    groups.set(vodId, [...(groups.get(vodId) ?? []), id]);
-  }
-  const vodIds = [...groups.keys()];
-  const eligibility = new Map((await rows<{ id: number; availability: string; ready_for_processing: number; processing_enabled: number }>(
-    env,
-    "SELECT id,availability,ready_for_processing,processing_enabled FROM vod_processing_context WHERE id IN(SELECT value FROM json_each(?))",
-    JSON.stringify(vodIds),
-  )).map((vod) => [vod.id, vod]));
-  for (const vodId of vodIds) {
-    const vod = eligibility.get(vodId)!;
-    const reason = vod.availability !== "available" ? `is ${vod.availability}`
-      : !vod.ready_for_processing ? "is not ready for processing" : !vod.processing_enabled ? "has processing disabled" : null;
-    if (reason) throw new HttpError(409, `Recording ${vodId} ${reason}`);
-  }
-  const prepared = await Promise.all(vodIds.map((vodId) => workflow(env, vodId, inputs)));
-  if (data.dry_run)
-    return {
-      dispatched: false,
-      recordings: vodIds.map((vodId, i) => ({ recordingId: vodId, chunkIds: groups.get(vodId)!, payload: prepared[i].payload(groups.get(vodId)!, null), runIds: [] })),
-    };
-  requireDispatch(env);
-  await atomic(env, [
-    ...vodIds.map((vodId) => ({
-      sql: "EXISTS(SELECT 1 FROM vod_processing_context WHERE id=? AND availability='available' AND ready_for_processing=1 AND processing_enabled=1)",
-      args: [vodId],
-    })),
-    { sql: "NOT EXISTS(SELECT 1 FROM chunks WHERE id IN(SELECT value FROM json_each(?)) AND status IN('queued','processing'))", args: [JSON.stringify(ids)] },
-  ], [statement(
-    env,
-    `UPDATE chunks SET status='pending',attempt_count=0,last_error=NULL,claim_token=NULL,completed_at=NULL,lease_expires_at=NULL,scheduled_for=NULL,updated_at=?
-    WHERE id IN(SELECT value FROM json_each(?))`,
-    now(),
-    JSON.stringify(ids),
-  )]);
-  const recordings: OpsReprocessResponse["recordings"] = [];
-  for (const vodId of vodIds) {
-    const sent = await dispatch(env, vodId, { only: groups.get(vodId), inputs, requestedBy: identity.userId });
-    recordings.push({ recordingId: vodId, chunkIds: sent.chunkIds, payload: sent.batches[0]?.payload ?? null, runIds: sent.batches.flatMap((batch) => batch.runIds) });
-  }
-  return { dispatched: true, recordings };
+  for (const chunk of ids.map((id) => byId.get(id)!)) groups.set(chunk.vod_id, [...(groups.get(chunk.vod_id) ?? []), chunk.id]);
+  const recordings: Array<OpsReprocessRecording & { status?: number }> = [];
+  for (const [vodId, chunkIds] of groups) recordings.push(await reprocessRecording(env, identity, vodId, chunkIds, inputs, dryRun));
+  const body: OpsReprocessResponse = { dispatched: !dryRun, recordings: recordings.map(({ status: _, ...recording }) => recording) };
+  if (recordings.some((recording) => recording.chunkIds.length)) return Response.json(body);
+  const status = recordings.some((recording) => recording.status === 502) ? 502 : 409;
+  return Response.json({ ...body, error: dryRun ? "No chunk would queue" : "No chunk was queued" }, { status });
 }
 
 async function ownedChannels(env: Env, streamerIds: number[]) {
@@ -756,7 +749,7 @@ async function ingestion(env: Env, url: URL): Promise<OpsIngestion> {
     dispatch: dispatch && {
       state: dispatch.state,
       outcome: dispatch.outcome,
-      runUrl: dispatch.run_id ? `https://github.com/liftaris/bazaar-ghost/actions/runs/${dispatch.run_id}` : null,
+      runUrl: dispatch.run_id ? actionsRunUrl(dispatch.run_id) : null,
       startedAt: dispatch.started_at,
       finishedAt: dispatch.finished_at,
       deliveryFailures: dispatch.delivery_failures,
@@ -821,7 +814,7 @@ export async function opsRoute(req: Request, env: AuthEnv): Promise<Response> {
     const identity = await requireOperator(req, env);
     if (path === "/reprocess") {
       if (req.method !== "POST") throw new HttpError(405, "Method not allowed");
-      return privateResponse(Response.json(await reprocess(req, env, identity)));
+      return privateResponse(await reprocess(req, env, identity));
     }
     if (req.method !== "GET") throw new HttpError(405, "Method not allowed");
     if (path.startsWith("/images/")) return await image(env, url, path.slice("/images/".length));

@@ -13,7 +13,7 @@ import {
   statement,
   uuid,
 } from "./http";
-import { claim, dispatch, failQueued, plan, updateChunk, vodDetails } from "./processing";
+import { claim, dispatch, failQueued, githubRun, plan, recordGithubRun, resolveInputs, updateChunk, vodDetails } from "./processing";
 import { clearChunk, publish, upload } from "./detections";
 import { infer } from "./sfde-inference";
 import { retryVod, setProfile, setStreamer } from "./admin";
@@ -210,20 +210,23 @@ async function route(req: Request, env: Env): Promise<Response> {
         ),
       );
     }
-    if (path === `${prefix}/fail-queued` && req.method === "POST") {
+    if ((path === `${prefix}/fail-queued` || path === `${prefix}/github-run`) && req.method === "POST") {
       const input = await body(req);
       requireValue(
         Array.isArray(input.ids) && input.ids.length <= 256,
         "Invalid chunk IDs",
       );
       input.ids.forEach(uuid);
+      const github = githubRun(input);
       if (!input.queued_at) return Response.json({ updated: 0 });
       requireValue(
         typeof input.queued_at === "string" &&
           Number.isFinite(Date.parse(input.queued_at)),
         "Invalid dispatch timestamp",
       );
-      const updated = await failQueued(env, input.ids, input.queued_at, String(input.error || "Runner preparation failed").slice(0, 2000));
+      const updated = path === `${prefix}/github-run`
+        ? await recordGithubRun(env, input.ids, input.queued_at, github)
+        : await failQueued(env, input.ids, input.queued_at, String(input.error || "Runner preparation failed").slice(0, 2000), github);
       return Response.json({ updated });
     }
     const match = path.match(
@@ -248,7 +251,7 @@ async function route(req: Request, env: Env): Promise<Response> {
           await claim(env, id, input.queued_at ?? null, {
             profile: input.expected_profile, oldTemplates: input.expected_old_templates,
             processorMode: input.processor_mode,
-          }, { runId: input.github_run_id, runAttempt: input.github_run_attempt }),
+          }, githubRun(input)),
         );
       }
       if (!action && req.method === "PATCH")
@@ -326,7 +329,7 @@ async function route(req: Request, env: Env): Promise<Response> {
     );
     const ids = input.dry_run
       ? (await plan(env, vod.id)).map((c) => c.id)
-      : (await dispatch(env, vod.id)).chunkIds;
+      : (await dispatch(env, vod.id, { origin: "manual", inputs: resolveInputs(env, {}) })).chunkIds;
     return Response.json({
       success: true,
       vod_id: vod.id,

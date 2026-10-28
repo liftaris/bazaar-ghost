@@ -297,6 +297,7 @@ it("failed GitHub dispatch releases only its queued chunks", async () => {
         GITHUB_TOKEN: "test",
       },
       1,
+      { origin: "manual", inputs: { mode: "legacy", quality: "480p", runtime_image: null } },
     ),
   ).rejects.toThrow("500");
   expect(
@@ -355,6 +356,7 @@ it("concurrent GitHub dispatches submit all chunks exactly once regardless of th
         GITHUB_TOKEN: "test",
       },
       1,
+      { origin: "manual", inputs: { mode: "legacy", quality: "480p", runtime_image: null } },
     ),
     dispatch(
       {
@@ -364,6 +366,7 @@ it("concurrent GitHub dispatches submit all chunks exactly once regardless of th
         GITHUB_TOKEN: "test",
       },
       1,
+      { origin: "manual", inputs: { mode: "legacy", quality: "480p", runtime_image: null } },
     ),
   ]);
   expect(
@@ -513,9 +516,9 @@ it('retries failed processing after backoff, fences the old owner, and stops at 
   expect((await one(env, 'SELECT attempt_count FROM chunks WHERE id=?', chunk.id))!.attempt_count).toBe(3);
 });
 
-it('leaves GitHub-queued chunks alone until a runner claims them', async () => {
+it('leaves GitHub-queued chunks alone until a runner claims them or they go stale', async () => {
   const [chunk] = await planned();
-  const queuedAt = '2000-01-01T00:00:00Z';
+  const queuedAt = new Date(Date.now() - 59 * 60_000).toISOString();
   await statement(env, "UPDATE chunks SET status='queued',queued_at=? WHERE id=?", queuedAt, chunk.id).run();
   for (let sweep = 0; sweep < 3; sweep++) {
     await recover(env);
