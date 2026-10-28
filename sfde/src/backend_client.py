@@ -74,6 +74,10 @@ class BackendClient:
             'queued_at': os.getenv('QUEUED_AT') or None,
             'expected_old_templates': expected_old_templates,
         }
+        for field in ('github_run_id', 'github_run_attempt'):
+            value = os.getenv(field.upper(), '')
+            if value.isdigit() and int(value) > 0:
+                payload[field] = int(value)
         if processor_mode == 'next':
             target = urlparse(self.url)
             local = target.hostname in ('localhost', '127.0.0.1', '::1', 'host.docker.internal')

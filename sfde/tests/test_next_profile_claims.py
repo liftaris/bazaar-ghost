@@ -11,7 +11,8 @@ from sfde import SFDEProcessor
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setenv('ENVIRONMENT', 'local')
-    monkeypatch.delenv('QUEUED_AT', raising=False)
+    for name in ('QUEUED_AT', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT'):
+        monkeypatch.delenv(name, raising=False)
     client = BackendClient.__new__(BackendClient)
     client.url = 'http://localhost:8787'
     client.claims = {}

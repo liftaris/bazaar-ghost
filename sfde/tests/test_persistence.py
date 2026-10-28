@@ -49,7 +49,8 @@ def client(monkeypatch):
     value.retry_attempts, value.claims = 2, {'abc': 'claim-token'}
     value._request = Mock(return_value={'storage_path': '/detections/123/abc/claim-token/detection_14.jpg'})
     monkeypatch.setattr('backend_client.time.sleep', lambda _: None)
-    monkeypatch.delenv('QUEUED_AT', raising=False)
+    for name in ('QUEUED_AT', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT'):
+        monkeypatch.delenv(name, raising=False)
     return value
 
 def matchup():
@@ -103,6 +104,21 @@ def test_claim_carries_prepared_profile_template_and_dispatch_fences(client, mon
     client._request.assert_called_once_with('chunks/new/claim', 'POST', {
         'queued_at': '2026-09-07T00:00:00.000Z', 'expected_profile': PROFILE,
         'expected_old_templates': old,
+    })
+
+
+@pytest.mark.parametrize('run_id,attempt,expected', [
+    ('987654321', '2', {'github_run_id': 987654321, 'github_run_attempt': 2}),
+    ('', '', {}),
+    ('0', 'x', {}),
+])
+def test_claim_reports_the_github_run_that_owns_it(client, monkeypatch, run_id, attempt, expected):
+    monkeypatch.setenv('GITHUB_RUN_ID', run_id)
+    monkeypatch.setenv('GITHUB_RUN_ATTEMPT', attempt)
+    client._request.return_value = {'claimed': True, 'claim_token': 'new-token'}
+    assert client.claim_chunk('new', expected_profile=PROFILE, expected_old_templates=False)
+    client._request.assert_called_once_with('chunks/new/claim', 'POST', {
+        'queued_at': None, 'expected_profile': PROFILE, 'expected_old_templates': False, **expected,
     })
 
 
