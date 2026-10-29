@@ -47,11 +47,16 @@ def task_prompt(protocol):
     return document[protocol['promptSelector']] if protocol['promptSelector'] else document
 
 
-def guarded(row):
+def historical_guarded(row):
     protocol = MANIFEST['protocols'][row['protocolId']]
-    assert protocol['guardCompatible'], 'Do not apply current guard to another task protocol'
-    # Transport-only adapter: original result/answers/probabilities are unchanged.
-    return parse_hero({'status': 'ok', 'result': cached(row)['response']['result']}, 'ghost_hero')
+    assert protocol['guardCompatible'], 'Do not apply historical guard to another task protocol'
+    answer = cached(row)['response']['result']['answers']['hero']
+    scores = answer['probabilities']
+    ordered = sorted(scores.values(), reverse=True)
+    hero = answer['choice']
+    if max(scores, key=scores.get) != hero or scores[hero] < .60 or ordered[0]-ordered[1] < .30:
+        return None, None
+    return canonical(hero), scores[hero]
 
 
 def test_corpus_bounds_and_recording_level_provenance():
@@ -237,11 +242,11 @@ COMPATIBLE = [row['id'] for row in RESPONSES.values()
 
 
 @pytest.mark.parametrize('id', COMPATIBLE)
-def test_current_guard_on_compatible_cached_eight_choice_results(id):
+def test_historical_060_030_guard_on_compatible_cached_eight_choice_results(id):
     row = RESPONSES[id]
     prompt = task_prompt(MANIFEST['protocols'][row['protocolId']])
     assert {canonical(key) for key in prompt['questions']['hero']['criteria']} == HEROES
-    hero, confidence = guarded(row)
+    hero, confidence = historical_guarded(row)
     assert hero == row['expectedGuardHero']
     if hero is None:
         assert confidence is None
@@ -264,7 +269,7 @@ def test_required_historical_failures_are_retained_not_corrected_or_hidden():
         assert cached(row)['response']['result']['answers']['hero']['choice'] == 'Mak'
         assert CONTEXTS[row['contextId']]['hero'] == 'pygmalien'
     # This is a known accepted wrong answer, not an xfail or expected abstention.
-    assert guarded(RESPONSES['p03-overlay-pygmalien-480-robustness-half-eight'])[0] == 'mak'
+    assert historical_guarded(RESPONSES['p03-overlay-pygmalien-480-robustness-half-eight'])[0] == 'mak'
     assert cached(RESPONSES['p03-overlay-pygmalien-480-experimental-cues'])['response']['result']['answers']['identity_glow']['choice'] == 'unknown'
     assert cached(RESPONSES['p03-overlay-pygmalien-480-experimental-visibility'])['response']['result']['answers']['identity_visibility']['choice'] == 'clear'
 
@@ -281,17 +286,54 @@ def test_selective_counts_report_wrong_and_unknown_without_claiming_accuracy():
         raw_counts['unknown' if choice in ('unknown', 'obstructed') else
                    'correct' if choice == context['hero'] else 'wrong'] += 1
         if MANIFEST['protocols'][row['protocolId']]['guardCompatible']:
-            hero, _ = guarded(row)
+            hero, _ = historical_guarded(row)
             guard_counts['unknown' if hero is None else 'correct' if hero == context['hero'] else 'wrong'] += 1
     assert raw_counts == {'correct': 10, 'wrong': 7, 'unknown': 1}
     assert guard_counts == {'correct': 5, 'wrong': 1, 'unknown': 5}
     assert excluded == {'transition_responses': 1}
     transition = CONTEXTS['p06-transition-jules-480']
     assert transition['stableIntro'] is False and transition['identityEligible'] is False
-    assert guarded(RESPONSES['p06-transition-jules-480-robustness-half-eight']) == (None, None)
+    assert historical_guarded(RESPONSES['p06-transition-jules-480-robustness-half-eight']) == (None, None)
     print('Saved-output regression counts (correlated protocol replays, NOT independent accuracy):',
-          {'raw_stable': dict(raw_counts), 'compatible_guard_stable': dict(guard_counts),
-           'excluded': dict(excluded)})
+          {'raw_stable': dict(raw_counts), 'historical_060_030_guard_stable': dict(guard_counts),
+            'excluded': dict(excluded)})
+
+
+CURRENT_POLICY_REPLAY = {
+    'm01-original-half-eight': 'mak',
+    'm01-resize640-half-eight': 'pygmalien',
+    'm05-original-half-eight': 'dooley',
+    'm05-resize640-half-eight': 'dooley',
+    'm09-original-half-eight': 'mak',
+    'm09-resize640-half-eight': 'mak',
+    'm15-original-half-eight': 'vanessa',
+    'm15-resize640-half-eight': 'vanessa',
+    'p01-youtube-dragons-360-robustness-half-eight': 'the_dragons',
+    'p03-overlay-pygmalien-480-robustness-half-eight': 'mak',
+    'p04-drummer-pygmalien-480-robustness-half-eight': 'pygmalien',
+    'p06-transition-jules-480-robustness-half-eight': None,
+}
+
+
+def test_current_policy_on_old_prompt_outputs_is_not_winning_prompt_accuracy():
+    assert set(CURRENT_POLICY_REPLAY) == set(COMPATIBLE)
+    counts = Counter()
+    for id, expected in CURRENT_POLICY_REPLAY.items():
+        row = RESPONSES[id]
+        result = cached(row)['response']['result']
+        hero, confidence = parse_hero({'status': 'ok', 'result': result}, 'ghost_hero')
+        assert hero == expected
+        if hero is None:
+            assert confidence is None
+        else:
+            answer = result['answers']['hero']
+            assert confidence == answer['probabilities'][answer['choice']]
+        context = CONTEXTS[row['contextId']]
+        if context['identityEligible']:
+            counts['unknown' if hero is None else 'correct' if hero == context['hero'] else 'wrong'] += 1
+    assert counts == {'correct': 9, 'wrong': 2}
+    assert CURRENT_POLICY_REPLAY['m01-original-half-eight'] != CONTEXTS['m01']['hero']
+    assert CURRENT_POLICY_REPLAY['p03-overlay-pygmalien-480-robustness-half-eight'] != CONTEXTS['p03-overlay-pygmalien-480']['hero']
 
 
 @pytest.mark.parametrize('row', MANIFEST['nameVisibility'], ids=lambda row: row['id'])

@@ -109,7 +109,7 @@ export async function infer(env: Env, req: Request, chunkId: string): Promise<In
   const embeddedImage = image(input.image_base64);
   const prompt = inferencePrompt(task);
   const model = task === "clock_day" ? "@cf/cloudflare/clairic" : "@cf/cloudflare/clef-flash";
-  const promptVersion = `${task === "clock_day" ? "day-medallion-v2" : "hero-eight-v1"}:${await sha256(JSON.stringify(prompt))}`;
+  const promptVersion = `${task === "clock_day" ? "day-medallion-v2" : "hero-skins-v2"}:${await sha256(JSON.stringify(prompt))}`;
   const response = (status: InferenceResponse["status"], result: JsonObject | null = null, usage: JsonObject | null = null): InferenceResponse =>
     ({ status, task, model, prompt_version: promptVersion, result, usage, cached: false });
   if (env.SFDE_AI_ENABLED !== "true" || !["local", "validation"].includes(env.ENVIRONMENT) || !env.AI) return response("disabled");

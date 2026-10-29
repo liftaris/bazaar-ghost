@@ -20,12 +20,17 @@ ghost IDs, six stable; together with encounter-corpus Stelle there are eight IDs
 Preserved failures include full-frame Dooley/Mak/wrestling Vanessa → left Stelle,
 original eight-choice m01 Pygmalien → Mak, earlier wrestling Vanessa → unknown,
 and overlaid green Pygmalien → Mak in three distinct prompt protocols. The
-current exploratory guard **still accepts the wrong overlaid Mak**. Passing CI
+historical `.60/.30` guard **accepts the wrong overlaid Mak**. Passing CI
 means these observations remain reproducible, not that the classifier is fixed.
 
+The `hero-skins-v2` prompt and its `.33/.05` policy have separate real-response
+fixtures in `../hero_skins_v2/`. They correctly identify the overlaid Pygmalien.
+This folder retains the original responses and historical expectations. Replaying
+them through the new policy measures threshold sensitivity, not new-prompt accuracy.
+
 `test_hero_regressions.py` verifies hashes/dimensions/crop lineage, original prompt
-and input binding, all answer distributions, and actual `parse_hero` results for
-compatible eight-choice tasks. Ten-choice and experimental prompts are not
+and input binding, all answer distributions, historical guard outcomes, and a
+separate current `parse_hero` replay for compatible eight-choice tasks. Ten-choice and experimental prompts are not
 silently treated as current-runtime protocols. The transport adapter adds only
 `status: ok`; it does not edit the saved result. Original response files and
 their original hashes are retained byte-for-byte; historical request path strings
@@ -33,7 +38,7 @@ are metadata only and are never resolved. No credentials, signed URLs or image
 base64 are included. Run with normal network-disabled CI, never live inference.
 
 On stable contexts, the 18 correlated saved protocol outputs contain **10 correct,
-7 wrong, 1 unknown**. The compatible guard subset has **5 correct, 1 wrong,
+7 wrong, 1 unknown**. The compatible historical guard subset has **5 correct, 1 wrong,
 5 unknown** across 11 stable replays; one transition replay is separately
 excluded and rejected. These are fixture counts, **not independent accuracy**.
 All five partial/uncertain names remain unsearchable; historical annotations are
