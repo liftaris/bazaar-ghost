@@ -1,0 +1,20 @@
+{
+  "model": "clef-flash",
+  "state": "Classify the illustrated playable hero from The Bazaar, allowing any cosmetic skin. Identify the character rather than costume colors, occupation, props or background. For mounted characters identify the rider. Distinguish a robot character from a visible woman piloting machinery. Ignore game UI, text, overlays and webcam people.",
+  "questions": {
+    "hero": {
+      "type": "choice",
+      "instructions": "Which underlying hero does the character artwork depict?",
+      "criteria": {
+        "Dooley": "A robot character with a rounded body and a circular mechanical face or core showing a glowing expressive face. No human pilot. Includes flower-covered tropical drink-tank robot, little robot riding a tribal dragon saddle, and round rocket-powered flying superhero robot with helmet and cape.",
+        "Vanessa": "A pirate woman with two arms, pointed ears, sharp features and dark swept-back hair, sometimes purple accents or a headband. Often a green sleeveless crop top, red trousers, belt, sword or gun. Skins change her costume. Two arms, unlike four-armed Jules. Includes the cyberpunk sword-wielding woman with black twin hair buns, straight bangs, blue eye visor and red-and-green armor.",
+        "The Dragons": "Two horned or pointed-eared humanoid people together, a female and a male, often singer and guitarist. A duo of people, not a robot or an animal dragon mount.",
+        "Pygmalien": "A large pig or boar man with a snout, tusks, pointed pig ears and often a thick beard. Includes the pig scientist holding green chemicals and the stout bearded explorer riding a saddle animal, holding a map and binoculars. The mounted explorer is Pygmalien, not Mak. Includes the short stocky white-shirted technology merchant with cybernetic blue eyepiece and floating gems; and the green-coated bearded card player with a large green snake companion. A beard does not make the pig man human. His snout and tusks can be partly covered by an overlay.",
+        "Jules": "A woman with four arms, pointed ears and purple or pink skin or hair. Includes chef and tropical beach costumes, and the purple-haired wrestler in lavender armor with a white feather boa holding pies. Arms can overlap or be partly hidden. Distinct from the two-armed pirate Vanessa. Also includes the purple-skinned secret agent with curled purple hair, feather hair ornament, pistol and cocktail; and the purple-haired mother driving a pink scooter with her child. Extra arms may be outside a cropped portrait.",
+        "Mak": "A bearded human man with an angular human nose and thick eyebrows, often alchemist or wizard. Human facial anatomy, without pig snout or tusks. Includes the smiling long-haired bearded rock star with bare chest, white fur coat and green gems; and the bearded jungle explorer with broad gold or green feathered headdress, central forehead gem and turquoise face paint. These are Mak, not Karnok.",
+        "Stelle": "A dark-skinned woman with reddish-brown hair and goggles, engineering or aviation equipment. Includes musical, flower-wing and yellow dress skins, a woman in a yellow duck float beneath a blue umbrella, and a visible dark-skinned human woman piloting a yellow exosuit with many robotic tool arms. Her human face is visible; she is not a standalone robot.",
+        "Karnok": "A muscular male hunter in fur or feathers, or his shaggy fanged beast form. Includes wolf headdress and mechanical bird headdress with wings."
+      }
+    }
+  }
+}

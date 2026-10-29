@@ -11,6 +11,7 @@ import subprocess
 import threading
 from types import SimpleNamespace
 from unittest.mock import Mock
+from uuid import NAMESPACE_URL, uuid5
 
 import cv2
 import numpy as np
@@ -394,6 +395,8 @@ def test_inference_hero_halves_full_height_bounded_no_upscale_and_unknown_name()
     enrich.enrich(result)
     assert result['username'] is None and result['ghost_hero'] == 'stelle'
     assert [c.kwargs['task'] for c in backend.infer.call_args_list] == ['ghost_hero', 'streamer_hero']
+    for role in ('ghost_hero', 'streamer_hero'):
+        assert result['field_evidence'][role]['selection_reason'].endswith(';hero_skins_v2_top033_margin005_uncalibrated')
     for call in backend.infer.call_args_list:
         encoded = base64.b64decode(call.kwargs['image_base64'])
         assert encoded.startswith(b'\x89PNG')
@@ -402,6 +405,25 @@ def test_inference_hero_halves_full_height_bounded_no_upscale_and_unknown_name()
     source = dict(next(iter(result['_images'].values())), jpeg=cv2.imencode('.jpg', np.zeros((1080, 1920, 3), np.uint8))[1].tobytes())
     png = enrich._png(source, [960, 0, 960, 1080])
     assert cv2.imdecode(np.frombuffer(base64.b64decode(png), np.uint8), 1).shape[:2] == (640, 569)
+
+
+def test_hero_request_version_changes_uuid_but_day_identity_is_unchanged():
+    backend = Mock()
+    backend.infer.side_effect = lambda _, **kwargs: response(kwargs['task'])
+    result = event()
+    source = result['_images'][result['_hero_ms']]
+    enrich = EncounterEnricher(backend)
+    for task in ('ghost_hero', 'streamer_hero', 'clock_day'):
+        for _ in range(2):
+            enrich._infer(deepcopy(result), task, source, [0, 0, 32, 36])
+    ids = [call.kwargs['request_id'] for call in backend.infer.call_args_list]
+    assert ids[0] == ids[1] and ids[2] == ids[3] and ids[4] == ids[5]
+    assert len(set(ids)) == 3
+    for task, actual in zip(('ghost_hero', 'streamer_hero', 'clock_day'), ids[::2]):
+        seed = f'{result["id"]}:{task}:{source["at_ms"]}:'
+        assert actual == str(uuid5(NAMESPACE_URL, seed + ('day-medallion-v2' if task == 'clock_day' else 'hero-skins-v2')))
+        if task != 'clock_day':
+            assert actual != str(uuid5(NAMESPACE_URL, seed + 'v1'))
 
 
 @pytest.mark.parametrize('value', [None, [], {}, {'status':'ok','result':{'hero':[]}},
@@ -975,16 +997,14 @@ def test_single_intro_still_checks_both_heroes_without_a_stable_pair():
 
 
 @pytest.mark.parametrize('role',['ghost_hero','streamer_hero'])
-def test_original_exploratory_hero_guard_both_roles_not_a_calibration(role):
-    scores = {h:(.60 if h=='stelle' else .30 if h=='mak' else .10/6) for h in HEROES}
-    assert parse_hero(response(role,probabilities=scores),role) == ('stelle',.60)
-    scores['stelle'],scores['mak'] = .59,.31
-    assert parse_hero(response(role,probabilities=scores),role) == (None,None)
-    scores['stelle'],scores['mak'] = .64,.35
-    # Fix total to one; margin, not a newly invented .8/.9 role floor, abstains.
-    for h in HEROES-{'stelle','mak'}:
-        scores[h] = .01/6
-    assert parse_hero(response(role,probabilities=scores),role) == (None,None)
+@pytest.mark.parametrize('top,runner,accepted', [
+    (.33, .28, True), (.3299, .20, False),
+    (.33, .2801, False), (.50, .45, True), (.50, .4501, False), (.50, .4499, True),
+    (.80, .10, True),
+])
+def test_hero_skins_policy_both_roles(top, runner, accepted, role):
+    scores = {h:(top if h == 'stelle' else runner if h == 'mak' else (1-top-runner)/6) for h in HEROES}
+    assert parse_hero(response(role, probabilities=scores), role) == (('stelle', top) if accepted else (None, None))
 
 
 def test_hero_evidence_does_not_depend_on_prefight_day_proof():
