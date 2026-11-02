@@ -18,11 +18,16 @@ RECORDS = {r['id']: r for r in json.loads((ROOT / 'manifest.json').read_text())[
 LOCATION = {'name_region': [10, 8, 100, 24], 'complete': True, 'name_state': 'unreadable'}
 
 
-def reader_with(native, mask=()):
-    return SimpleNamespace(predict=Mock(side_effect=[
-        [{'rec_texts': [t for t, _ in output], 'rec_scores': [c for _, c in output]}]
-        for output in (native, mask)
-    ]))
+def reader_with(native):
+    return SimpleNamespace(predict=Mock(return_value=[
+        {'rec_texts': [t for t, _ in native], 'rec_scores': [c for _, c in native]}]))
+
+
+def box(left, top, right, bottom):
+    return [[left, top], [right, top], [right, bottom], [left, bottom]]
+
+
+OCR_OPTIONS = {'text_rec_score_thresh': 0., 'text_det_unclip_ratio': 2.5}
 
 
 @pytest.mark.parametrize('text,confidence,complete,state', [
@@ -43,31 +48,30 @@ def test_first_word_is_username_and_exact_native_text_survives_in_evidence(text,
     assert (result['username'], result['confidence'], result['name_state']) == (text.split()[0], confidence, state)
     assert json.loads(result['raw_text'])['native'] == [[text, confidence]]
     # Override the shared reader's .5 recognition filter only for this call.
-    assert reader.predict.call_args_list[0].kwargs == {'text_rec_score_thresh': 0.}
+    assert reader.predict.call_args_list[0].kwargs == OCR_OPTIONS
     assert np.array_equal(reader.predict.call_args_list[0].args[0], frame[8:32, 10:110])
 
 
-def test_multi_box_output_keeps_first_word_and_preserves_every_token_in_evidence():
+def test_multi_box_output_without_geometry_joins_tokens_and_preserves_every_token_in_evidence():
     native = [('MiXeD!', .98), ('小猫..', .18), ('suffix-with-long-punctuation!?', .75)]
     result = NameReader(reader_with(native)).read(np.zeros((64, 160, 3), np.uint8), LOCATION)
-    assert result['username'] == 'MiXeD!'
+    assert result['username'] == 'MiXeD!小猫..suffix-with-long-punctuation!?'
     assert result['confidence'] == .18 and result['name_state'] == 'obstructed'
     assert json.loads(result['raw_text'])['native'] == [list(t) for t in native]
 
 
-def test_name_row_keeps_first_word_and_preserves_fragments_and_chat_in_evidence():
-    reader = SimpleNamespace(predict=Mock(side_effect=[[
-        {'rec_texts': ['Main', 'Frame', 'chat overlay'], 'rec_scores': [.98,.97,.99],
-         'rec_polys': [[[0,5],[35,5],[35,23],[0,23]],
-                       [[38,6],[70,6],[70,24],[38,24]],
-                       [[75,0],[99,0],[99,6],[75,6]]]}
-    ], [{'rec_texts': [], 'rec_scores': []}]]))
-    result = NameReader(reader).read(np.zeros((64,160,3),np.uint8), LOCATION)
-    assert result['username'] == 'Main'
-    assert result['name_state'] == 'obstructed'
+def test_name_row_joins_split_name_and_excludes_chat_and_overlays():
+    # Order is deliberately not left-to-right; selection sorts by position.
+    reader = SimpleNamespace(predict=Mock(return_value=[{
+        'rec_texts': ['_neuro', 'evil', 'chat overlay', 'donation: 100'],
+        'rec_scores': [.97, .98, .99, .99],
+        'rec_polys': [box(38, 5, 80, 25), box(0, 4, 35, 24), box(85, 8, 99, 18), box(82, 10, 150, 28)]}]))
+    result = NameReader(reader).read(np.zeros((64, 160, 3), np.uint8), LOCATION)
+    assert result['username'] == 'evil_neuro' and result['name_state'] == 'obstructed'
     raw = json.loads(result['raw_text'])
-    assert raw['native'][-1][0] == 'chat overlay'
-    assert raw['name_line_indices'] == [0,1]
+    assert [text for text, _ in raw['native']] == ['_neuro', 'evil', 'chat overlay', 'donation: 100']
+    assert raw['name_line_indices'] == [1, 0]
+    assert result['confidence'] == .97
 
 
 def test_threshold_only_labels_obstruction_without_erasing_text():
@@ -78,50 +82,45 @@ def test_threshold_only_labels_obstruction_without_erasing_text():
 
 
 @pytest.mark.parametrize('complete', [True, False])
-def test_six_star_mask_keeps_native_and_mask_evidence_but_no_inferred_name(complete):
-    native, mask = [('kokkkkk', .65)], [('******', .99)]
-    reader = reader_with(native, mask)
+def test_asterisk_mask_keeps_native_evidence_but_no_inferred_name(complete):
+    reader = reader_with([('******', .99)])
     result = NameReader(reader).read(np.zeros((64, 160, 3), np.uint8), dict(LOCATION, complete=complete))
     assert result['username'] is None and result['name_state'] == 'masked'
-    raw = json.loads(result['raw_text'])
-    assert raw['native'] == [['kokkkkk', .65]] and raw['mask'] == [['******', .99]]
-    assert reader.predict.call_count == 2
+    assert json.loads(result['raw_text'])['native'] == [['******', .99]]
+    assert reader.predict.call_count == 1
 
 
-@pytest.mark.parametrize('confidence', [
-    .8785881400108337, .8067374229431152, .5769968032836914, .6170768737792969,
+@pytest.mark.parametrize('text,confidence', [
+    ('******', .8785881400108337), ('********', .8067374229431152), ('*****', .5769968032836914),
+    ('k*******', .7914623022079468), ('**e***', .99),
 ])
-def test_visible_six_star_masks_use_name_confidence_threshold(confidence):
-    result = NameReader(reader_with([], [('******', confidence)])).read(
-        np.zeros((64, 160, 3), np.uint8), LOCATION)
+def test_visible_asterisk_masks_use_name_confidence_threshold(text, confidence):
+    result = NameReader(reader_with([(text, confidence)])).read(np.zeros((64, 160, 3), np.uint8), LOCATION)
     assert result['name_state'] == 'masked'
     assert result['username'] is None
     assert result['confidence'] == confidence
-    assert json.loads(result['raw_text'])['mask'] == [['******', confidence]]
 
 
-@pytest.mark.parametrize('text,confidence,threshold', [
-    ('******', .49, .5), ('******', .79, .8), ('**e***', .99, .5),
+@pytest.mark.parametrize('text,confidence,threshold,username', [
+    ('******', .49, .5, None), ('******', .79, .8, None), ('ab***cd', .99, .5, 'ab***cd'),
 ])
-def test_uncertain_masks_remain_obstructed(text, confidence, threshold):
-    result = NameReader(reader_with([], [(text, confidence)]), threshold).read(
+def test_uncertain_masks_remain_obstructed(text, confidence, threshold, username):
+    result = NameReader(reader_with([(text, confidence)]), threshold).read(
         np.zeros((64, 160, 3), np.uint8), LOCATION)
     assert result['name_state'] == 'obstructed'
-    assert result['username'] is None
-    assert json.loads(result['raw_text'])['mask'] == [[text, confidence]]
+    assert result['username'] == username
+    assert json.loads(result['raw_text'])['native'] == [[text, confidence]]
 
 
-def test_exact_source_regions_record_both_ocr_inputs_and_their_union():
+def test_one_ocr_call_on_the_exact_name_region():
     frame = np.arange(160 * 64 * 3, dtype=np.uint8).reshape(64, 160, 3)
     reader = reader_with([('Native!', .99)])
     result = NameReader(reader).read(frame, LOCATION)
-    assert result['ocr_regions'] == {'native': [10, 8, 100, 24], 'mask': [20, 6, 80, 21]}
-    assert result['region'] == [10, 6, 100, 26]
+    assert result['ocr_regions'] == {'native': [10, 8, 100, 24]}
+    assert result['region'] == [10, 8, 100, 24]
     assert json.loads(result['raw_text'])['regions'] == result['ocr_regions']
-    enlarged = cv2.resize(frame[6:27, 20:100], None, fx=4, fy=4, interpolation=cv2.INTER_LINEAR)
-    gray = cv2.cvtColor(enlarged, cv2.COLOR_BGR2GRAY)
-    binary = cv2.threshold(gray, 65, 255, cv2.THRESH_BINARY)[1]
-    assert np.array_equal(reader.predict.call_args_list[1].args[0], cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR))
+    assert reader.predict.call_count == 1
+    assert np.array_equal(reader.predict.call_args_list[0].args[0], frame[8:32, 10:110])
 
 
 @pytest.mark.parametrize('region', [None, [-1, 8, 10, 20], [10, 8, 0, 20], [10, 8, 151, 24]])
@@ -135,7 +134,7 @@ def test_unsupported_region_is_unknown_and_never_uses_unrelated_pixels(region):
 def test_empty_incomplete_region_is_obstructed_after_actually_running_ocr():
     reader = reader_with([])
     result = NameReader(reader).read(np.zeros((64, 160, 3), np.uint8), dict(LOCATION, complete=False))
-    assert reader.predict.call_count == 2
+    assert reader.predict.call_count == 1
     assert result['username'] is None and result['name_state'] == 'obstructed'
 
 
@@ -201,10 +200,10 @@ def test_real_ocr_preserves_observation_without_claiming_hidden_name_truth(locat
         x, y, w, h = location['name_region']
         location = dict(location, name_region=[x, y, round(w * .45), h])
     result = native_name_reader.read(frame, location)
-    native = json.loads(result['raw_text'])['native']
-    observed = [(text, confidence) for text, confidence in native if text.strip()]
+    raw = json.loads(result['raw_text'])
+    observed = [raw['native'][i] for i in raw['name_line_indices'] if raw['native'][i][0].strip()]
     assert observed, 'Expected visible text in this actual nameplate crop, not reconstructed truth'
-    assert result['username'] == observed[0][0].split()[0]
+    assert result['username'] == ''.join(text for text, _ in observed).split()[0]
     assert result['confidence'] == min(confidence for _, confidence in observed)
     assert result['name_state'] == 'obstructed'
     assert result['ocr_regions']['native'] == location['name_region']
