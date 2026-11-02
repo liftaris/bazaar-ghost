@@ -353,26 +353,26 @@ def test_local_name_and_clock_failure_do_not_drop_encounter():
     assert result['username'] is None and result['igd'] is None
 
 
-@pytest.mark.parametrize('raw,mask,state,username', [
-    ([('normal.', .99)], [], 'complete', 'normal.'),
-    ([('ab***cd', .99)], [], 'obstructed', 'ab***cd'),
-    ([('kokkkkk', .65)], [('******', .99)], 'masked', None),
-    ([], [('******', .89)], 'masked', None),
-    ([], [('******', .49)], 'obstructed', None),
-    ([('partial', .65)], [], 'complete', 'partial'),
-    ([('low', .25)], [], 'obstructed', 'low'),
-    ([('two', .99), ('fragments', .99)], [], 'obstructed', 'two'),
-    ([('ab cd', .99)], [], 'obstructed', 'ab'),
-    ([('kephyr\nWARS', .99)], [], 'obstructed', 'kephyr'),
-    ([(' \tMiXeD.\r\nextra', .99)], [], 'obstructed', 'MiXeD.'),
-    ([('名前\u00a0extra', .99)], [], 'obstructed', '名前'),
-    ([(' \t\r\n', .99)], [], 'unreadable', None),
+@pytest.mark.parametrize('raw,state,username', [
+    ([('normal.', .99)], 'complete', 'normal.'),
+    ([('ab***cd', .99)], 'obstructed', 'ab***cd'),
+    ([('******', .99)], 'masked', None),
+    ([('********', .89)], 'masked', None),
+    ([('******', .49)], 'obstructed', None),
+    ([('partial', .65)], 'complete', 'partial'),
+    ([('low', .25)], 'obstructed', 'low'),
+    ([('two', .99), ('fragments', .99)], 'obstructed', 'twofragments'),
+    ([('ab cd', .99)], 'obstructed', 'ab'),
+    ([('kephyr\nWARS', .99)], 'obstructed', 'kephyr'),
+    ([(' \tMiXeD.\r\nextra', .99)], 'obstructed', 'MiXeD.'),
+    ([('名前\u00a0extra', .99)], 'obstructed', '名前'),
+    ([(' \t\r\n', .99)], 'unreadable', None),
 ])
-def test_name_whole_tokens_mask_before_cleanup(monkeypatch, raw, mask, state, username):
-    monkeypatch.setattr('name_reader.tokens', Mock(side_effect=[raw, mask]))
+def test_name_whole_tokens_mask_before_cleanup(monkeypatch, raw, state, username):
+    monkeypatch.setattr('name_reader.tokens', Mock(return_value=raw))
     read = NameReader(Mock()).read(np.zeros((36, 64, 3), np.uint8), LOCATION)
     assert (read['name_state'], read['username']) == (state, username)
-    assert json.loads(read['raw_text']) == {'native': [list(r) for r in raw], 'mask': [list(r) for r in mask],
+    assert json.loads(read['raw_text']) == {'native': [list(r) for r in raw],
                                           'name_line_indices': list(range(len(raw))),
                                           'regions': read['ocr_regions']}
 
@@ -380,11 +380,11 @@ def test_name_whole_tokens_mask_before_cleanup(monkeypatch, raw, mask, state, us
 @pytest.mark.parametrize('state', ['partial', 'obstructed'])
 def test_incomplete_name_runs_ocr_and_retains_observed_fragment(state):
     reader = Mock()
-    reader.predict.side_effect = [[{'rec_texts': ['MiXeD.'], 'rec_scores': [.31]}], []]
+    reader.predict.side_effect = [[{'rec_texts': ['MiXeD.'], 'rec_scores': [.31]}]]
     read = NameReader(reader).read(np.zeros((36, 64, 3), np.uint8), dict(LOCATION, complete=False, name_state=state))
     assert read['username'] == 'MiXeD.' and read['name_state'] == 'obstructed'
     assert read['confidence'] == .31
-    assert reader.predict.call_count == 2
+    assert reader.predict.call_count == 1
 
 
 def test_inference_hero_halves_full_height_bounded_no_upscale_and_unknown_name():
