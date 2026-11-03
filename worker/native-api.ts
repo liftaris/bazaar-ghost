@@ -159,7 +159,7 @@ export async function search(env: Env, url: URL) {
   if (to) (clauses.push("p.recorded_timestamp<=?"), args.push(to));
   if (sessionId) (clauses.push("p.session_id=?"), args.push(sessionId));
   // Rank only the Matchups a selective condition names (same ranking as the public_matchups view): name hits with `q`,
-  // else a Session, a Recording or a Streamer. Without one, every public Matchup is ranked.
+  // else a Session, a Recording or a Streamer.
   let pool = "",
     poolBinds: unknown[] = [];
   if (q) pool = "SELECT matchup_id FROM hits";
@@ -189,18 +189,36 @@ export async function search(env: Env, url: URL) {
   // Session-time order puts Matchups with no mapped time last.
   const order = timeline ? "(coalesce(session_time,1e15),matchup_id)" : "(exact,score,indexed_at,matchup_id)";
   const position = state.after.length ? `WHERE ${order}${timeline ? ">" : "<"}(${state.after.map(() => "?").join(",")})` : "";
-  const found = await rows<MatchupRow>(
-    env,
-    `WITH ${candidates} matched AS (
-    SELECT p.*,${q ? "h.score,h.exact" : "1.0 AS score,0 AS exact"}
-    FROM ${q ? "hits h JOIN named p ON p.matchup_id=h.matchup_id" : pool ? "named p" : "public_matchups p"}
-    WHERE ${clauses.join(" AND ")}) SELECT * FROM matched ${position}
-    ORDER BY ${timeline ? "coalesce(session_time,1e15),matchup_id" : "exact DESC,score DESC,indexed_at DESC,matchup_id DESC"} LIMIT ?`,
-    ...binds,
-    ...args,
-    ...state.after,
-    limit + 1,
-  );
+  // Unfiltered browse walks matchups_browse in display order, picking each Matchup's display Source as it goes.
+  const latest = !q && !pool;
+  const found = latest
+    ? await rows<MatchupRow>(
+        env,
+        `SELECT p.*,1.0 AS score,0 AS exact FROM (
+        SELECT ps.matchup_id,ps.detection_id,ps.username,ps.confidence,ps.name_state,ps.rank,ps.igd,ps.recorded_timestamp,
+          m.indexed_at,m.session_id,m.session_time
+        FROM matchups m INDEXED BY matchups_browse CROSS JOIN public_sources ps
+        WHERE m.status='visible' AND m.merged_into IS NULL AND m.indexed_at IS NOT NULL
+          ${state.after.length ? "AND (m.indexed_at,m.id)<(?,?)" : ""}
+          AND ps.anchor_id=(SELECT x.anchor_id FROM public_sources x WHERE x.matchup_id=m.id ORDER BY ${nameOrder("x")} LIMIT 1)
+        ORDER BY m.indexed_at DESC,m.id DESC) p
+        WHERE ${clauses.join(" AND ")} LIMIT ?`,
+        ...state.after.slice(2),
+        ...args,
+        limit + 1,
+      )
+    : await rows<MatchupRow>(
+        env,
+        `WITH ${candidates} matched AS (
+        SELECT p.*,${q ? "h.score,h.exact" : "1.0 AS score,0 AS exact"}
+        FROM ${q ? "hits h JOIN named p ON p.matchup_id=h.matchup_id" : "named p"}
+        WHERE ${clauses.join(" AND ")}) SELECT * FROM matched ${position}
+        ORDER BY ${timeline ? "coalesce(session_time,1e15),matchup_id" : "exact DESC,score DESC,indexed_at DESC,matchup_id DESC"} LIMIT ?`,
+        ...binds,
+        ...args,
+        ...state.after,
+        limit + 1,
+      );
   const resultPage = await page(env, state, found, limit, (row) =>
     timeline ? [row.session_time ?? 1e15, row.matchup_id] : [row.exact, row.score, row.indexed_at, row.matchup_id],
   );
@@ -227,6 +245,12 @@ async function matchupDetail(env: Env, url: URL, id: number) {
   return detail(row, sources.get(row.matchup_id) ?? [], streamers.get(row.matchup_id) ?? null, canonical !== id ? id : undefined);
 }
 
+/** A Matchup listed by public_matchups: visible, canonical, with a current detection on an available Recording.
+ * The view ranks every Matchup before filtering, so counts and existence checks use this indexed form instead. */
+const visibleMatchup = (m: string) => `${m}.status='visible' AND ${m}.merged_into IS NULL AND EXISTS(SELECT 1 FROM matchup_anchors b
+  JOIN vods bv ON bv.id=b.vod_id WHERE b.matchup_id=${m}.id AND b.current_detection_id IS NOT NULL AND bv.availability='available')`;
+const sessionMatchupCounts = `SELECT m.session_id,count(*) AS n FROM matchups m
+  WHERE m.session_id IN(SELECT value FROM json_each(?)) AND ${visibleMatchup("m")} GROUP BY m.session_id`;
 const recordingCount = `(SELECT count(DISTINCT s.matchup_id) FROM public_sources s WHERE s.vod_id=r.id) AS matchup_count`;
 async function getRecording(env: Env, id: number) {
   const row = await one<RecordingRow>(env, `SELECT r.*,${recordingCount} FROM public_recordings r WHERE r.id=?`, id);
@@ -463,7 +487,7 @@ async function sessionsOf(env: Env, ids: string[]): Promise<Session[]> {
     ),
     rows<{ session_id: string; n: number }>(
       env,
-      "SELECT session_id,count(*) AS n FROM public_matchups WHERE session_id IN(SELECT value FROM json_each(?)) GROUP BY session_id",
+      sessionMatchupCounts,
       json,
     ),
   ]);
@@ -576,7 +600,7 @@ async function sessionCards(env: Env, ids: string[], state: { recordings: number
     ),
     rows<{ session_id: string; n: number }>(
       env,
-      "SELECT session_id,count(*) AS n FROM public_matchups WHERE session_id IN(SELECT value FROM json_each(?)) GROUP BY session_id",
+      sessionMatchupCounts,
       json,
     ),
     rows<StreamerRefRow & { session_id: string }>(
@@ -657,9 +681,15 @@ async function nativeLoad(req: Request, env: Env): Promise<Response> {
     parameters(url, []);
     output = await one<Stats>(
       env,
-      `SELECT count(DISTINCT matchup_id) AS matchups,count(DISTINCT CASE WHEN available=1 THEN vod_id END) AS recordings,
-      (SELECT count(DISTINCT ms.streamer_id) FROM matchup_streamers ms WHERE ms.matchup_id IN(SELECT matchup_id FROM public_sources)) AS streamers
-      FROM public_sources`,
+      `SELECT (SELECT count(*) FROM matchups m WHERE ${visibleMatchup("m")}) AS matchups,
+      (SELECT count(*) FROM vods v WHERE v.availability='available' AND EXISTS(SELECT 1 FROM matchup_anchors a
+        JOIN matchups m ON m.id=a.matchup_id AND m.status='visible' AND m.merged_into IS NULL WHERE a.vod_id=v.id AND a.current_detection_id IS NOT NULL)) AS recordings,
+      (SELECT count(*) FROM streamer_identities i WHERE
+        EXISTS(SELECT 1 FROM channel_ownership o CROSS JOIN vods v CROSS JOIN matchup_anchors a CROSS JOIN matchups m
+          WHERE v.platform_account_id=o.channel_id AND a.vod_id=v.id AND m.id=a.matchup_id AND o.streamer_id=i.id AND o.ended_at IS NULL AND ${visibleMatchup("m")})
+        OR EXISTS(SELECT 1 FROM sessions s CROSS JOIN vods v CROSS JOIN matchup_anchors a CROSS JOIN matchups m
+          WHERE v.session_id=s.id AND a.vod_id=v.id AND m.id=a.matchup_id AND s.streamer_id=i.id AND ${visibleMatchup("m")})
+        OR EXISTS(SELECT 1 FROM sessions s CROSS JOIN matchups m WHERE m.session_id=s.id AND s.streamer_id=i.id AND ${visibleMatchup("m")})) AS streamers`,
     );
   } else if (path.startsWith("/sessions/")) output = await sessionDetail(env, url, path.slice("/sessions/".length));
   else {

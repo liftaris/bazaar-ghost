@@ -145,3 +145,28 @@ it("retries transient R2 reads, caps failures, and still checks visibility befor
   expect((await call()).status).toBe(404);
   expect(get).not.toHaveBeenCalled();
 });
+it("indexes evidence image paths and follows path changes", async () => {
+  await statement(env, "UPDATE detections SET field_evidence=? WHERE id=?",
+    JSON.stringify({ clock: { image_path: "2/evidence_12_clock.jpg" } }), youtube).run();
+  expect(await publicImageVisible(env, "2/evidence_12_clock.jpg")).toBe(true);
+  expect(await publicImageVisible(env, "2/image_12.jpg")).toBe(true);
+  await statement(env, "UPDATE detections SET field_evidence='{}',storage_path='/detections/2/moved.jpg' WHERE id=?", youtube).run();
+  expect(await publicImageVisible(env, "2/evidence_12_clock.jpg")).toBe(false);
+  expect(await publicImageVisible(env, "2/image_12.jpg")).toBe(false);
+  expect(await publicImageVisible(env, "2/moved.jpg")).toBe(true);
+  await statement(env, "DELETE FROM detections WHERE id=?", youtube).run();
+  expect(await one(env, "SELECT count(*) AS n FROM detection_images WHERE detection_id=?", youtube)).toEqual({ n: 0 });
+});
+it("keeps each Matchup's indexed_at equal to the public_matchups view through links and replacements", async () => {
+  const drift = () => one(env, `SELECT count(*) AS n FROM public_matchups p JOIN matchups m ON m.id=p.matchup_id WHERE m.indexed_at IS NOT p.indexed_at`);
+  await statement(env, "UPDATE detections SET created_at='2099-01-01T00:00:00.000Z' WHERE id=?", youtube).run();
+  await statement(env, "UPDATE matchup_anchors SET current_detection_id=NULL WHERE current_detection_id=?", youtube).run();
+  await statement(env, "UPDATE matchup_anchors SET current_detection_id=? WHERE vod_id=2", youtube).run();
+  expect(await drift()).toEqual({ n: 0 });
+  await linkDetections(env, [twitch, youtube], "Manually reviewed the same opponent and surrounding game frames");
+  expect(await drift()).toEqual({ n: 0 });
+  expect(await one(env, "SELECT max(indexed_at) AS at FROM matchups")).toEqual({ at: "2099-01-01T00:00:00.000Z" });
+  await statement(env, "DELETE FROM detections WHERE id=?", youtube).run();
+  expect(await drift()).toEqual({ n: 0 });
+  expect(await one(env, "SELECT count(*) AS n FROM matchups WHERE indexed_at='2099-01-01T00:00:00.000Z'")).toEqual({ n: 0 });
+});

@@ -13,12 +13,12 @@ export async function publicImageVisible(env: Env, key: string): Promise<boolean
   if (!safeObjectKey(key)) return false;
   const paths = JSON.stringify([key, `/detections/${key}`, `/storage/v1/object/public/detections/${key}`]);
   const result = await one<{ visible: number }>(env, `SELECT
-    EXISTS(SELECT 1 FROM public_sources s WHERE available=1 AND (
-      storage_path IN(SELECT value FROM json_each(?1)) OR
-      EXISTS(SELECT 1 FROM json_tree(s.field_evidence) e WHERE e.key='image_path' AND e.value IN(SELECT value FROM json_each(?1)))))
-    AND NOT EXISTS(SELECT 1 FROM detections d JOIN matchup_anchors c ON c.vod_id=d.vod_id AND c.anchor_seconds=d.frame_time_seconds JOIN matchups m ON m.id=c.matchup_id
-      WHERE m.status='hidden' AND (d.storage_path IN(SELECT value FROM json_each(?1)) OR
-        EXISTS(SELECT 1 FROM json_tree(d.field_evidence) e WHERE e.key='image_path' AND e.value IN(SELECT value FROM json_each(?1))))) AS visible`, paths);
+    EXISTS(SELECT 1 FROM detection_images i CROSS JOIN matchup_anchors a CROSS JOIN matchups m CROSS JOIN vods v
+      WHERE i.path IN(SELECT value FROM json_each(?1)) AND a.current_detection_id=i.detection_id
+      AND m.id=a.matchup_id AND m.status='visible' AND m.merged_into IS NULL AND v.id=a.vod_id AND v.availability='available')
+    AND NOT EXISTS(SELECT 1 FROM detection_images i CROSS JOIN detections d CROSS JOIN matchup_anchors c CROSS JOIN matchups m
+      WHERE i.path IN(SELECT value FROM json_each(?1)) AND d.id=i.detection_id
+      AND c.vod_id=d.vod_id AND c.anchor_seconds=d.frame_time_seconds AND m.id=c.matchup_id AND m.status='hidden') AS visible`, paths);
   return result?.visible === 1;
 }
 
