@@ -118,7 +118,7 @@ async function streamersOf(env: Env, ids: number[]) {
 export async function search(env: Env, url: URL) {
   const timeline = url.searchParams.has("sessionId") && url.searchParams.get("sort") === "time";
   // A whole recording's ghosts are listed in one page, so session-time lists may be longer.
-  const limit = parameters(url, ["q", "streamerId", "channelId", "platform", "excludePlatform", "from", "to", "sessionId", "sort", "recordingId", "excludeObstructed", "limit", "cursor"], timeline ? 500 : 100);
+  const limit = parameters(url, ["q", "streamerId", "channelId", "platform", "excludePlatform", "from", "to", "sessionId", "sort", "recordingId", "excludeObstructed", "representation", "limit", "cursor"], timeline ? 500 : 100);
   const q = queryText(url),
     state = await boundary(env, url),
     filter = filters(url),
@@ -132,6 +132,8 @@ export async function search(env: Env, url: URL) {
   requireValue(sessionId === null || SESSION_ID.test(sessionId), "Invalid sessionId");
   const obstruction = url.searchParams.get("excludeObstructed");
   requireValue(obstruction === null || obstruction === "true" || obstruction === "false", "Invalid excludeObstructed");
+  const representation = url.searchParams.get("representation") ?? "full";
+  requireValue(representation === "full" || representation === "summary", "Invalid representation");
   const grams = trigrams(q);
   if (q && !grams.length) return { items: [], nextCursor: null };
   const clauses = ["p.matchup_id<=?"],
@@ -202,7 +204,9 @@ export async function search(env: Env, url: URL) {
   const resultPage = await page(env, state, found, limit, (row) =>
     timeline ? [row.session_time ?? 1e15, row.matchup_id] : [row.exact, row.score, row.indexed_at, row.matchup_id],
   );
-  return { ...resultPage, items: await matchupCards(env, resultPage.items) };
+  const items = await matchupCards(env, resultPage.items);
+  // A summary card keeps only its primary Source, which is what feeds and previews link to.
+  return { ...resultPage, items: representation === "summary" ? items.map((item) => ({ ...item, sources: item.sources.slice(0, 1) })) : items };
 }
 /** Public Matchup cards (ordered Sources, Streamer) for already-selected rows, keeping their order. */
 export async function matchupCards(env: Env, found: MatchupRow[]) {
