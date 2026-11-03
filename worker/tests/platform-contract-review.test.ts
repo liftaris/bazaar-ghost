@@ -52,8 +52,9 @@ it('restarts the search with 409 instead of mixing results when a source disappe
   const {video}=await catalog();
   await detection(video.id);
   let changed=false;
-  const database=new Proxy(env.DB,{
+  const handler:ProxyHandler<any> = {
     get(target,key) {
+      if(key==='withSession') return (...args:unknown[])=>new Proxy(target.withSession(...args),handler);
       if(key==='prepare') return (sql:string)=>{
         const prepared=target.prepare(sql);
         if(!sql.includes('INDEXED BY matchups_browse')) return prepared;
@@ -77,7 +78,8 @@ it('restarts the search with 409 instead of mixing results when a source disappe
       const value=Reflect.get(target,key);
       return typeof value==='function'?value.bind(target):value;
     },
-  });
+  };
+  const database=new Proxy(env.DB,handler);
   await expect(nativeRoute(new Request('http://local/api/v1/search'),{...env,DB:database})).rejects.toMatchObject({status:409});
   expect(changed).toBe(true);
 });
