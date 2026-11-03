@@ -158,8 +158,9 @@ async function route(req: Request, env: Env): Promise<Response> {
         .replace(/^\/storage\/v1\/object\/public\/detections\//, "")
         .replace(/^\/detections\//, ""),
     );
+    const reader = { ...env, DB: env.DB.withSession("first-unconstrained") as unknown as D1Database };
     const serve = async () => {
-      if (!(await publicImageVisible(env, key))) throw new HttpError(404, "Screenshot not found");
+      if (!(await publicImageVisible(reader, key))) throw new HttpError(404, "Screenshot not found");
       const object = await readScreenshot(env.DETECTIONS, key);
       if (!object) throw new HttpError(404, "Screenshot not found");
       const headers = new Headers({
@@ -170,7 +171,7 @@ async function route(req: Request, env: Env): Promise<Response> {
       headers.set("ETag", object.httpEtag);
       return new Response(req.method === "HEAD" ? null : object.body, { headers });
     };
-    const response = req.method === "GET" ? await publicCache(req, env, serve) : await serve();
+    const response = req.method === "GET" ? await publicCache(req, reader, serve) : await serve();
     const etag = response.headers.get("ETag");
     if (etag && req.headers.get("If-None-Match") === etag)
       return new Response(null, { status: 304, headers: response.headers });

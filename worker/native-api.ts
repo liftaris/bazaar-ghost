@@ -745,8 +745,12 @@ async function nativeLoad(req: Request, env: Env): Promise<Response> {
 export async function nativeRoute(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
   if (req.method !== "GET" || url.pathname === `${prefix}/platforms`) return nativeLoad(req, env);
-  const timing = new Timing(),
-    timed = timing.wrap(env);
+  const timing = new Timing();
+  // Public reads go to the nearest D1 read replica so they never queue behind ingestion writes on the primary.
+  // A continuation must not see an older database than the page that signed it, and a retry follows a revision
+  // the memo had not seen yet, so both start on the primary. Each attempt is one session: its reads never go back in time.
+  const reader = (primary: boolean) => timing.wrap({ ...env, DB: env.DB.withSession(primary ? "first-primary" : "first-unconstrained") as unknown as D1Database });
+  let timed = reader(url.searchParams.has("cursor"));
   const attempt = async () => {
     const state = await boundary(timed, url);
     const cacheUrl = new URL(url);
@@ -769,6 +773,7 @@ export async function nativeRoute(req: Request, env: Env): Promise<Response> {
   } catch (error) {
     // A boundary taken from the short-lived revision memo may predate a correction; the failed check refreshed it.
     if (!memoizesState(env) || !(error instanceof HttpError) || error.status !== 409 || url.searchParams.has("cursor")) throw error;
+    timed = reader(true);
     response = await attempt();
   }
   const result = new Response(response.body, response);
