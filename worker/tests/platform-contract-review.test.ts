@@ -56,7 +56,7 @@ it('restarts the search with 409 instead of mixing results when a source disappe
     get(target,key) {
       if(key==='prepare') return (sql:string)=>{
         const prepared=target.prepare(sql);
-        if(!sql.includes('FROM public_matchups p')) return prepared;
+        if(!sql.includes('INDEXED BY matchups_browse')) return prepared;
         const wrap=(value:D1PreparedStatement):D1PreparedStatement=>new Proxy(value,{
           get(stmt,method) {
             if(method==='bind') return (...args:unknown[])=>wrap(stmt.bind(...args));

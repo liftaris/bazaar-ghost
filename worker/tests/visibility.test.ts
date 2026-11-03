@@ -157,3 +157,16 @@ it("indexes evidence image paths and follows path changes", async () => {
   await statement(env, "DELETE FROM detections WHERE id=?", youtube).run();
   expect(await one(env, "SELECT count(*) AS n FROM detection_images WHERE detection_id=?", youtube)).toEqual({ n: 0 });
 });
+it("keeps each Matchup's indexed_at equal to the public_matchups view through links and replacements", async () => {
+  const drift = () => one(env, `SELECT count(*) AS n FROM public_matchups p JOIN matchups m ON m.id=p.matchup_id WHERE m.indexed_at IS NOT p.indexed_at`);
+  await statement(env, "UPDATE detections SET created_at='2099-01-01T00:00:00.000Z' WHERE id=?", youtube).run();
+  await statement(env, "UPDATE matchup_anchors SET current_detection_id=NULL WHERE current_detection_id=?", youtube).run();
+  await statement(env, "UPDATE matchup_anchors SET current_detection_id=? WHERE vod_id=2", youtube).run();
+  expect(await drift()).toEqual({ n: 0 });
+  await linkDetections(env, [twitch, youtube], "Manually reviewed the same opponent and surrounding game frames");
+  expect(await drift()).toEqual({ n: 0 });
+  expect(await one(env, "SELECT max(indexed_at) AS at FROM matchups")).toEqual({ at: "2099-01-01T00:00:00.000Z" });
+  await statement(env, "DELETE FROM detections WHERE id=?", youtube).run();
+  expect(await drift()).toEqual({ n: 0 });
+  expect(await one(env, "SELECT count(*) AS n FROM matchups WHERE indexed_at='2099-01-01T00:00:00.000Z'")).toEqual({ n: 0 });
+});
