@@ -89,6 +89,10 @@ it("prefers a low-confidence complete name over a stronger obstruction, consiste
     expect(item.fieldEvidence.username.detectionId).toBe(a.id);
   }
   expect((await get(`/matchups/${id}`)).fieldEvidence.username.detectionId).toBe(a.id);
+  const [full] = (await get("/search")).items, [summary] = (await get("/search?representation=summary")).items;
+  expect(full.sources).toHaveLength(2);
+  expect(summary).toEqual({ ...full, sources: full.sources.slice(0, 1) });
+  expect((await SELF.fetch("http://local/api/v1/search?representation=compact")).status).toBe(400);
   expect((await get(`/search?q=${encodeURIComponent(a.username!)}&excludeObstructed=false`)).items).toEqual([]);
   expect((await get(`/matchups/${id}`)).detections.find((d: any) => d.id === b.id).username).toBe(b.username);
 });
