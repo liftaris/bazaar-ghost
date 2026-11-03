@@ -20,7 +20,7 @@ import { trigrams } from "../search";
 import { linkDetections } from "./link-fixture";
 import { boundary } from "../native-cursor";
 import { discord } from "../discord";
-import { nativeRoute } from "../native-api";
+import { nativeRoute, refreshStaleStreamerCounts } from "../native-api";
 import { registerPlatformsForTest, type PlatformEntry } from "../platform-registry";
 import { mergeSessions, moveRecording } from "../sessions";
 import { createStreamer, linkChannel } from "../streamers";
@@ -528,6 +528,27 @@ it("lists Streamers that have public Matchups with counts and platforms, searcha
   expect(await status("/streamers?platform=nope")).toBe(400);
   expect((await get<Streamer>("/streamers/1")).displayName).toBe("Example");
   expect(await status("/streamers/999")).toBe(404);
+});
+it("serves hosted Streamer lists from the scheduler's counts, and counts live when they are missing or stale", async () => {
+  await ownedPair();
+  const yt = await vod({ source: "youtube", account: CH.yt1 });
+  await evidence(20, "Opponent", yt);
+  await evidence(30, "Another", 1);
+  const hosted = { ...env, ENVIRONMENT: "validation" };
+  const list = async () => (await (await nativeRoute(new Request(`https://${crypto.randomUUID()}.example.org/api/v1/streamers`), hosted)).json<Page<StreamerCard>>()).items
+    .map((s) => [s.id, s.matchupCount]);
+  const live = await list();
+  expect(live).toEqual([[1, 2]]);
+  await refreshStaleStreamerCounts(env);
+  expect(await rows(env, "SELECT streamer_id,n FROM streamer_matchup_counts")).toEqual([{ streamer_id: 1, n: 2 }]);
+  await statement(env, "UPDATE streamer_matchup_counts SET n=7").run();
+  expect(await list()).toEqual([[1, 7]]);
+  await refreshStaleStreamerCounts(env);
+  expect(await list()).toEqual([[1, 7]]);
+  await statement(env, "UPDATE streamer_matchup_counts_state SET computed_at=0").run();
+  expect(await list()).toEqual(live);
+  await refreshStaleStreamerCounts(env);
+  expect(await list()).toEqual(live);
 });
 it("returns a Session with its Recordings and time mappings, following a merge", async () => {
   const yt = await vod({ source: "youtube", account: CH.yt1 });
