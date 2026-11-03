@@ -1,7 +1,7 @@
 import type { Evidence, Page, Playback, Session, SessionCard, Stats, StreamerCard, TimelineMarker } from "../contracts/public-api";
 import { canonicalMatchup } from "./coalesce";
 import { recordingIgdQuality } from "./igd";
-import { HttpError, integer, one, requireValue, rows } from "./http";
+import { HttpError, integer, one, requireValue, rows, statement } from "./http";
 import { boundary, page, unchanged } from "./native-cursor";
 import {
   channel,
@@ -315,6 +315,36 @@ const publicContent = `EXISTS(SELECT 1 FROM vods v JOIN matchup_anchors x ON x.v
 const publicMatchup = `EXISTS(SELECT 1 FROM matchups m WHERE m.id=u.matchup_id AND m.status='visible' AND m.merged_into IS NULL)
   AND EXISTS(SELECT 1 FROM matchup_anchors b JOIN vods bv ON bv.id=b.vod_id
     WHERE b.matchup_id=u.matchup_id AND b.current_detection_id IS NOT NULL AND bv.availability='available')`;
+const STREAMER_COUNTS_TTL_MS = 300_000;
+/** Recount public Matchups per Streamer (matchup_streamers' three sources) into streamer_matchup_counts. */
+async function refreshStreamerCounts(env: Env) {
+  await env.DB.batch([
+    statement(env, "DELETE FROM streamer_matchup_counts"),
+    statement(env, `INSERT INTO streamer_matchup_counts(streamer_id,n)
+      WITH pm AS MATERIALIZED (SELECT m.id FROM matchups m WHERE ${visibleMatchup("m")})
+      SELECT streamer_id,count(DISTINCT matchup_id) FROM (
+        SELECT o.streamer_id,a.matchup_id FROM channel_ownership o JOIN vods v ON v.platform_account_id=o.channel_id JOIN matchup_anchors a ON a.vod_id=v.id
+          WHERE o.ended_at IS NULL AND a.matchup_id IN pm
+        UNION ALL SELECT s.streamer_id,a.matchup_id FROM sessions s JOIN vods v ON v.session_id=s.id JOIN matchup_anchors a ON a.vod_id=v.id
+          WHERE s.streamer_id IS NOT NULL AND a.matchup_id IN pm
+        UNION ALL SELECT s.streamer_id,m.id FROM sessions s JOIN matchups m ON m.session_id=s.id WHERE s.streamer_id IS NOT NULL AND m.id IN pm)
+      GROUP BY streamer_id`),
+    statement(env, "INSERT INTO streamer_matchup_counts_state(id,computed_at) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET computed_at=excluded.computed_at", Date.now()),
+  ]);
+}
+/** Hosted reads use streamer_matchup_counts while it is younger than the TTL; elsewhere, or if the scheduler has
+ * fallen behind, they count live. Reads never write. */
+async function storedStreamerCounts(env: Env) {
+  if (!memoizesState(env)) return false;
+  const state = await one<{ computed_at: number }>(env, "SELECT computed_at FROM streamer_matchup_counts_state WHERE id=1");
+  return !!state && Date.now() - state.computed_at < STREAMER_COUNTS_TTL_MS;
+}
+/** The scheduler's refresh, run shortly before hosted reads would consider the counts stale. */
+export async function refreshStaleStreamerCounts(env: Env) {
+  const state = await one<{ computed_at: number }>(env, "SELECT computed_at FROM streamer_matchup_counts_state WHERE id=1");
+  if (state && Date.now() - state.computed_at < STREAMER_COUNTS_TTL_MS - 90_000) return;
+  await refreshStreamerCounts(env);
+}
 /** Streamers with at least one public Matchup, with list counts, ordered by Matchup count (best name match first with `q`).
  * A Streamer's platforms are those of its owned Channels with public content; counts are not narrowed by platform filters. */
 async function streamers(env: Env, url: URL): Promise<Page<StreamerCard>> {
@@ -344,6 +374,7 @@ async function streamers(env: Env, url: URL): Promise<Page<StreamerCard>> {
   }
   if (state.after.length) (clauses.push("(i.tier,-mc.n,i.id)>(?,?,?)"), args.push(...state.after));
   // matchup_streamers' three sources, by index; counting only the named Streamers one by one beats counting every Streamer.
+  const stored = !q && (await storedStreamerCounts(env));
   const mc = q
     ? `SELECT n.id,(SELECT count(*) FROM (
         SELECT a.matchup_id FROM channel_ownership o JOIN vods v ON v.platform_account_id=o.channel_id JOIN matchup_anchors a ON a.vod_id=v.id
@@ -351,7 +382,9 @@ async function streamers(env: Env, url: URL): Promise<Page<StreamerCard>> {
         UNION SELECT a.matchup_id FROM sessions s JOIN vods v ON v.session_id=s.id JOIN matchup_anchors a ON a.vod_id=v.id WHERE s.streamer_id=n.id
         UNION SELECT m.id FROM sessions s JOIN matchups m ON m.session_id=s.id WHERE s.streamer_id=n.id) u
         WHERE u.matchup_id<=? AND ${publicMatchup}) AS n FROM named n`
-    : `SELECT u.streamer_id AS id,count(DISTINCT u.matchup_id) AS n FROM (
+    : stored
+      ? "SELECT streamer_id AS id,n FROM streamer_matchup_counts"
+      : `SELECT u.streamer_id AS id,count(DISTINCT u.matchup_id) AS n FROM (
         SELECT o.streamer_id,a.matchup_id FROM channel_ownership o JOIN vods v ON v.platform_account_id=o.channel_id JOIN matchup_anchors a ON a.vod_id=v.id
           WHERE o.ended_at IS NULL
         UNION SELECT s.streamer_id,a.matchup_id FROM sessions s JOIN vods v ON v.session_id=s.id JOIN matchup_anchors a ON a.vod_id=v.id WHERE s.streamer_id IS NOT NULL
@@ -379,7 +412,7 @@ async function streamers(env: Env, url: URL): Promise<Page<StreamerCard>> {
       (SELECT json_group_array(platform) FROM (SELECT platform FROM streamer_platforms WHERE streamer_id=r.id ORDER BY platform)) AS platforms
     FROM ranked r JOIN streamer_identities i ON i.id=r.id ORDER BY r.tier,r.n DESC,r.id`,
     ...tierArgs,
-    state.matchups,
+    ...(stored ? [] : [state.matchups]),
     ...args,
     limit + 1,
   );

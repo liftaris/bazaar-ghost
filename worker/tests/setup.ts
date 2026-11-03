@@ -33,6 +33,8 @@ beforeEach(async () => {
     "chat_mentions",
     "igd_corrections",
     "detections",
+    "streamer_matchup_counts",
+    "streamer_matchup_counts_state",
     "search_grams",
     "search_names",
     "chunk_runs",

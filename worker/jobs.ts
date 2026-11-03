@@ -3,6 +3,7 @@ import { Twitch, type CatalogStats } from "./twitch";
 import { dispatchAutomatic, pendingVideos, plan, recover } from "./processing";
 import { dueNotifications, notify } from "./notifications";
 import { cleanupAuth } from "./auth";
+import { refreshStaleStreamerCounts } from "./native-api";
 import { dispatchCatalog, requestCatalog, runCatalogBatch, type CatalogBatch } from "./catalog-work";
 import { dispatchIngestion, hasDueIngestionDispatch } from "./platform-ingestion-dispatch";
 import { isPlatformEnabled } from "./platform-settings";
@@ -169,6 +170,7 @@ export async function scheduled(event: ScheduledController, env: Env) {
     // Internal expiry cleanup has no provider/network calls and remains useful
     // while login and outbound integrations are temporarily disabled.
     await cleanupAuth(env);
+    await refreshStaleStreamerCounts(env);
     return;
   }
   if (env.OUTBOUND_ENABLED !== "true") {
