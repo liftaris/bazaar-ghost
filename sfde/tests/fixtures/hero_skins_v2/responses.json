@@ -1,0 +1,1089 @@
+{
+  "prompt_file_sha256": "fb6f8dd45c3a0eaaa2eee6a358b66c7c6a72bd1f1a6a08bb4a51355961026970",
+  "prompt_canonical_sha256": "b2cdf14398601dabf14711147b35636f008d30ca4be5ea0a7a54e8069a59d7a3",
+  "model": "@cf/cloudflare/clef-flash",
+  "source_results_sha256": "e2d83a76d0f459081a3d433f03f3a860916daadbe984f2deb73eef4df335e736",
+  "baseline_results_sha256": "d06003ca8dd53bf2e80d1c0db660885dbbd677f2d2fcaf32b48ec5b0595ee4a0",
+  "scope": "Selected previously seen development responses, not independent heldout accuracy. No images copied. Historical inputs were reprocessed with OpenCV, not the older PIL fixture crops. Labels are asset-path or AI visual matches, not independent human adjudication. Canonical cache hashes use recursively sorted JSON keys.",
+  "rows": [
+    {
+      "id": "skin-408",
+      "domain": "skin_reference",
+      "expected": "stelle",
+      "role": "reference",
+      "image_sha256": "49d3a8666cad540dcbeeb72f20edd5028b7b0dd5e964e05b1de0ab0af8ac1de1",
+      "dimensions": [
+        512,
+        512
+      ],
+      "cache_key": "bae5fbdb2a25cbf037b6a6b121e6293620044089780ab38975b3d682694ff071",
+      "original_cache_sha256": "d1f8dc2e9f4552d9c8393bbaccc10602a11ecb21a978bd6b8be66804558facb1",
+      "response_sha256": "bff8164e2ba4d392307ac7d000a4a0dd91359dc6b3286e0e0dd283f0644b4ccc",
+      "response": {
+        "result": {
+          "model": "clef-flash",
+          "answers": {
+            "hero": {
+              "type": "choice",
+              "choice": "Stelle",
+              "probabilities": {
+                "Dooley": 0.0295,
+                "Jules": 0.116,
+                "Karnok": 0.0255,
+                "Mak": 0.0428,
+                "Pygmalien": 0.0499,
+                "Stelle": 0.4131,
+                "The Dragons": 0.0633,
+                "Vanessa": 0.2599
+              },
+              "confidence": 0.156
+            }
+          },
+          "usage": {
+            "input_tokens": 1128,
+            "output_tokens": 0
+          }
+        },
+        "success": true,
+        "errors": [],
+        "messages": []
+      },
+      "source": {
+        "kind": "installed_unity_bundle",
+        "bundle_sha256": "3ea5062f0c73f4a5daef33fc48dc6322b6af70092dc8f3da362ec107d6cc8797",
+        "asset_path": "Assets/TheBazaar/Art/Heroes/Stelle/Skins/Skin_STE_16/A/Skin_STE_16a_PreviewCollection_TUI.png",
+        "object_type": "Sprite",
+        "path_id": -4642377155588647467,
+        "ownership_basis": "Art/Heroes directory",
+        "skin": "Skin_STE_16a",
+        "skin_name": "Kick Back Stelle",
+        "view": "PreviewCollection",
+        "preprocessing": "Alpha composited over RGB32; max640 INTER_AREA; no content crop",
+        "manifest_dimensions": [
+          512,
+          512
+        ]
+      }
+    },
+    {
+      "id": "skin-499",
+      "domain": "skin_reference",
+      "expected": "vanessa",
+      "role": "reference",
+      "image_sha256": "e697239fb93451ecfc1b362ee3cd0b4535d2e0b45032ef98cd0d1c67aaa90cb0",
+      "dimensions": [
+        618,
+        640
+      ],
+      "cache_key": "12197fa7829817998aa47384c3420c81cf8121319dde4acbf8c6e5ac3ef681c8",
+      "original_cache_sha256": "4fe48766ab78297b5a52a45ec36e384b21cb4d96663ef50e032ab12b108e6d54",
+      "response_sha256": "6c1e009be2c0ae7ef5b18c838551c172c9d684e1c4a99d3bc1166db1f59d2c2a",
+      "response": {
+        "result": {
+          "model": "clef-flash",
+          "answers": {
+            "hero": {
+              "type": "choice",
+              "choice": "Vanessa",
+              "probabilities": {
+                "Dooley": 0.0254,
+                "Jules": 0.3163,
+                "Karnok": 0.0441,
+                "Mak": 0.0279,
+                "Pygmalien": 0.0657,
+                "Stelle": 0.0396,
+                "The Dragons": 0.0635,
+                "Vanessa": 0.4175
+              },
+              "confidence": 0.1859
+            }
+          },
+          "usage": {
+            "input_tokens": 1252,
+            "output_tokens": 0
+          }
+        },
+        "success": true,
+        "errors": [],
+        "messages": []
+      },
+      "source": {
+        "kind": "installed_unity_bundle",
+        "bundle_sha256": "f41e3ee1bb846cbdc4a9d38cdba324e560da200dccaa63847afd0f729e042cb0",
+        "asset_path": "Assets/TheBazaar/Art/Heroes/Vanessa/Skins/Skin_VAN_16/A/Skin_VAN_16a_StoreImage.png",
+        "object_type": "Sprite",
+        "path_id": 2076965944818083514,
+        "ownership_basis": "Art/Heroes directory",
+        "skin": "Skin_VAN_16a",
+        "skin_name": "Honey Trap Vanessa ",
+        "view": "StoreImage",
+        "preprocessing": "Alpha composited over RGB32; max640 INTER_AREA; no content crop",
+        "manifest_dimensions": [
+          1945,
+          2014
+        ]
+      }
+    },
+    {
+      "id": "skin-636",
+      "domain": "skin_reference",
+      "expected": "karnok",
+      "role": "reference",
+      "image_sha256": "d8e253eff38fc1b5ad61403bfab1459ef9c417d40f1bb08cbf750c394fe730ad",
+      "dimensions": [
+        432,
+        640
+      ],
+      "cache_key": "07a067e1f3ffc7f908489323bd9750f46b5425c96dc10fcaa3a403ce3c603f6e",
+      "original_cache_sha256": "55f550cbb95c7168d3269293eae175057cc32c0f4b2931aa0f6b174d3253c805",
+      "response_sha256": "26c860b0e2bbc5901fe1a6a5f7764a40f7974503d8f59e4fa8f70d9acc5104ef",
+      "response": {
+        "result": {
+          "model": "clef-flash",
+          "answers": {
+            "hero": {
+              "type": "choice",
+              "choice": "Karnok",
+              "probabilities": {
+                "Dooley": 0.0173,
+                "Jules": 0.0446,
+                "Karnok": 0.3348,
+                "Mak": 0.2502,
+                "Pygmalien": 0.0683,
+                "Stelle": 0.0229,
+                "The Dragons": 0.0679,
+                "Vanessa": 0.194
+              },
+              "confidence": 0.1137
+            }
+          },
+          "usage": {
+            "input_tokens": 1152,
+            "output_tokens": 0
+          }
+        },
+        "success": true,
+        "errors": [],
+        "messages": []
+      },
+      "source": {
+        "kind": "historical_local_reference",
+        "source_page": "https://steamcommunity.com/games/1617400/announcements/detail/1846651706678714",
+        "image_url": "https://clan.fastly.steamstatic.com/images/45731929/18edf7990f8bf6542ea9b808c58547508d00de0f.png",
+        "label_basis": "Publisher announcement explicitly introduces Karnok and The Dragons exclusive animated skins. Right character is Karnok.",
+        "crop_xyxy": [
+          660,
+          0,
+          1200,
+          800
+        ],
+        "release_status": "announced preview; availability not established",
+        "skin": "karnok-founders-preview",
+        "skin_name": "Karnok founders preview; exact skin name unannounced in source",
+        "view": "publisher_or_community_crop",
+        "preprocessing": "Alpha composited over RGB32; max640 INTER_AREA; no content crop",
+        "manifest_dimensions": [
+          540,
+          800
+        ]
+      }
+    },
+    {
+      "id": "bc87eca7-70ed-5a71-80ff-a7265cbe41e6-ghost_hero",
+      "domain": "gameplay",
+      "expected": "pygmalien",
+      "role": "ghost_hero",
+      "image_sha256": "b9570c1ccc189b3a76629bb496216c823c5f9ca00aed984ebb0bc3ef06294854",
+      "dimensions": [
+        426,
+        480
+      ],
+      "cache_key": "d45dfcca0b4bd18a7bcfe136dccb7df522b72ec0565e23d59eab11f7d91f14f6",
+      "original_cache_sha256": "f5c6ee4edb4ef317b6fafccd33a32e1036a8ac0e689139d93f1855b50ed70365",
+      "response_sha256": "ba26c2fa9484d7fb44c6eb8b9f314c4b7dea84e1d2d82e57ff62298ad625ff7a",
+      "response": {
+        "result": {
+          "model": "clef-flash",
+          "answers": {
+            "hero": {
+              "type": "choice",
+              "choice": "Pygmalien",
+              "probabilities": {
+                "Dooley": 0.0282,
+                "Jules": 0.0702,
+                "Karnok": 0.0616,
+                "Mak": 0.2383,
+                "Pygmalien": 0.4854,
+                "Stelle": 0.0279,
+                "The Dragons": 0.0314,
+                "Vanessa": 0.057
+              },
+              "confidence": 0.2079
+            }
+          },
+          "usage": {
+            "input_tokens": 1067,
+            "output_tokens": 0
+          }
+        },
+        "success": true,
+        "errors": [],
+        "messages": []
+      },
+      "source": {
+        "platform": "twitch",
+        "recording_id": "2913945069",
+        "timestamp_seconds": 6661,
+        "source_sha256": "081288f42bfccf90bfbe284a86b54fab12eee60809b781994e0602fc52663f7e",
+        "region_xywh": [
+          426,
+          0,
+          426,
+          480
+        ],
+        "label_status": "asset_backed_visual_match",
+        "independent_human": false
+      },
+      "baseline": {
+        "top_probability": 0.3718,
+        "margin": 0.1665,
+        "choice": "Pygmalien",
+        "cache_key": "9cdcc37952b4b0ba8892f228cc28618d6f953cacd62831645c53624bdc1a5198"
+      }
+    },
+    {
+      "id": "6baa7d26-0b9e-53dc-9f04-8b6515ddf693-ghost_hero",
+      "domain": "gameplay",
+      "expected": "vanessa",
+      "role": "ghost_hero",
+      "image_sha256": "edeed9e2e6fd293f92fdd7aaaf9d07b9493a993f2dd2816ada8902ea7aa67225",
+      "dimensions": [
+        426,
+        480
+      ],
+      "cache_key": "eed266adbc6386ffe77c6b1ef4dba219de0c5b13342049673a9a0b5b1981119e",
+      "original_cache_sha256": "66743bafa9a687fb9a8df19a2ee38fb8269bd1874c16b703f02800f7f07c6cab",
+      "response_sha256": "e7114bea958a96e3c5b86ed2be73527e8443f39aa24d1dd28ed4960222ea4cfb",
+      "response": {
+        "result": {
+          "model": "clef-flash",
+          "answers": {
+            "hero": {
+              "type": "choice",
+              "choice": "Vanessa",
+              "probabilities": {
+                "Dooley": 0.0333,
+                "Jules": 0.0832,
+                "Karnok": 0.0297,
+                "Mak": 0.0407,
+                "Pygmalien": 0.0392,
+                "Stelle": 0.076,
+                "The Dragons": 0.0441,
+                "Vanessa": 0.6538
+              },
+              "confidence": 0.3683
+            }
+          },
+          "usage": {
+            "input_tokens": 1067,
+            "output_tokens": 0
+          }
+        },
+        "success": true,
+        "errors": [],
+        "messages": []
+      },
+      "source": {
+        "platform": "twitch",
+        "recording_id": "2913945069",
+        "timestamp_seconds": 8331,
+        "source_sha256": "3b222612c0a03f8cdf98b433742ee5bc8eca9207d3709d0cf86112270e90b92b",
+        "region_xywh": [
+          426,
+          0,
+          426,
+          480
+        ],
+        "label_status": "asset_backed_visual_match",
+        "independent_human": false
+      },
+      "baseline": {
+        "top_probability": 0.4625,
+        "margin": 0.3239,
+        "choice": "Vanessa",
+        "cache_key": "5067d0929df1028029ca6bfa8ce40a4cc50ecd0ebb8120b65994977262fca37e"
+      }
+    },
+    {
+      "id": "2e13db3f-5f6a-5398-90e1-ce1b52d283cf-ghost_hero",
+      "domain": "gameplay",
+      "expected": "mak",
+      "role": "ghost_hero",
+      "image_sha256": "23ddba3b8036871db791fcd296205fd66268451db1c835172b628a3492113e32",
+      "dimensions": [
+        426,
+        480
+      ],
+      "cache_key": "c9f29f7ae4ee89bb88572420226249805bcf91400a864b8daf3b6c1b56445e0f",
+      "original_cache_sha256": "fa0e3ec0fe476c1ffe1db5d60149bf950db84a7604d7b544b2cf669dca1358d4",
+      "response_sha256": "693b0bad3b7b87ca7a6c6b530effd978ce3e957a52c6ad32bb3b85c263059173",
+      "response": {
+        "result": {
+          "model": "clef-flash",
+          "answers": {
+            "hero": {
+              "type": "choice",
+              "choice": "Mak",
+              "probabilities": {
+                "Dooley": 0.013,
+                "Jules": 0.0416,
+                "Karnok": 0.0698,
+                "Mak": 0.5891,
+                "Pygmalien": 0.1514,
+                "Stelle": 0.0303,
+                "The Dragons": 0.0499,
+                "Vanessa": 0.0549
+              },
+              "confidence": 0.295
+            }
+          },
+          "usage": {
+            "input_tokens": 1067,
+            "output_tokens": 0
+          }
+        },
+        "success": true,
+        "errors": [],
+        "messages": []
+      },
+      "source": {
+        "platform": "twitch",
+        "recording_id": "2913945069",
+        "timestamp_seconds": 10191,
+        "source_sha256": "4de215a6de714cf6386081e75d511b9c2006d869b5d788ac7e1144dd7e50e3b8",
+        "region_xywh": [
+          426,
+          0,
+          426,
+          480
+        ],
+        "label_status": "asset_backed_visual_match",
+        "independent_human": false
+      },
+      "baseline": {
+        "top_probability": 0.4891,
+        "margin": 0.3114,
+        "choice": "Mak",
+        "cache_key": "fda19afc532a74cc77e3fc26bd1ab0ac25d77eb194a09d9fd7e321187a021a49"
+      }
+    },
+    {
+      "id": "d680b05e-5a85-50aa-8526-7f5a4d255581-streamer_hero",
+      "domain": "gameplay",
+      "expected": "dooley",
+      "role": "streamer_hero",
+      "image_sha256": "0fa4bb0ebf1c23f51a49217f0571ffb3b03b448eb31ef5bfde2d197de81e8640",
+      "dimensions": [
+        426,
+        480
+      ],
+      "cache_key": "50542500f0fadad5325a34e5237e24d6821a90840afce8bec0d88f7ca5c63227",
+      "original_cache_sha256": "0b9a119cbd5801e6e434da283e5d29c66fe60b5c72e145f62898956482826228",
+      "response_sha256": "038c63bc951605ba97786bc653b414671963d7155e9617dce0d41cd8ab899644",
+      "response": {
+        "result": {
+          "model": "clef-flash",
+          "answers": {
+            "hero": {
+              "type": "choice",
+              "choice": "Dooley",
+              "probabilities": {
+                "Dooley": 0.7041,
+                "Jules": 0.0437,
+                "Karnok": 0.0149,
+                "Mak": 0.0614,
+                "Pygmalien": 0.0321,
+                "Stelle": 0.0538,
+                "The Dragons": 0.038,
+                "Vanessa": 0.052
+              },
+              "confidence": 0.4397
+            }
+          },
+          "usage": {
+            "input_tokens": 1067,
+            "output_tokens": 0
+          }
+        },
+        "success": true,
+        "errors": [],
+        "messages": []
+      },
+      "source": {
+        "platform": "twitch",
+        "recording_id": "2913945069",
+        "timestamp_seconds": 14959,
+        "source_sha256": "7fa61576ea01ef85dc2484e3af82cff96d39a8982b24ec08cc5b5ca5bce0d5cf",
+        "region_xywh": [
+          0,
+          0,
+          426,
+          480
+        ],
+        "label_status": "asset_backed_visual_match",
+        "independent_human": false
+      },
+      "baseline": {
+        "top_probability": 0.2572,
+        "margin": 0.062299999999999994,
+        "choice": "The Dragons",
+        "cache_key": "f129a16b8b1310ed97b8e4c2fc4d5d54022ee9767871f04a62b053c9e5dfea46"
+      }
+    },
+    {
+      "id": "44e61ff3-a726-5e06-a4dd-125851c40419-ghost_hero",
+      "domain": "gameplay",
+      "expected": "karnok",
+      "role": "ghost_hero",
+      "image_sha256": "e034148b052f4f406bd3f5f9e22d3f40092b3ca98611175da897d3ae9b16f60f",
+      "dimensions": [
+        426,
+        480
+      ],
+      "cache_key": "d483fbb32005ab11199bba41a194ede48a31b549bdc707a3fe6d3fd62868f2c0",
+      "original_cache_sha256": "5df5598a96256adaf7e0d7f81eade501c70ed0eb62f6857ac9ed68fddd3a065d",
+      "response_sha256": "3d42bb376bea87c1427332461fea46f08786fc6a76664d522b9299b3b604bdf0",
+      "response": {
+        "result": {
+          "model": "clef-flash",
+          "answers": {
+            "hero": {
+              "type": "choice",
+              "choice": "Karnok",
+              "probabilities": {
+                "Dooley": 0.0192,
+                "Jules": 0.0441,
+                "Karnok": 0.5084,
+                "Mak": 0.2188,
+                "Pygmalien": 0.0883,
+                "Stelle": 0.0386,
+                "The Dragons": 0.0395,
+                "Vanessa": 0.0431
+              },
+              "confidence": 0.2244
+            }
+          },
+          "usage": {
+            "input_tokens": 1067,
+            "output_tokens": 0
+          }
+        },
+        "success": true,
+        "errors": [],
+        "messages": []
+      },
+      "source": {
+        "platform": "twitch",
+        "recording_id": "2914051035",
+        "timestamp_seconds": 8464,
+        "source_sha256": "1360b1bf7a9ce86ff3e23a7c24cdd3acc7c1af4ccc1b73dc3bf235a88e438d48",
+        "region_xywh": [
+          426,
+          0,
+          426,
+          480
+        ],
+        "label_status": "asset_backed_visual_match",
+        "independent_human": false
+      },
+      "baseline": {
+        "top_probability": 0.33,
+        "margin": 0.137,
+        "choice": "Karnok",
+        "cache_key": "42126e65c1f79f197af985f0bd7082dc204e9f369f68981d2cc846b432102f47"
+      }
+    },
+    {
+      "id": "c031d199-499f-56c2-9861-becae3a1ebaf-ghost_hero",
+      "domain": "gameplay",
+      "expected": "stelle",
+      "role": "ghost_hero",
+      "image_sha256": "4508f32e377878ea9d8eed58a0a8605f42e19f8b40fa49c3f7c3755fa35a07ab",
+      "dimensions": [
+        426,
+        480
+      ],
+      "cache_key": "6999506c221b9d4e72b5e9b8cbaefce7d591d4ed1dde14c0dc754369df0fc07c",
+      "original_cache_sha256": "e7b5365f5fbd18b123f049ac05e7b0754f74aeb8c0980244ccb65c627a410c5d",
+      "response_sha256": "1b75361ef11a84b5cac56a43f546378bea73a988c0aae6c216f0bf3e0aaa5934",
+      "response": {
+        "result": {
+          "model": "clef-flash",
+          "answers": {
+            "hero": {
+              "type": "choice",
+              "choice": "Stelle",
+              "probabilities": {
+                "Dooley": 0.0212,
+                "Jules": 0.1394,
+                "Karnok": 0.0269,
+                "Mak": 0.0863,
+                "Pygmalien": 0.0382,
+                "Stelle": 0.4745,
+                "The Dragons": 0.0552,
+                "Vanessa": 0.1583
+              },
+              "confidence": 0.1803
+            }
+          },
+          "usage": {
+            "input_tokens": 1067,
+            "output_tokens": 0
+          }
+        },
+        "success": true,
+        "errors": [],
+        "messages": []
+      },
+      "source": {
+        "platform": "twitch",
+        "recording_id": "2914051035",
+        "timestamp_seconds": 9060,
+        "source_sha256": "1b8099c8f9de78acbe1343fd6acde124b77378a883b096eed3e70f2d90649b1e",
+        "region_xywh": [
+          426,
+          0,
+          426,
+          480
+        ],
+        "label_status": "asset_backed_visual_match",
+        "independent_human": false
+      },
+      "baseline": {
+        "top_probability": 0.3548,
+        "margin": 0.21,
+        "choice": "Stelle",
+        "cache_key": "3486f261a36d356751b8d7d3e83d8f90041757335b05e6e452a321fef2327973"
+      }
+    },
+    {
+      "id": "9b7bfc9c-0a7a-592d-857d-e31956785634-ghost_hero",
+      "domain": "gameplay",
+      "expected": "jules",
+      "role": "ghost_hero",
+      "image_sha256": "9a35fda624c40af962d0c2fb08750765b1086cc7c26f4d15e2e05e9351a0f221",
+      "dimensions": [
+        426,
+        480
+      ],
+      "cache_key": "34a028381e9a713b12e93aaff63c7395adf21f23a8b1bc602875e8a437e8c46c",
+      "original_cache_sha256": "34f2991cac2f3bf66c2a4ff5657950e1715dcb3282611b40efff9a2196821ecb",
+      "response_sha256": "077edacf98519bac73f3ea53c2c5c90f1e7c893bf66071dfb5e1e2f441e4f808",
+      "response": {
+        "result": {
+          "model": "clef-flash",
+          "answers": {
+            "hero": {
+              "type": "choice",
+              "choice": "Jules",
+              "probabilities": {
+                "Dooley": 0.0332,
+                "Jules": 0.6086,
+                "Karnok": 0.0243,
+                "Mak": 0.0428,
+                "Pygmalien": 0.0349,
+                "Stelle": 0.0878,
+                "The Dragons": 0.0363,
+                "Vanessa": 0.1321
+              },
+              "confidence": 0.3161
+            }
+          },
+          "usage": {
+            "input_tokens": 1067,
+            "output_tokens": 0
+          }
+        },
+        "success": true,
+        "errors": [],
+        "messages": []
+      },
+      "source": {
+        "platform": "twitch",
+        "recording_id": "2914051035",
+        "timestamp_seconds": 9642,
+        "source_sha256": "3d6c84e9e2022acf0ef290af95d3eb9ee71dc47aa38b06833a94c5265d7dfaf5",
+        "region_xywh": [
+          426,
+          0,
+          426,
+          480
+        ],
+        "label_status": "asset_backed_visual_match",
+        "independent_human": false
+      },
+      "baseline": {
+        "top_probability": 0.3606,
+        "margin": 0.16679999999999998,
+        "choice": "Stelle",
+        "cache_key": "37387680c3b375f8ab5571d291f3ba258d914ad3c96ed9f241a475176c60b445"
+      }
+    },
+    {
+      "id": "historical-m01-ghost_hero",
+      "domain": "historical_gameplay",
+      "expected": "pygmalien",
+      "role": "ghost_hero",
+      "image_sha256": "3fe1e1b3e5f721f00028ad95d2de07f8bb3ab7326a3f00aa4849ba7a23f20325",
+      "dimensions": [
+        569,
+        640
+      ],
+      "cache_key": "5e49826b9f7949d77b327a38e773905de40692273300785410a54c23a360609e",
+      "original_cache_sha256": "03cc2a042877294e6d11535724fc0b0711d8764c21db5ea4bcaa533da31ba61e",
+      "response_sha256": "de0c907cc9ea4b9513fbe2c81b74bf13fc15276a2a5aa09f6fb604aaa83d164b",
+      "response": {
+        "result": {
+          "model": "clef-flash",
+          "answers": {
+            "hero": {
+              "type": "choice",
+              "choice": "Pygmalien",
+              "probabilities": {
+                "Dooley": 0.0285,
+                "Jules": 0.0504,
+                "Karnok": 0.0344,
+                "Mak": 0.0772,
+                "Pygmalien": 0.7065,
+                "Stelle": 0.0376,
+                "The Dragons": 0.0264,
+                "Vanessa": 0.039
+              },
+              "confidence": 0.4437
+            }
+          },
+          "usage": {
+            "input_tokens": 1232,
+            "output_tokens": 0
+          }
+        },
+        "success": true,
+        "errors": [],
+        "messages": []
+      },
+      "source": {
+        "platform": "twitch",
+        "recording_id": "2549030240",
+        "timestamp_seconds": 812,
+        "source_sha256": "2f1f38972ba21406ba62b973998fff686098a335b5299c5e0d01956facbef817",
+        "region_xywh": [
+          960,
+          0,
+          960,
+          1080
+        ],
+        "label_status": "provisional_resolved",
+        "independent_human": false
+      }
+    },
+    {
+      "id": "historical-m05-ghost_hero",
+      "domain": "historical_gameplay",
+      "expected": "dooley",
+      "role": "ghost_hero",
+      "image_sha256": "6197d225a73a929ac9a40c91561256c505f81940caf4248348c1517b57317910",
+      "dimensions": [
+        569,
+        640
+      ],
+      "cache_key": "a189158d8c6adcc4be89395ce8140a5a219102c2d9c205986117115b8b940220",
+      "original_cache_sha256": "c71731f9d898249f4633f678e13b4c303ffe3cc12bba6be63acd93df973d497a",
+      "response_sha256": "870e2c31ba00dcec95061dcb05e713aa065cd3cd803332ed5c99c06328851227",
+      "response": {
+        "result": {
+          "model": "clef-flash",
+          "answers": {
+            "hero": {
+              "type": "choice",
+              "choice": "Dooley",
+              "probabilities": {
+                "Dooley": 0.7826,
+                "Jules": 0.0395,
+                "Karnok": 0.01,
+                "Mak": 0.0209,
+                "Pygmalien": 0.0318,
+                "Stelle": 0.05,
+                "The Dragons": 0.0277,
+                "Vanessa": 0.0375
+              },
+              "confidence": 0.5659
+            }
+          },
+          "usage": {
+            "input_tokens": 1232,
+            "output_tokens": 0
+          }
+        },
+        "success": true,
+        "errors": [],
+        "messages": []
+      },
+      "source": {
+        "platform": "twitch",
+        "recording_id": "2549030240",
+        "timestamp_seconds": 1622,
+        "source_sha256": "5187011b23493a46f93615de4d458c83f38073786ec90f5acaf5ab26886f2759",
+        "region_xywh": [
+          960,
+          0,
+          960,
+          1080
+        ],
+        "label_status": "provisional_resolved",
+        "independent_human": false
+      }
+    },
+    {
+      "id": "historical-m09-ghost_hero",
+      "domain": "historical_gameplay",
+      "expected": "mak",
+      "role": "ghost_hero",
+      "image_sha256": "ecf8e744f9b147bcebc2bb86f0902da7474260beff0ae67a522b3f10c600b9ce",
+      "dimensions": [
+        569,
+        640
+      ],
+      "cache_key": "1a01aa1cd5bd69a29322717a628bf665667ee1c02ca37203fd3acc6d52e53848",
+      "original_cache_sha256": "1726b8cd091085416097642e61d3283d4eb62aa23d5b9d50edd9a5bdd68ed8b6",
+      "response_sha256": "3b3db90163d608d5a4d76e2438cc12b0b46d23bfb1c2c4a4fff42f338335c37c",
+      "response": {
+        "result": {
+          "model": "clef-flash",
+          "answers": {
+            "hero": {
+              "type": "choice",
+              "choice": "Mak",
+              "probabilities": {
+                "Dooley": 0.032,
+                "Jules": 0.0469,
+                "Karnok": 0.0748,
+                "Mak": 0.6843,
+                "Pygmalien": 0.0551,
+                "Stelle": 0.0427,
+                "The Dragons": 0.0271,
+                "Vanessa": 0.0371
+              },
+              "confidence": 0.4104
+            }
+          },
+          "usage": {
+            "input_tokens": 1232,
+            "output_tokens": 0
+          }
+        },
+        "success": true,
+        "errors": [],
+        "messages": []
+      },
+      "source": {
+        "platform": "twitch",
+        "recording_id": "2549030240",
+        "timestamp_seconds": 2638,
+        "source_sha256": "15df4239c21422c2fd36acfb7ad75bea20378a1616bfb0a6c9a7ea351fd5d109",
+        "region_xywh": [
+          960,
+          0,
+          960,
+          1080
+        ],
+        "label_status": "provisional_resolved",
+        "independent_human": false
+      }
+    },
+    {
+      "id": "historical-m15-ghost_hero",
+      "domain": "historical_gameplay",
+      "expected": "vanessa",
+      "role": "ghost_hero",
+      "image_sha256": "586f5fcdd4504924872b6ca8a104e24b68bcdb45916be3a9c2d7890443d3fe41",
+      "dimensions": [
+        569,
+        640
+      ],
+      "cache_key": "f8d04b3c7060a419ef09e71411fbf9a8eda4830506f6c617ba41685e9625a3c6",
+      "original_cache_sha256": "482c3e131c733e9f8e880a14641090b757539264524aea8f4c6da95f868063a1",
+      "response_sha256": "f0f279347c690379ef6db6ffff76921f51cb130b5f1bbaa3ef49eb21624359b9",
+      "response": {
+        "result": {
+          "model": "clef-flash",
+          "answers": {
+            "hero": {
+              "type": "choice",
+              "choice": "Vanessa",
+              "probabilities": {
+                "Dooley": 0.0387,
+                "Jules": 0.1468,
+                "Karnok": 0.024,
+                "Mak": 0.0363,
+                "Pygmalien": 0.0396,
+                "Stelle": 0.0983,
+                "The Dragons": 0.0567,
+                "Vanessa": 0.5596
+              },
+              "confidence": 0.2601
+            }
+          },
+          "usage": {
+            "input_tokens": 1232,
+            "output_tokens": 0
+          }
+        },
+        "success": true,
+        "errors": [],
+        "messages": []
+      },
+      "source": {
+        "platform": "twitch",
+        "recording_id": "2549030240",
+        "timestamp_seconds": 4100,
+        "source_sha256": "58aca671b223eeb1331639810adcb500ba53dff67a64ad72a38ff4221edb300a",
+        "region_xywh": [
+          960,
+          0,
+          960,
+          1080
+        ],
+        "label_status": "provisional_resolved",
+        "independent_human": false
+      }
+    },
+    {
+      "id": "historical-p01-youtube-dragons-360-ghost_hero",
+      "domain": "historical_gameplay",
+      "expected": "the_dragons",
+      "role": "ghost_hero",
+      "image_sha256": "631a1ec6142863481685450f3fcbff53efd7ca01633b0a4500b245597cd11294",
+      "dimensions": [
+        320,
+        360
+      ],
+      "cache_key": "406ec4440714e6701630739f3ff07bb43a5cd2615049331f83c9a6cea4f46ce5",
+      "original_cache_sha256": "97add0c2be2b627a071cc556935603966c865f6c3c9947ebe5d96d2362875a4b",
+      "response_sha256": "824fcb1d35917d456818f915576b13906cd0873dd4023cad93cb06f9875ef824",
+      "response": {
+        "result": {
+          "model": "clef-flash",
+          "answers": {
+            "hero": {
+              "type": "choice",
+              "choice": "The Dragons",
+              "probabilities": {
+                "Dooley": 0.0255,
+                "Jules": 0.0565,
+                "Karnok": 0.0322,
+                "Mak": 0.066,
+                "Pygmalien": 0.0446,
+                "Stelle": 0.0362,
+                "The Dragons": 0.6704,
+                "Vanessa": 0.0686
+              },
+              "confidence": 0.3905
+            }
+          },
+          "usage": {
+            "input_tokens": 982,
+            "output_tokens": 0
+          }
+        },
+        "success": true,
+        "errors": [],
+        "messages": []
+      },
+      "source": {
+        "platform": "youtube",
+        "recording_id": "0C6bxQsDj-s",
+        "timestamp_seconds": 218.0,
+        "source_sha256": "7b87191d851f392a798e8d8666a4cfaff28942802a006df440fa78a0d9651037",
+        "region_xywh": [
+          320,
+          0,
+          320,
+          360
+        ],
+        "label_status": "provisional_resolved",
+        "independent_human": false
+      }
+    },
+    {
+      "id": "historical-p03-overlay-pygmalien-480-ghost_hero",
+      "domain": "historical_gameplay",
+      "expected": "pygmalien",
+      "role": "ghost_hero",
+      "image_sha256": "816a8f1177d229f9b834432a528b7e8119c84a1a5ae4138ff9f7f9943708e0b3",
+      "dimensions": [
+        426,
+        480
+      ],
+      "cache_key": "6adf028f20648a4375aeaf3e2599df74acf6f2002ae96fe4ec5bcec8d5e924c3",
+      "original_cache_sha256": "2dc48daefb4c3faad703f0ff911b4f29bff3b61aeca904309b98f8b5961d6f13",
+      "response_sha256": "29d81883777b74bcbeb4724e20283301f847a78ec4438a610d7d2006e5b65295",
+      "response": {
+        "result": {
+          "model": "clef-flash",
+          "answers": {
+            "hero": {
+              "type": "choice",
+              "choice": "Pygmalien",
+              "probabilities": {
+                "Dooley": 0.025,
+                "Jules": 0.0695,
+                "Karnok": 0.0451,
+                "Mak": 0.3398,
+                "Pygmalien": 0.3952,
+                "Stelle": 0.0377,
+                "The Dragons": 0.0342,
+                "Vanessa": 0.0535
+              },
+              "confidence": 0.1824
+            }
+          },
+          "usage": {
+            "input_tokens": 1067,
+            "output_tokens": 0
+          }
+        },
+        "success": true,
+        "errors": [],
+        "messages": []
+      },
+      "source": {
+        "platform": "twitch",
+        "recording_id": "2614792902",
+        "timestamp_seconds": 95.5,
+        "source_sha256": "b8b42fe6346226924025f64b36ab549581f03c37b9ff53238c7a488fc0a3d3c7",
+        "region_xywh": [
+          426,
+          0,
+          426,
+          480
+        ],
+        "label_status": "provisional_resolved",
+        "independent_human": false
+      }
+    },
+    {
+      "id": "historical-p04-drummer-pygmalien-480-ghost_hero",
+      "domain": "historical_gameplay",
+      "expected": "pygmalien",
+      "role": "ghost_hero",
+      "image_sha256": "b4056b8d117d5e9598ec6b1686f33b6898e2811eb7054ab730c9f1fe39388073",
+      "dimensions": [
+        426,
+        480
+      ],
+      "cache_key": "0a5eed30dff8e6342a6db8e770bb87b8dbaa8d85e37bee3e136ef96e9f811e0c",
+      "original_cache_sha256": "ac173ef4dc405a6d5fa29e4943b6a24248810e0da0f25039b5a06c40c57a7e3a",
+      "response_sha256": "8b34cdc09db251710199ff7c6cc8e1677071eaaa8075c0cc3ff9eca20b236ebf",
+      "response": {
+        "result": {
+          "model": "clef-flash",
+          "answers": {
+            "hero": {
+              "type": "choice",
+              "choice": "Pygmalien",
+              "probabilities": {
+                "Dooley": 0.0279,
+                "Jules": 0.0576,
+                "Karnok": 0.084,
+                "Mak": 0.0979,
+                "Pygmalien": 0.6202,
+                "Stelle": 0.0327,
+                "The Dragons": 0.0374,
+                "Vanessa": 0.0423
+              },
+              "confidence": 0.3253
+            }
+          },
+          "usage": {
+            "input_tokens": 1067,
+            "output_tokens": 0
+          }
+        },
+        "success": true,
+        "errors": [],
+        "messages": []
+      },
+      "source": {
+        "platform": "bilibili",
+        "recording_id": "BV1FfL5zPEbH",
+        "timestamp_seconds": 1038.0,
+        "source_sha256": "713e11d8521189e761689332c2e92bef0247b9bb9b94b3681012401864d797cf",
+        "region_xywh": [
+          426,
+          0,
+          426,
+          480
+        ],
+        "label_status": "provisional_resolved",
+        "independent_human": false
+      }
+    },
+    {
+      "id": "historical-kripp-intro-2861-ghost_hero",
+      "domain": "historical_gameplay",
+      "expected": "karnok",
+      "role": "ghost_hero",
+      "image_sha256": "d5090ad77a618ecc2001fae8f9c51e7e9905377eb12b0461785100f0226d03b0",
+      "dimensions": [
+        427,
+        480
+      ],
+      "cache_key": "1fa6df388b661428a144e90f2144b0bc73c0b8035c9b80becbb3c8398dcd61a9",
+      "original_cache_sha256": "25e3bfebe56e98d99622e3c31f5bcb78ad323fb6a1f8ea39beb474ccd30f86bb",
+      "response_sha256": "8127adf317c9ac38e2dd7cc86ffb4c76eb8e2b783254997c74cb9629f579e627",
+      "response": {
+        "result": {
+          "model": "clef-flash",
+          "answers": {
+            "hero": {
+              "type": "choice",
+              "choice": "Karnok",
+              "probabilities": {
+                "Dooley": 0.0305,
+                "Jules": 0.0511,
+                "Karnok": 0.6397,
+                "Mak": 0.1041,
+                "Pygmalien": 0.0342,
+                "Stelle": 0.0562,
+                "The Dragons": 0.0334,
+                "Vanessa": 0.0508
+              },
+              "confidence": 0.3504
+            }
+          },
+          "usage": {
+            "input_tokens": 1067,
+            "output_tokens": 0
+          }
+        },
+        "success": true,
+        "errors": [],
+        "messages": []
+      },
+      "source": {
+        "platform": "youtube",
+        "recording_id": "kDaJyGcC5Ww",
+        "timestamp_seconds": 2861,
+        "source_sha256": "dd8bae010628af9896e871380b4245e23aac3dd9070c6314e7b35a20274c013c",
+        "region_xywh": [
+          427,
+          0,
+          427,
+          480
+        ],
+        "label_status": "provisional_resolved",
+        "independent_human": false
+      }
+    }
+  ]
+}

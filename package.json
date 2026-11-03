@@ -23,6 +23,8 @@
     "node": ">=24"
   },
   "dependencies": {
+    "@better-auth/core": "1.7.8",
+    "@better-auth/passkey": "1.7.8",
     "better-auth": "1.7.8",
     "fast-xml-parser": "5.11.2"
   }

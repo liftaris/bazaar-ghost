@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:test';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { catalogRoute, saveVideo, updateAccount, updateVideoProfile, upsertAccount } from '../platforms';
-import { dispatch, vodDetails } from '../processing';
+import { dispatch, manualRun, vodDetails } from '../processing';
 import { one, rows, statement } from '../http';
 
 const channel='UC'+'a'.repeat(22), sourceId='abcdefghijk';
@@ -123,7 +123,7 @@ it('does not queue a stale profile when the account changes after dispatch loads
     await updateAccount(env,account.id,{sfde_profile_id:3});
     changed=true;
   });
-  expect(await dispatch({...env,DB:database,ENVIRONMENT:'validation',OUTBOUND_ENABLED:'true',GITHUB_TOKEN:'test-only'},video.id)).toEqual([]);
+  expect(await dispatch({...env,DB:database,ENVIRONMENT:'validation',OUTBOUND_ENABLED:'true',GITHUB_TOKEN:'test-only'},video.id, manualRun(env))).toEqual([]);
   expect(changed).toBe(true);
   expect(fetch).not.toHaveBeenCalled();
   expect(await rows(env,'SELECT status FROM chunks WHERE vod_id=?',video.id)).toEqual([{status:'pending'}]);

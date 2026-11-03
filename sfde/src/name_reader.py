@@ -2,7 +2,15 @@
 import math
 import json
 from numbers import Real
-import cv2
+
+# PaddleOCR's default box padding (1.5) clips underscores below the baseline,
+# turning `Black_Hamster` into `Black Hamster`; 2.5 also keeps lower `THE_H4CK`.
+NAME_UNCLIP_RATIO = 2.5
+# Measured on the October 30 parity sample, relative to the tallest box: same-row
+# chat was at most .66 as tall; donation overlays' centres sat .21-.25 of its
+# height lower, while pieces of one split name were within .04.
+NAME_HEIGHT_FRACTION = .75
+NAME_CENTER_OFFSET = .15
 
 
 def tokens(reader, image, *, boxes=None, **predict_options):
@@ -26,17 +34,23 @@ def tokens(reader, image, *, boxes=None, **predict_options):
 
 
 def name_line_indices(boxes):
-    """Select the large name line, not smaller chat lines above/below it.
+    """Select the username's boxes, not chat or stream overlays around it.
 
-    Keep every fragment on that row. Without box geometry, preserve the original
-    observations rather than guessing which token is the name.
+    The tallest box sets the name's glyph height. Keep boxes at least
+    NAME_HEIGHT_FRACTION as tall whose vertical centres align with it: chat is
+    smaller, and same-size donation overlays sit lower than the name's line.
+    Without box geometry, preserve the original observations rather than
+    guessing which token is the name.
     """
     if not boxes or any(box is None for box in boxes):
         return list(range(len(boxes)))
     spans = [(min(point[1] for point in box), max(point[1] for point in box)) for box in boxes]
     top, bottom = max(spans, key=lambda span: span[1] - span[0])
-    center = (top + bottom) / 2
-    return [index for index, (top, bottom) in enumerate(spans) if top <= center <= bottom]
+    height, center = bottom - top, (top + bottom) / 2
+    selected = [index for index, (t, b) in enumerate(spans)
+                if b - t >= NAME_HEIGHT_FRACTION * height
+                and abs((t + b) / 2 - center) <= NAME_CENTER_OFFSET * height]
+    return sorted(selected, key=lambda index: min(point[0] for point in boxes[index]))
 
 
 class NameReader:
@@ -58,47 +72,29 @@ class NameReader:
         # Collect observations, including fragments. The configured threshold
         # labels uncertainty below; it must not filter text inside PaddleOCR.
         boxes = []
-        ordinary = tokens(self.reader, crop, boxes=boxes, text_rec_score_thresh=0.)
+        ordinary = tokens(self.reader, crop, boxes=boxes, text_rec_score_thresh=0.,
+                          text_det_unclip_ratio=NAME_UNCLIP_RATIO)
         selected = name_line_indices(boxes) if boxes else list(range(len(ordinary)))
-        # This branch is *only* for masks; normal names keep native preprocessing.
-        # The edge template includes bottom plaque ornament. Mask-only text strip:
-        # retain the upper glyph margin, inset the two border caps, exclude the
-        # bottom 21%. Never feed this special strip to ordinary identity OCR.
-        pad_top, inset, trim = round(h*.09), round(w*.10), round(h*.21)
-        mask_y = max(0, y-pad_top)
-        mask_region = [x+inset, mask_y, w-2*inset, y+h-trim-mask_y]
-        mx, my, mw, mh = mask_region
-        mask_crop = frame[my:my+mh, mx:mx+mw]
-        # Evidence must cover *both* actual inputs, including the mask branch's
-        # small upper context extension, in original full-frame coordinates.
         result['region'] = list(region)
         result['ocr_regions'] = {'native': list(region)}
-        mask = []
-        if mask_crop.size:
-            enlarged = cv2.resize(mask_crop, None, fx=4, fy=4, interpolation=cv2.INTER_LINEAR)
-            gray = cv2.cvtColor(enlarged, cv2.COLOR_BGR2GRAY)
-            binary = cv2.threshold(gray, 65, 255, cv2.THRESH_BINARY)[1]
-            mask = tokens(self.reader, cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR), text_rec_score_thresh=0.)
-            result['region'] = [x, mask_y, w, y+h-mask_y]
-            result['ocr_regions']['mask'] = mask_region
-        result['raw_text'] = json.dumps({'native': ordinary, 'mask': mask,
-                                         'name_line_indices': selected,
+        result['raw_text'] = json.dumps({'native': ordinary, 'name_line_indices': selected,
                                          'regions': result['ocr_regions']}, ensure_ascii=False)
-        if len(mask) == 1 and mask[0][0].strip() == '******' and mask[0][1] >= self.threshold:
-            result.update(name_state='masked', confidence=mask[0][1],
-                          method='mask-binary65-linear4x-english-ocr')
-            return result
-        observed = [(text, confidence) for index, (text, confidence) in enumerate(ordinary)
-                    if index in selected and text.strip()]
-        uncertain = (not location.get('complete')
-                     or location.get('name_state') in ('partial', 'obstructed')
-                     or any('*' in text for text, _ in ordinary + mask))
+        observed = [ordinary[index] for index in selected if ordinary[index][0].strip()]
+        uncertain = not location.get('complete') or location.get('name_state') in ('partial', 'obstructed')
         if not observed:
             result['name_state'] = 'obstructed' if uncertain else 'unreadable'
             return result
-        text = '\n'.join(text for text, _ in observed)
+        # Detection can split one name into adjacent boxes, e.g. `evil` + `_neuro`.
+        text = ''.join(text for text, _ in observed)
         confidence = min(confidence for _, confidence in observed)
-        uncertain = uncertain or len(observed) != 1 or len(text.split()) != 1 or confidence < self.threshold
+        # A masked name is drawn as asterisks, which usernames cannot contain. OCR
+        # varies their count and can misread one, e.g. `k*******`.
+        visible = ''.join(text.split())
+        if visible.count('*') * 2 > len(visible) and confidence >= self.threshold:
+            result.update(name_state='masked', confidence=confidence)
+            return result
+        uncertain = (uncertain or '*' in text or len(observed) != 1 or len(text.split()) != 1
+                     or confidence < self.threshold)
         text = text.split()[0]
         result.update(username=text if text.strip('* \t\r\n') else None,
                       confidence=confidence, name_state='obstructed' if uncertain else 'complete')

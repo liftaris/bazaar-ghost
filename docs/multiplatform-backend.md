@@ -2,6 +2,8 @@
 
 The backend catalogs Twitch, YouTube, and Bilibili recordings into the same D1 processing model. Cloudflare Workers owns catalog persistence, processing claims, screenshots in R2, public search, and reviewed matchup groups. Media extraction, FFmpeg, OpenCV, and PaddleOCR run in GitHub Actions. The frontend remains a separate repository.
 
+For current operational status, see the [October 27 YouTube support audit](youtube-support-status.md). Bilibili passed automatic hosted validation on October 20. YouTube cataloging still uses yt-dlp, and reliable runner media access remains unresolved. The separate frontend's platform adapters and source switcher are complete in Linear; older website-isolation notes below describe the migration's earlier state.
+
 This port incorporates `c7c3863` and `ec4b870` from the original Supabase implementation. Its prior real-footage results establish useful comparison cases; they do not establish that the Cloudflare port or GitHub-hosted playback has passed the same checks. The ongoing deployment and verification trail is tracked separately from those historical results.
 
 ## Platform contracts

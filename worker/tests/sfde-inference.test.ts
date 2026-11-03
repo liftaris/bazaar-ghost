@@ -5,6 +5,7 @@ import worker from "../index";
 import { claim, plan } from "../processing";
 import { infer } from "../sfde-inference";
 import { heroOptions, inferencePrompt } from "../sfde-prompts";
+import heroPrompt from "../../contracts/hero-skins-v2.json";
 
 const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
 let chunkId: string;
@@ -35,6 +36,24 @@ beforeEach(async () => {
   vi.stubGlobal("fetch", vi.fn(() => { throw new Error("Unexpected outbound request"); }));
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+it("uses the exact ordered skin prompt for both roles and returns independent clones", () => {
+  const ghost = inferencePrompt("ghost_hero"), streamer = inferencePrompt("streamer_hero");
+  expect(JSON.stringify(ghost)).toBe(JSON.stringify(heroPrompt));
+  expect(JSON.stringify(streamer)).toBe(JSON.stringify(heroPrompt));
+  expect(Object.keys(heroPrompt)).toEqual(["model", "state", "questions"]);
+  expect(Object.keys(heroPrompt.questions)).toEqual(["hero"]);
+  expect(heroPrompt.questions.hero.type).toBe("choice");
+  expect(heroOptions).toEqual(["Dooley", "Vanessa", "The Dragons", "Pygmalien", "Jules", "Mak", "Stelle", "Karnok"]);
+  expect(ghost).not.toBe(streamer);
+  expect(ghost.questions).not.toBe(streamer.questions);
+  Reflect.set(ghost, "state", "mutated clone");
+  const questions = ghost.questions;
+  if (!questions || typeof questions !== "object") throw new Error("Missing questions");
+  Reflect.set(questions, "hero", {});
+  expect(inferencePrompt("ghost_hero")).toEqual(heroPrompt);
+  expect(streamer).toEqual(heroPrompt);
+});
 
 it("requires outer processor authorization and exact owned, live claims", async () => {
   const run = vi.fn(async () => heroResult());
@@ -100,7 +119,7 @@ it("reserves before native binding invocation, settles valid usage, and stores n
   });
   const response = await infer(gateway(run), request(), chunkId);
   expect(response).toMatchObject({ status: "completed", cached: false, usage: { input_tokens: 1000 } });
-  expect(response.prompt_version).toMatch(/^hero-eight-v1:[0-9a-f]{64}$/);
+  expect(response.prompt_version).toBe("hero-skins-v2:4a07560812b9940566ff1dd556975f730f58d498cb02ec899231167cb752ba6c");
   expect(run.mock.calls).toHaveLength(1);
   const ledger = await one(env, "SELECT * FROM sfde_inference");
   expect(ledger).toMatchObject({ actual_nano_usd: 38000, charged_nano_usd: 38000 });
@@ -153,6 +172,14 @@ it("never resubmits pending, uncertain or completed request IDs and conflicts on
   await statement(env, "UPDATE sfde_inference SET prompt_version='old-version' WHERE request_id=?", id).run();
   await expect(infer(settings, request({}, id), chunkId)).rejects.toMatchObject({ status: 409 });
   expect(run).toHaveBeenCalledTimes(1);
+  const newId = crypto.randomUUID();
+  run.mockResolvedValueOnce(heroResult());
+  const updated = await infer(settings, request({}, newId), chunkId);
+  expect(updated).toMatchObject({ status: "completed", cached: false });
+  expect(updated.prompt_version).toMatch(/^hero-skins-v2:/);
+  expect(await infer(settings, request({}, newId), chunkId)).toEqual({ ...updated, cached: true });
+  expect(run).toHaveBeenCalledTimes(2);
+  expect((await one(env, "SELECT prompt_version FROM sfde_inference WHERE request_id=?", id))!.prompt_version).toBe("old-version");
 });
 
 async function fill(n: number, day = new Date().toISOString().slice(0, 10), charge = 933888) {

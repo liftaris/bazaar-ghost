@@ -599,11 +599,9 @@ def parse_hero(response, role):
         if len(probabilities) != len(HEROES) or len(scores) != len(HEROES) or any(v is None for v in scores.values()) or abs(sum(scores.values())-1) > .01:
             return None, None
         ordered = sorted(scores.values(), reverse=True)
-        if max(scores, key=scores.get) != hero or scores[hero] < .60 or ordered[0]-ordered[1] < .30:
+        if max(scores, key=scores.get) != hero or scores[hero] < .33 or ordered[0] < ordered[1] + .05:
             return None, None
         confidence = scores[hero]
-    # Frozen exploratory guard for BOTH roles, not calibrated accuracy. A known
-    # overlay/skin counterexample still passes it and remains documented tuning work.
     return hero, confidence
 
 
@@ -645,7 +643,7 @@ class EncounterEnricher:
         # Reserve client attempts before submission; failed/ambiguous calls count.
         self.attempts += 1
         event['_paid_attempts'] = event.get('_paid_attempts', 0) + 1
-        version = 'day-medallion-v2' if task == 'clock_day' else 'v1'
+        version = 'day-medallion-v2' if task == 'clock_day' else 'hero-skins-v2'
         request_id = str(uuid5(NAMESPACE_URL, f'{event["id"]}:{task}:{source["at_ms"]}:{version}'))
         started = time.monotonic()
         try:
@@ -685,7 +683,7 @@ class EncounterEnricher:
             evidence = EncounterPipeline._evidence(source, region, 'fixed-task-inference', 'intro',
                         ('stable_intro_full_height_max640' if hero_ms is not None
                          else 'selected_intro_full_height_max640_no_stable_pair')
-                        + ';exploratory_top060_margin030_uncalibrated', None,
+                        + ';hero_skins_v2_top033_margin005_uncalibrated', None,
                        model=str(response.get('model', 'unknown'))[:128],
                        prompt_version=str(response.get('prompt_version', 'unknown'))[:128],
                        raw_text=json.dumps(response.get('result'), ensure_ascii=False)[:1024])

@@ -7,7 +7,7 @@ import subprocess
 from typing import Any, Dict, List, Tuple
 from urllib.parse import urlencode
 
-from catalog_youtube import channel_page  # also adds sfde/src to the import path
+from catalog_youtube import channel_page, channel_profile  # also adds sfde/src to the import path
 from bilibili_source import public_api
 from extraction_errors import ExtractionError, extraction_error, safe_error_category
 
@@ -93,8 +93,10 @@ def discover(source: str) -> List[str]:
 
 def account_page(source: str, identity: str, tab: str, start: int, limit: int = 20) -> Dict[str, Any]:
     """Poll creator catalogs. Bilibili WBI/anti-bot failures remain retryable errors."""
+    profile = {}
     if source == 'youtube':
         page = channel_page(identity, start, limit, tab)
+        profile = channel_profile(identity, page)
         pattern = r'[A-Za-z0-9_-]{11}'
     else:
         if not re.fullmatch(r'[1-9][0-9]*', identity):
@@ -110,4 +112,4 @@ def account_page(source: str, identity: str, tab: str, start: int, limit: int = 
         pattern = r'BV[A-Za-z0-9]{10}'
     entries = page.get('entries', [])
     return {'ids': [e['id'] for e in entries if e and re.fullmatch(pattern, e.get('id', ''))],
-            'inspected': len(entries)}
+            'inspected': len(entries), **({'profile': profile} if profile else {})}

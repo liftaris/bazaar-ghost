@@ -44,6 +44,13 @@ export function requireOrigin(req: Request, env: AuthEnv) {
   if (!configuration(env).origins.includes(req.headers.get("Origin") || ""))
     throw new HttpError(403, "Untrusted request origin");
 }
+/** WebAuthn binds to the page origin. Browsers omit Origin on same-origin GETs; the frontend
+ * proxies with the page URL, so a GET may fall back to the request URL's trusted origin. */
+export function ceremonyOrigin(req: Request, env: AuthEnv) {
+  const origin = req.headers.get("Origin") ?? (req.method === "GET" ? new URL(req.url).origin : "");
+  if (!configuration(env).origins.includes(origin)) throw new HttpError(403, "Untrusted request origin");
+  return origin;
+}
 export function requireFresh(identity: Identity) {
   const age = Date.now() - Date.parse(identity.createdAt);
   if (!Number.isFinite(age) || age < -60_000 || age > FRESH_MS)
@@ -66,18 +73,20 @@ export async function requireCsrf(req: Request, env: AuthEnv, identity: Identity
   if (!/^[a-f0-9]{64}$/.test(candidate) || !timingSafeEqual(new TextEncoder().encode(candidate), new TextEncoder().encode(expected)))
     throw new HttpError(403, "Invalid CSRF token");
 }
+/** A user may sign in only while they hold an OAuth account or a passkey. */
+export const hasCredential = (alias: string) => `EXISTS(SELECT 1 FROM user_credentials c WHERE c.userId=${alias}.id)`;
 /** Include this check in the SAME D1 batch as a custom authenticated mutation. */
 export function identityCheck(identity: Identity, fresh = false) {
   return { sql: `EXISTS(SELECT 1 FROM user_sessions s JOIN app_users u ON u.id=s.userId
     WHERE s.id=? AND s.userId=? AND s.expiresAt>${sqlDate} AND u.status='active'
-    AND EXISTS(SELECT 1 FROM user_accounts a WHERE a.userId=u.id)
+    AND ${hasCredential("u")}
     ${fresh ? "AND s.createdAt>strftime('%Y-%m-%dT%H:%M:%fZ','now','-300 seconds')" : ""})`, args: [identity.sessionId, identity.userId] };
 }
-export async function jsonBody(req: Request) {
+export async function jsonBody(req: Request, limit = 4096) {
   if (req.headers.get("Content-Type")?.split(";")[0].trim().toLowerCase() !== "application/json")
     throw new HttpError(415, "Expected application/json");
   let data: unknown;
-  try { data = JSON.parse(new TextDecoder().decode(await readBytes(req, 4096))); }
+  try { data = JSON.parse(new TextDecoder().decode(await readBytes(req, limit))); }
   catch (error) { if (error instanceof HttpError) throw error; throw new HttpError(400, "Invalid JSON"); }
   if (!data || typeof data !== "object" || Array.isArray(data)) throw new HttpError(400, "Expected an object");
   return data as Record<string, unknown>;
@@ -92,9 +101,10 @@ export function privateResponse(response: Response) {
   result.headers.set("Referrer-Policy", "no-referrer");
   return result;
 }
+export const sessionCookie = (env: AuthEnv) => `${configuration(env).secure ? "__Host-" : ""}bazaarghost_session`;
 export function clearSessionCookie(env: AuthEnv, response: Response) {
   const { secure } = configuration(env);
-  response.headers.append("Set-Cookie", `${secure ? "__Host-" : ""}bazaarghost_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secure ? "; Secure" : ""}`);
+  response.headers.append("Set-Cookie", `${sessionCookie(env)}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secure ? "; Secure" : ""}`);
   return response;
 }
 /** Cloudflare supplies CF-Connecting-IP. Never accept a user-controlled forwarded chain. */

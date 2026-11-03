@@ -17,6 +17,7 @@ from uuid import UUID
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'sfde' / 'src'))
 from backend_environment import open_backend, verify_backend
+from github_run import github_run
 from media_source import resolve_media, validate_source_id
 from platform_registry import platform
 from renditions import select_rendition
@@ -127,6 +128,12 @@ def prepare() -> None:
     ids = [chunk['id'] for chunk in chunks]
     if len(ids) > 256:
         raise ValueError('More than 256 chunks; dispatch bounded batches through process-vod')
+    if ids and os.getenv('QUEUED_AT') and github_run():
+        try:
+            api('github-run', body={'ids': ids, 'queued_at': os.environ['QUEUED_AT'], **github_run()}, method='POST')
+        except Exception as error:
+            # The run history is informational; a failed report must not fail the dispatch.
+            print(f'GitHub run report failed: {error}', file=sys.stderr)
     output('chunk_uuids', ids)
     if not ids:
         return
@@ -170,12 +177,12 @@ def fail_queued() -> None:
     ids = input_chunk_ids()
     if not ids:
         return
-    api('fail-queued', body={'ids': ids, 'queued_at': os.getenv('QUEUED_AT'), 'error': 'Workflow preparation failed'}, method='POST')
+    api('fail-queued', body={'ids': ids, 'queued_at': os.getenv('QUEUED_AT'), 'error': 'Workflow preparation failed', **github_run()}, method='POST')
 
 
 def fail_chunk() -> None:
     chunk_id = str(UUID(os.environ['CHUNK_ID']))
-    api('fail-queued', body={'ids': [chunk_id], 'queued_at': os.getenv('QUEUED_AT'), 'error': 'Runner failed before claiming chunk'}, method='POST')
+    api('fail-queued', body={'ids': [chunk_id], 'queued_at': os.getenv('QUEUED_AT'), 'error': 'Runner failed before claiming chunk', **github_run()}, method='POST')
 
 
 def summarize() -> None:

@@ -6,7 +6,7 @@ import {
   requireValue,
   statement,
 } from "./http";
-import { plan } from "./processing";
+import { eligibleRecording, plan, resettable } from "./processing";
 import { atomic } from "./atomic";
 import { profileCheck } from "./profiles";
 
@@ -39,19 +39,17 @@ export async function retryVod(env: Env, input: Record<string, any>) {
     throw new HttpError(409, "VOD has active workers");
   // Account eligibility or a new claim can change after the helpful preflight
   // errors above. Recheck both with the reset so a competing operator/runner wins.
+  // An admin bulk reset grants three more attempts; attempt_count keeps the history.
   const [, , result] = await atomic(env, [
-    {
-      sql: "EXISTS(SELECT 1 FROM vod_processing_context WHERE id=? AND availability='available' AND ready_for_processing=1 AND processing_enabled=1)",
-      args: [id],
-    },
+    eligibleRecording(id),
     {
       sql: "NOT EXISTS(SELECT 1 FROM chunks WHERE vod_id=? AND status IN('processing','queued'))",
       args: [id],
     },
   ], [statement(
     env,
-    `UPDATE chunks SET status='pending',last_error=NULL,claim_token=NULL,completed_at=NULL,lease_expires_at=NULL,attempt_count=0
-    WHERE vod_id=? AND status ${mode === "all" ? "IN('completed','failed','pending')" : "='failed'"} RETURNING id`,
+    `UPDATE chunks SET status='pending',last_error=NULL,claim_token=NULL,completed_at=NULL,lease_expires_at=NULL,max_attempts=attempt_count+3
+    WHERE vod_id=? AND ${mode === "all" ? resettable("status") : "status='failed'"} RETURNING id`,
     id,
   )]);
   return { reset: result.results.length, chunks: await plan(env, id) };

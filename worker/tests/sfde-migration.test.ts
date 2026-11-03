@@ -107,6 +107,8 @@ it("migrates populated pre-0022 D1 atomically without retargeting FKs, losing po
         expect(actual.map(({ streamer_mode: _mode, ...row }) => row), table).toEqual(expected);
       } else if (table === "matchups") {
         expect(actual.map(({ indexed_at: _derived, ...row }) => row), table).toEqual(expected);
+      } else if (table === "chunks") {
+        expect(actual, table).toEqual(expected.map(row => ({ ...row, max_attempts: 3 })));
       } else if (table === "detections") {
         expect(actual, table).toEqual(expected.map(row => ({ ...row, game_mode: null, tournament_wins: null, tournament_losses: null })));
       } else expect(actual, table).toEqual(expected);

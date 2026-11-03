@@ -2,7 +2,7 @@ import { env, SELF } from 'cloudflare:test';
 import { beforeEach,afterEach,expect,it,vi } from 'vitest';
 import { upsertAccount,saveVideo,enqueueJob,claimJob,finishJob } from '../platforms';
 import { one,rows,statement } from '../http';
-import { plan,claim,owned,dispatch } from '../processing';
+import { plan,claim,owned,dispatch,manualRun } from '../processing';
 import { linkDetections,unlinkDetection } from './link-fixture';
 import { publish,upload } from '../detections';
 import { dispatchBranch } from '../platform-ingestion-dispatch';
@@ -92,7 +92,7 @@ it('dispatches validation jobs only from the validation branch and rejects unrec
  expect(dispatchBranch('validation')).toBe('migration/cloudflare');expect(()=>dispatchBranch('test')).toThrow();
  const v=await catalog();
  const fetchMock=vi.fn(async(_url:RequestInfo|URL,_init?:RequestInit)=>new Response(null,{status:204}));vi.stubGlobal('fetch',fetchMock);
- await dispatch({...env,ENVIRONMENT:'validation',OUTBOUND_ENABLED:'true',GITHUB_TOKEN:'test'},v.id);
+ await dispatch({...env,ENVIRONMENT:'validation',OUTBOUND_ENABLED:'true',GITHUB_TOKEN:'test'},v.id, manualRun(env));
  const payload=JSON.parse(fetchMock.mock.calls[0][1]!.body as string);
  expect(payload.ref).toBe('migration/cloudflare');expect(payload.inputs.source).toBe('youtube');expect(payload.inputs.environment).toBe('validation');
 });

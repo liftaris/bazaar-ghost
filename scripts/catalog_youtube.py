@@ -75,11 +75,12 @@ def normalize_video(metadata: Dict[str, Any], assume_bazaar: bool = False,
 
 def ensure_account(channel_id: str, name: str, enable: bool = False,
                    streamer_id: Optional[int] = None, profile_id: Optional[int] = None,
-                   preserve_disabled: bool = False, job=None) -> Dict[str, Any]:
+                   preserve_disabled: bool = False, job=None, channel=None) -> Dict[str, Any]:
     """Create an independent YouTube account; optionally link an existing creator."""
     if not re.fullmatch(r'UC[A-Za-z0-9_-]{22}', channel_id):
         raise ValueError('Expected an immutable YouTube channel ID')
-    values = {'source': 'youtube', 'source_id': channel_id, 'display_name': name}
+    values = {'source': 'youtube', 'source_id': channel_id, 'display_name': name,
+              **channel_profile(channel_id, channel)}
     if enable:
         values['processing_enabled'] = True
     if streamer_id is not None:
@@ -87,6 +88,29 @@ def ensure_account(channel_id: str, name: str, enable: bool = False,
     if profile_id is not None:
         values['sfde_profile_id'] = profile_id
     return api('accounts/upsert', body={**values, 'preserve_disabled': preserve_disabled, **fence(job)}, method='POST')
+
+
+def channel_profile(channel_id: str, page=None) -> Dict[str, str]:
+    if page is None:
+        page = channel_page(channel_id, 1, 1, 'videos')
+        if page.get('tab_absent'):
+            page = channel_page(channel_id, 1, 1, 'streams')
+    if (page.get('channel_id') or page.get('id')) != channel_id:
+        raise ValueError('YouTube channel identity mismatch')
+    profile = {}
+    if page.get('channel'):
+        profile['display_name'] = page['channel']
+    handle = page.get('uploader_id')
+    if isinstance(handle, str) and handle.startswith('@') and len(handle) > 1:
+        profile['login'] = handle[1:]
+    for thumbnail in page.get('thumbnails') or []:
+        if thumbnail.get('id') == 'avatar_uncropped':
+            url = urlparse(thumbnail['url'])
+            if url.scheme != 'https' or not url.hostname or url.username or url.password:
+                raise ValueError('Invalid YouTube channel avatar URL')
+            profile['avatar_url'] = thumbnail['url']
+            break
+    return profile
 
 
 def channel_page(channel: str, start: int, limit: int, tab: str) -> Dict[str, Any]:
@@ -177,7 +201,7 @@ def main() -> None:
             continue
         if not args.dry_run:
             account = ensure_account(metadata['channel_id'], metadata.get('channel') or metadata['channel_id'],
-                                     args.enable_processing, args.streamer_id, args.profile_id)
+                                     args.enable_processing, args.streamer_id, args.profile_id, channel=page)
             saved = save_video(video, account, explicit_ranges=ranges is not None)
             result['cataloged'].append({'id': saved['id'], 'source_id': source_id, 'title': video['title']})
         else:

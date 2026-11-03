@@ -2,6 +2,8 @@
 
 This is the acceptance record for the dedicated Cloudflare migration environment, not a production cutover checklist marked complete. Detailed chronology is in [platform-work-log.md](platform-work-log.md).
 
+October 27 update: live validation health returned `fac316865551e9b0fc24bedb995e1956327168be`, and public search returned historical YouTube sources. Bilibili passed automatic hosted acceptance on October 20; the earlier statements below that both platforms were paused describe prior checkpoints. YouTube access remains unresolved in the latest recorded media probes. See the [current support audit](youtube-support-status.md). The deployment, migration, and frontend statements below retain their original checkpoint scope.
+
 ## Environment and execution
 
 - Branch: `migration/cloudflare`; existing `dev`, `main`, and the separate frontend remain untouched.

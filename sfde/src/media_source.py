@@ -125,6 +125,8 @@ def resolve_media(source: str, source_id: str, quality: str = '480p', *, stream_
                     candidates.append((height, fps, stream))
             if candidates:
                 height, fps, stream = min(candidates, key=lambda item: _rendition_score(item[0], item[1], target, quality.endswith('60')))
+                if source == 'youtube' and height < target:
+                    raise ValueError('Streamlink rendition is below processing resolution')
                 logger.info('Resolved %s video via Streamlink at %sp', source, height)
                 return {**_http_media(stream['url'], stream.get('headers') or {}, 'streamlink', height, fps),
                         'progressive': stream['type'] == 'http'}
@@ -144,8 +146,9 @@ def resolve_media(source: str, source_id: str, quality: str = '480p', *, stream_
     if not candidates:
         raise RuntimeError('No supported YouTube video rendition')
     selected = min(candidates, key=lambda f: _rendition_score(f['height'], f.get('fps') or 30, target, quality.endswith('60')))
-    return _http_media(selected['url'], selected.get('http_headers') or {}, 'yt-dlp',
-                       selected['height'], selected.get('fps') or 30)
+    return {**_http_media(selected['url'], selected.get('http_headers') or {}, 'yt-dlp',
+                         selected['height'], selected.get('fps') or 30),
+            'progressive': selected['protocol'] in ('http', 'https')}
 
 
 def extraction_failure(stderr: str) -> str:
@@ -156,9 +159,13 @@ def extraction_failure(stderr: str) -> str:
 def youtube_metadata(source_id: str) -> Dict[str, Any]:
     """Fetch metadata without downloading media or using ambient user configuration."""
     url = watch_url('youtube', source_id)
+    command = ['yt-dlp', '--ignore-config', '--no-playlist', '--skip-download',
+               '--dump-single-json', '--socket-timeout', '30']
+    cookie_file = os.getenv('YOUTUBE_COOKIES_FILE')
+    if cookie_file:
+        command.extend(['--cookies', cookie_file])
     try:
-        response = subprocess.run(['yt-dlp', '--ignore-config', '--no-playlist', '--skip-download',
-                                   '--dump-single-json', '--socket-timeout', '30', url],
+        response = subprocess.run([*command, url],
                                   capture_output=True, text=True, timeout=120, check=False)
     except (OSError, subprocess.TimeoutExpired, UnicodeError) as error:
         raise ExtractionError(safe_error_category(error)) from None

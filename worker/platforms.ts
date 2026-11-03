@@ -1,7 +1,7 @@
 import { atomic } from './atomic';
 import { body, decodeRow, HttpError, integer, now, one, requireValue, rows, statement, uuid } from './http';
 import { accountIdentity, ingestionPlatforms, listPlatforms, platform as platformEntry, requireIngestion, submissionIdentity, videoIdentity } from './platform-registry';
-import { dispatch, normalizeRanges, pendingVideos, plan, recover } from './processing';
+import { automaticRun, dispatch, normalizeRanges, pendingVideos, plan, recover } from './processing';
 import { linkStatements, unlinkStatement } from './streamers';
 import { renewSubscription } from './youtube-websub';
 import { CLAIMABLE_INGESTION, finishIngestionRunner, runnerOwnership, startIngestionRunner } from './platform-ingestion-dispatch';
@@ -20,6 +20,12 @@ function date(value: unknown) {
   if (value == null) return null;
   requireValue(typeof value === 'string' && /(?:Z|[+-]\d\d:\d\d)$/.test(value) && Number.isFinite(Date.parse(value)), 'Expected timestamp with timezone');
   return new Date(value).toISOString();
+}
+function avatar(value: unknown) {
+  if(value == null || value === '') return null;
+  const url=URL.parse(text(value,'avatar URL',2048));
+  requireValue(url && url.protocol==='https:' && !url.username && !url.password,'Invalid avatar URL');
+  return url.href;
 }
 function decoded(value: Input): Input {
   return { ...decodeRow(value), ...(typeof value.state === 'string' ? {state: JSON.parse(value.state)} : {}) };
@@ -54,6 +60,8 @@ export async function accounts(env: Env, params: URLSearchParams) {
 export async function upsertAccount(env: Env, input: Input) {
   const platform=requireIngestion(input.source,'Twitch uses the streamer catalog').id;
   const identity=accountIdentity(platform,input.source_id), name=text(input.display_name,'display name');
+  const avatarUrl=avatar(input.avatar_url);
+  const login=input.login==null?null:text(input.login,'login');
   requireValue(input.processing_enabled == null || typeof input.processing_enabled === 'boolean','Invalid enablement');
   requireValue(input.preserve_disabled == null || typeof input.preserve_disabled === 'boolean','Invalid preserve_disabled');
   if(input.sfde_profile_id != null) integer(input.sfde_profile_id,'profile ID',1);
@@ -68,11 +76,13 @@ export async function upsertAccount(env: Env, input: Input) {
   checks.push(...accountSettingChecks(accountId,input));
   const link=accountLink(env,accountId,input);
   checks.push(...link.checks);
-  await atomic(env,checks,[statement(env,`INSERT INTO platform_accounts(id,source,source_id,display_name,processing_enabled,sfde_profile_id)
-    VALUES(?,?,?,?,?,?) ON CONFLICT(source,source_id) DO UPDATE SET display_name=excluded.display_name,
+  await atomic(env,checks,[statement(env,`INSERT INTO platform_accounts(id,source,source_id,display_name,avatar_url,login,processing_enabled,sfde_profile_id)
+    VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(source,source_id) DO UPDATE SET display_name=excluded.display_name,
+    avatar_url=coalesce(excluded.avatar_url,platform_accounts.avatar_url),
+    login=coalesce(excluded.login,platform_accounts.login),
     processing_enabled=CASE WHEN ? OR ? IS NULL THEN platform_accounts.processing_enabled ELSE excluded.processing_enabled END,
     sfde_profile_id=coalesce(?,platform_accounts.sfde_profile_id)`,
-    accountId,platform,identity,name,input.processing_enabled??false,input.sfde_profile_id??1,
+    accountId,platform,identity,name,avatarUrl,login,input.processing_enabled??false,input.sfde_profile_id??1,
     automatic || (input.preserve_disabled??false),input.processing_enabled,input.sfde_profile_id),
     ...link.mutations,
     enqueueStatement(env,{source:platform,kind:'account',source_id:identity,account_id:accountId},true)]);
@@ -89,6 +99,9 @@ export async function updateAccount(env: Env,id:string,input: Input) {
   if(Object.hasOwn(input,'streamer_id') && input.streamer_id!==null) integer(input.streamer_id,'streamer_id',1);
   if(input.processing_enabled!=null) {requireValue(typeof input.processing_enabled==='boolean','Invalid enablement'); fields.processing_enabled=input.processing_enabled;}
   if(input.display_name!=null) fields.display_name=text(input.display_name,'display name');
+  const avatarUrl=avatar(input.avatar_url);
+  if(avatarUrl) fields.avatar_url=avatarUrl;
+  if(input.login!=null) fields.login=text(input.login,'login');
   if(input.last_cataloged_at!=null) fields.last_cataloged_at=date(input.last_cataloged_at);
   requireValue(Object.keys(fields).length>0||Object.hasOwn(input,'streamer_id'),'No account changes');
   requireValue(input.job_id == null && input.lease_token == null ||
@@ -258,7 +271,7 @@ export async function catalogRoute(req:Request,env:Env) {
     await recover(env);
     const due=await pendingVideos(env,limit,true);
     let count=0;
-    for(const v of due) {if(data.dry_run) await plan(env,v.id);else if((await dispatch(env,v.id)).length) count++;}
+    for(const v of due) {if(data.dry_run) await plan(env,v.id);else if((await dispatch(env,v.id,automaticRun(env))).length) count++;}
     result={dispatched:count};
   } else if(path==='/maintenance') {
     // WebSub has no signed timestamp. Keep digest tombstones for the account lifetime.

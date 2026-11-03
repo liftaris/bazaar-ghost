@@ -1,6 +1,11 @@
 import { external, HttpError, one, requireValue, statement, uuid } from './http';
 import { platformEnabled } from './platform-settings';
 
+const REPOSITORY = 'liftaris/bazaar-ghost';
+export const workflowDispatchUrl = (workflow: string) => `https://api.github.com/repos/${REPOSITORY}/actions/workflows/${workflow}/dispatches`;
+export const actionsRunUrl = (runId: number | string, attempt?: number | null) =>
+  `https://github.com/${REPOSITORY}/actions/runs/${runId}${attempt ? `/attempts/${attempt}` : ''}`;
+
 export function dispatchBranch(environment: string) {
   const branches: Record<string, string> = { dev: 'dev', production: 'main', validation: 'migration/cloudflare' };
   requireValue(Object.hasOwn(branches, environment), 'Dispatch requires dev, production or validation environment');
@@ -47,7 +52,7 @@ export async function dispatchIngestion(env: Env) {
     WHERE ${DISPATCH_AVAILABLE} RETURNING ticket_id,delivery_failures`, ticket);
   if (!reserved) return { dispatched: false };
   try {
-    const response = await external(env, 'https://api.github.com/repos/liftaris/bazaar-ghost/actions/workflows/ingest-platforms.yml/dispatches', {
+    const response = await external(env, workflowDispatchUrl('ingest-platforms.yml'), {
       method: 'POST', headers: {
         Authorization: `Bearer ${env.GITHUB_TOKEN}`, Accept: 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'BazaarGhost', 'Content-Type': 'application/json',

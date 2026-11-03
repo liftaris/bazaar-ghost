@@ -37,7 +37,7 @@ def enroll(source: str, identity: str, profile_id: Optional[int] = None,
             page = channel_page(channel, 1, 1, 'streams')
         return youtube_account(page.get('channel_id') or page['id'],
                                page.get('channel') or page.get('title') or identity,
-                               True, streamer_id, profile_id)
+                               True, streamer_id, profile_id, channel=page)
     if not identity.isascii() or not identity.isdecimal() or int(identity) <= 0:
         raise ValueError('Bilibili enrollment expects the uploader UID from space.bilibili.com/<UID>')
     owner = bilibili_api('/x/web-interface/card', {'mid': identity})['card']
@@ -64,6 +64,8 @@ def poll_account(job: Dict[str, Any]) -> Dict[str, Any]:
         start = cursor.get('start', 1)
         try:
             page = account_page(source, account['source_id'], tab, start)
+            if page.get('profile'):
+                api(f'accounts/{account["id"]}', body={**page['profile'], **fence(job)}, method='PATCH')
             ids, inspected = page['ids'], page['inspected']
             for identity in ids:
                 enqueue(source, 'video', identity, account['id'], job=job)
@@ -102,6 +104,8 @@ def verified_account(source: str, metadata: Dict[str, Any], job: Dict[str, Any])
     if job.get('account_id') and (not rows or rows[0]['id'] != job['account_id']):
         raise ValueError('Candidate owner does not match the enrolled account')
     if rows:
+        if source == 'bilibili':
+            return bilibili_account(metadata['owner'], False, None, None, preserve_disabled=True, job=job)
         return rows[0]
     # Like Twitch discovery, new game-matching creators are enabled. An operator disable wins thereafter.
     if source == 'youtube':
