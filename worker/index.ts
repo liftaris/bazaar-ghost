@@ -38,6 +38,7 @@ import { proposalsAdminRoute } from "./session-proposals";
 import { authRoute, authenticated } from "./auth";
 import { socialRoute } from "./social";
 import { publicImageVisible } from "./visibility";
+import { publicCache } from "./cache";
 import { nativePath, nativeRoute } from "./native-api";
 
 async function eventsub(req: Request, env: Env) {
@@ -145,20 +146,23 @@ async function route(req: Request, env: Env): Promise<Response> {
         .replace(/^\/storage\/v1\/object\/public\/detections\//, "")
         .replace(/^\/detections\//, ""),
     );
-    if (!(await publicImageVisible(env, key))) throw new HttpError(404, "Screenshot not found");
-    const object = await readScreenshot(env.DETECTIONS, key);
-    if (!object) throw new HttpError(404, "Screenshot not found");
-    const headers = new Headers({
-      "Cache-Control": "public,max-age=0,must-revalidate",
-      "X-Content-Type-Options": "nosniff",
-    });
-    object.writeHttpMetadata(headers);
-    headers.set("ETag", object.httpEtag);
-    if (req.headers.get("If-None-Match") === object.httpEtag)
-      return new Response(null, { status: 304, headers });
-    return new Response(req.method === "HEAD" ? null : object.body, {
-      headers,
-    });
+    const serve = async () => {
+      if (!(await publicImageVisible(env, key))) throw new HttpError(404, "Screenshot not found");
+      const object = await readScreenshot(env.DETECTIONS, key);
+      if (!object) throw new HttpError(404, "Screenshot not found");
+      const headers = new Headers({
+        "Cache-Control": "public,max-age=0,must-revalidate",
+        "X-Content-Type-Options": "nosniff",
+      });
+      object.writeHttpMetadata(headers);
+      headers.set("ETag", object.httpEtag);
+      return new Response(req.method === "HEAD" ? null : object.body, { headers });
+    };
+    const response = req.method === "GET" ? await publicCache(req, env, serve) : await serve();
+    const etag = response.headers.get("ETag");
+    if (etag && req.headers.get("If-None-Match") === etag)
+      return new Response(null, { status: 304, headers: response.headers });
+    return response;
   }
   if (path === "/functions/v1/ghost-bot" && req.method === "POST")
     return discord(req, env);
