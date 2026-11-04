@@ -90,8 +90,7 @@ async function sourcesOf(env: Env, ids: number[]) {
         env,
         `SELECT s.*,${channelColumns} FROM public_sources s JOIN platform_accounts a ON a.id=s.channel_id
         WHERE s.matchup_id IN(SELECT value FROM json_each(?))
-        ORDER BY s.matchup_id,CASE s.kind WHEN 'recording' THEN 0 ELSE 1 END,s.available DESC,s.is_reupload,s.confidence DESC,
-        s.recorded_at IS NULL,s.recorded_at,s.vod_id,s.anchor_id`,
+        ORDER BY s.matchup_id,${sourceOrder("s")}`,
         JSON.stringify(ids),
       )
     : [];
@@ -105,9 +104,7 @@ async function streamersOf(env: Env, ids: number[]) {
     ? await rows<StreamerRefRow & { matchup_id: number }>(
         env,
         `SELECT m.id AS matchup_id,i.id,i.display_name,i.avatar_url FROM matchups m
-        JOIN streamer_identities i ON i.id=coalesce(
-          (SELECT s.streamer_id FROM sessions s WHERE s.id=m.session_id),
-          (SELECT min(ms.streamer_id) FROM matchup_streamers ms WHERE ms.matchup_id=m.id))
+        JOIN streamer_identities i ON i.id=${matchupStreamer("m.id", "m.session_id")}
         WHERE m.id IN(SELECT value FROM json_each(?))`,
         JSON.stringify(ids),
       )
@@ -150,7 +147,8 @@ export async function search(env: Env, url: URL) {
   if (exclude.length) scope("f.platform NOT IN(SELECT value FROM json_each(?))", JSON.stringify(exclude));
   if (filter.channel) scope("f.channel_id=?", filter.channel);
   if (filter.recording) scope("f.vod_id=?", filter.recording);
-  if (filter.streamer !== undefined) {
+  // Without a narrower pool, the Streamer's own Matchups are the pool, which already applies this filter.
+  if (filter.streamer !== undefined && (q || sessionId || filter.recording)) {
     clauses.push("EXISTS(SELECT 1 FROM matchup_streamers ms WHERE ms.matchup_id=p.matchup_id AND ms.streamer_id=?)");
     args.push(filter.streamer);
   }
@@ -191,10 +189,9 @@ export async function search(env: Env, url: URL) {
   const position = state.after.length ? `WHERE ${order}${timeline ? ">" : "<"}(${state.after.map(() => "?").join(",")})` : "";
   // Unfiltered browse walks matchups_browse in display order, picking each Matchup's display Source as it goes.
   const latest = !q && !pool;
-  const found = latest
-    ? await rows<MatchupRow>(
-        env,
-        `SELECT p.*,1.0 AS score,0 AS exact FROM (
+  const main = latest
+    ? {
+        sql: `SELECT p.*,1.0 AS score,0 AS exact FROM (
         SELECT ps.matchup_id,ps.detection_id,ps.username,ps.confidence,ps.name_state,ps.rank,ps.igd,ps.recorded_timestamp,
           m.indexed_at,m.session_id,m.session_time
         FROM matchups m INDEXED BY matchups_browse CROSS JOIN public_sources ps
@@ -203,28 +200,58 @@ export async function search(env: Env, url: URL) {
           AND ps.anchor_id=(SELECT x.anchor_id FROM public_sources x WHERE x.matchup_id=m.id ORDER BY ${nameOrder("x")} LIMIT 1)
         ORDER BY m.indexed_at DESC,m.id DESC) p
         WHERE ${clauses.join(" AND ")} LIMIT ?`,
-        ...state.after.slice(2),
-        ...args,
-        limit + 1,
-      )
-    : await rows<MatchupRow>(
-        env,
-        `WITH ${candidates} matched AS (
+        binds: [...state.after.slice(2), ...args, limit + 1],
+        order: "indexed_at DESC,matchup_id DESC",
+      }
+    : {
+        sql: `WITH ${candidates} matched AS (
         SELECT p.*,${q ? "h.score,h.exact" : "1.0 AS score,0 AS exact"}
         FROM ${q ? "hits h JOIN named p ON p.matchup_id=h.matchup_id" : "named p"}
         WHERE ${clauses.join(" AND ")}) SELECT * FROM matched ${position}
         ORDER BY ${timeline ? "coalesce(session_time,1e15),matchup_id" : "exact DESC,score DESC,indexed_at DESC,matchup_id DESC"} LIMIT ?`,
-        ...binds,
-        ...args,
-        ...state.after,
-        limit + 1,
-      );
+        binds: [...binds, ...args, ...state.after, limit + 1],
+        order: timeline ? "coalesce(session_time,1e15),matchup_id" : "exact DESC,score DESC,indexed_at DESC,matchup_id DESC",
+      };
+  const { found, cards } = await rankedCards(env, main);
   const resultPage = await page(env, state, found, limit, (row) =>
     timeline ? [row.session_time ?? 1e15, row.matchup_id] : [row.exact, row.score, row.indexed_at, row.matchup_id],
   );
-  const items = await matchupCards(env, resultPage.items);
+  const items = resultPage.items.map((row) => cards.get(row.matchup_id)!);
   // A summary card keeps only its primary Source, which is what feeds and previews link to.
   return { ...resultPage, items: representation === "summary" ? items.map((item) => ({ ...item, sources: item.sources.slice(0, 1) })) : items };
+}
+const sourceOrder = (s: string) => `CASE ${s}.kind WHEN 'recording' THEN 0 ELSE 1 END,${s}.available DESC,${s}.is_reupload,${s}.confidence DESC,
+  ${s}.recorded_at IS NULL,${s}.recorded_at,${s}.vod_id,${s}.anchor_id`;
+const matchupStreamer = (m: string, session: string) => `coalesce((SELECT ss.streamer_id FROM sessions ss WHERE ss.id=${session}),
+  (SELECT min(ms.streamer_id) FROM matchup_streamers ms WHERE ms.matchup_id=${m}))`;
+/** A ranked page and its cards in one statement, so one round trip reads one database state. `main` returns
+ * MatchupRows in `order`; each output row is one Source with its Matchup row and Streamer attached. */
+async function rankedCards(env: Env, main: { sql: string; binds: unknown[]; order: string }) {
+  const found = await rows<SourceRow & { page_row: string; ref_id: number | null; ref_name: string | null; ref_avatar: string | null }>(
+    env,
+    `WITH page AS MATERIALIZED (SELECT row_number() OVER (ORDER BY ${main.order}) AS pos,q.*,${matchupStreamer("q.matchup_id", "q.session_id")} AS streamer_ref
+      FROM (${main.sql}) q)
+    SELECT json_object('matchup_id',page.matchup_id,'detection_id',page.detection_id,'username',page.username,'confidence',page.confidence,
+      'name_state',page.name_state,'rank',page.rank,'igd',page.igd,'recorded_timestamp',page.recorded_timestamp,'indexed_at',page.indexed_at,
+      'session_id',page.session_id,'session_time',page.session_time,'score',page.score,'exact',page.exact) AS page_row,
+      i.id AS ref_id,i.display_name AS ref_name,i.avatar_url AS ref_avatar,s.*,${channelColumns}
+    FROM page CROSS JOIN public_sources s JOIN platform_accounts a ON a.id=s.channel_id LEFT JOIN streamer_identities i ON i.id=page.streamer_ref
+    WHERE s.matchup_id=page.matchup_id ORDER BY page.pos,${sourceOrder("s")}`,
+    ...main.binds,
+  );
+  const ranked: MatchupRow[] = [],
+    sources = new Map<number, SourceRow[]>(),
+    streamers = new Map<number, ReturnType<typeof streamerRef> | null>();
+  for (const { page_row, ref_id, ref_name, ref_avatar, ...source } of found) {
+    if (!sources.has(source.matchup_id)) {
+      ranked.push(JSON.parse(page_row));
+      sources.set(source.matchup_id, []);
+      streamers.set(source.matchup_id, ref_id === null ? null : streamerRef({ id: ref_id, display_name: ref_name!, avatar_url: ref_avatar }));
+    }
+    sources.get(source.matchup_id)!.push(source as SourceRow);
+  }
+  const cards = new Map(ranked.map((row) => [row.matchup_id, result(row, sources.get(row.matchup_id)!, streamers.get(row.matchup_id)!)]));
+  return { found: ranked, cards };
 }
 /** Public Matchup cards (ordered Sources, Streamer) for already-selected rows, keeping their order. */
 export async function matchupCards(env: Env, found: MatchupRow[]) {
@@ -755,16 +782,14 @@ export async function nativeRoute(req: Request, env: Env): Promise<Response> {
     const state = await boundary(timed, url);
     const cacheUrl = new URL(url);
     cacheUrl.searchParams.set("native-revision", `${state.revision}:${state.matchups}:${state.recordings}`);
-    let checked = false;
+    let loaded = false;
     const response = await publicCache(new Request(cacheUrl, req), timed, async () => {
-      const loaded = await nativeLoad(req, timed);
-      await unchanged(timed, state, true);
-      checked = true;
-      return loaded;
+      loaded = true;
+      return nativeLoad(req, timed);
     });
-    // A cache hit bypasses the loader, and the boundary may come from the brief
-    // revision memo. Never deliver pre-correction discovery results on that path.
-    if (!checked) await unchanged(timed, state, true);
+    // A loaded response read the tables after its boundary, so it already reflects every earlier correction. A cache
+    // hit may predate one: its key can come from the brief revision memo, so prove the revision is still current.
+    if (!loaded) await unchanged(timed, state, true);
     return response;
   };
   let response: Response;
