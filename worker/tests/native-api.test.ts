@@ -676,7 +676,7 @@ it("reports D1 round trips in Server-Timing and only revalidates the revision on
   await publicState(hosted, true);
   const request = () => nativeRoute(new Request("https://local/api/v1/stats"), hosted);
   const first = await request();
-  expect(first.headers.get("Server-Timing")).toMatch(/^d1;dur=[\d.]+;desc="\d+ queries",sql;dur=[\d.]+,total;dur=[\d.]+$/);
+  expect(first.headers.get("Server-Timing")).toMatch(/^d1;dur=[\d.]+;desc="\d+ queries",sql;dur=[\d.]+,total;dur=[\d.]+(,d1-served;desc="[^"]+";dur=\d+)?$/);
   const again = await request();
   expect(again.headers.get("Server-Timing")).toContain('desc="1 queries"');
   expect(await again.json()).toEqual(await first.json());

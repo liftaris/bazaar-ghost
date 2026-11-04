@@ -3,6 +3,8 @@ export class Timing {
   queries = 0;
   wall = 0;
   sql = 0;
+  primary = 0;
+  regions = new Set<string>();
   private readonly started = performance.now();
 
   /** An Env whose read-path D1 statements (prepare/bind/first/all/run/raw) are counted; the original binding is untouched. */
@@ -12,8 +14,10 @@ export class Timing {
       this.queries++;
       try {
         const result = await run();
-        const meta = (result as { meta?: { duration?: number } } | null)?.meta;
+        const meta = (result as { meta?: { duration?: number; served_by_region?: string; served_by_primary?: boolean } } | null)?.meta;
         if (typeof meta?.duration === "number") this.sql += meta.duration;
+        if (meta?.served_by_region) this.regions.add(meta.served_by_region);
+        if (meta?.served_by_primary) this.primary++;
         return result;
       } finally {
         this.wall += performance.now() - begin;
@@ -36,6 +40,7 @@ export class Timing {
   header(): string {
     const total = performance.now() - this.started;
     const ms = (value: number) => value.toFixed(1);
-    return `d1;dur=${ms(this.wall)};desc="${this.queries} queries",sql;dur=${ms(this.sql)},total;dur=${ms(total)}`;
+    const served = this.regions.size ? `,d1-served;desc="${[...this.regions].join(" ")}";dur=${this.primary}` : "";
+    return `d1;dur=${ms(this.wall)};desc="${this.queries} queries",sql;dur=${ms(this.sql)},total;dur=${ms(total)}${served}`;
   }
 }
