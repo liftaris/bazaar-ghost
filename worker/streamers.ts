@@ -117,9 +117,9 @@ async function channelsOf(env: Env, ids: number[]) {
 }
 export async function resolveStreamer(env: Env, id: number, withHistory = false) {
   integer(id, 'streamer ID', 1);
-  const row = await one(env, 'SELECT * FROM streamer_identities WHERE id=?', id);
+  const [row, owned] = await Promise.all([one(env, 'SELECT * FROM streamer_identities WHERE id=?', id), channelsOf(env, [id])]);
   if (!row) throw new HttpError(404, 'Streamer not found');
-  const channels = (await channelsOf(env, [id])).get(id) ?? [];
+  const channels = owned.get(id) ?? [];
   const history = withHistory ? await rows(env, `SELECT id,channel_id,method,actor,evidence,started_at,ended_at,ended_by,end_reason
     FROM channel_ownership WHERE streamer_id=? ORDER BY id`, id) : undefined;
   return {...streamer(row), channels, ...(history ? {history} : {})};

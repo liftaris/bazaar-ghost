@@ -1,5 +1,4 @@
 import type { Evidence, Page, Playback, Session, SessionCard, Stats, StreamerCard, TimelineMarker } from "../contracts/public-api";
-import { canonicalMatchup } from "./coalesce";
 import { recordingIgdQuality } from "./igd";
 import { HttpError, integer, one, requireValue, rows, statement } from "./http";
 import { boundary, page, unchanged } from "./native-cursor";
@@ -212,11 +211,11 @@ export async function search(env: Env, url: URL) {
         binds: [...binds, ...args, ...state.after, limit + 1],
         order: timeline ? "coalesce(session_time,1e15),matchup_id" : "exact DESC,score DESC,indexed_at DESC,matchup_id DESC",
       };
-  const { found, cards } = await rankedCards(env, main);
+  const { found, sources, streamers } = await rankedCards(env, main);
   const resultPage = await page(env, state, found, limit, (row) =>
     timeline ? [row.session_time ?? 1e15, row.matchup_id] : [row.exact, row.score, row.indexed_at, row.matchup_id],
   );
-  const items = resultPage.items.map((row) => cards.get(row.matchup_id)!);
+  const items = resultPage.items.map((row) => result(row, sources.get(row.matchup_id)!, streamers.get(row.matchup_id)!));
   // A summary card keeps only its primary Source, which is what feeds and previews link to.
   return { ...resultPage, items: representation === "summary" ? items.map((item) => ({ ...item, sources: item.sources.slice(0, 1) })) : items };
 }
@@ -250,8 +249,7 @@ async function rankedCards(env: Env, main: { sql: string; binds: unknown[]; orde
     }
     sources.get(source.matchup_id)!.push(source as SourceRow);
   }
-  const cards = new Map(ranked.map((row) => [row.matchup_id, result(row, sources.get(row.matchup_id)!, streamers.get(row.matchup_id)!)]));
-  return { found: ranked, cards };
+  return { found: ranked, sources, streamers };
 }
 /** Public Matchup cards (ordered Sources, Streamer) for already-selected rows, keeping their order. */
 export async function matchupCards(env: Env, found: MatchupRow[]) {
@@ -261,23 +259,23 @@ export async function matchupCards(env: Env, found: MatchupRow[]) {
 }
 async function matchupDetail(env: Env, url: URL, id: number) {
   parameters(url, []);
-  // Matchup IDs are never reused: an old anchor ID or a retired Matchup ID follows `merged_into`.
-  const canonical = await canonicalMatchup(env, id);
-  const row =
-    canonical === null
-      ? null
-      : await one<MatchupRow>(env, "SELECT *,1.0 AS score,0 AS exact FROM public_matchups WHERE matchup_id=?", canonical);
+  // Matchup IDs are never reused: an old anchor ID or a retired Matchup ID follows `merged_into`, inside the one statement.
+  const { found, sources, streamers } = await rankedCards(env, {
+    sql: `SELECT *,1.0 AS score,0 AS exact FROM public_matchups WHERE matchup_id=(WITH RECURSIVE chain(id,merged_into,depth) AS (
+      SELECT id,merged_into,0 FROM matchups WHERE id=? UNION ALL SELECT m.id,m.merged_into,c.depth+1 FROM matchups m JOIN chain c ON m.id=c.merged_into WHERE c.depth<8)
+      SELECT id FROM chain WHERE merged_into IS NULL)`,
+    binds: [id],
+    order: "matchup_id",
+  });
+  const row = found[0];
   if (!row) throw new HttpError(404, "Matchup not available");
-  const [sources, streamers] = await Promise.all([sourcesOf(env, [row.matchup_id]), streamersOf(env, [row.matchup_id])]);
-  return detail(row, sources.get(row.matchup_id) ?? [], streamers.get(row.matchup_id) ?? null, canonical !== id ? id : undefined);
+  return detail(row, sources.get(row.matchup_id)!, streamers.get(row.matchup_id)!, row.matchup_id !== id ? id : undefined);
 }
 
 /** A Matchup listed by public_matchups: visible, canonical, with a current detection on an available Recording.
  * The view ranks every Matchup before filtering, so counts and existence checks use this indexed form instead. */
 const visibleMatchup = (m: string) => `${m}.status='visible' AND ${m}.merged_into IS NULL AND EXISTS(SELECT 1 FROM matchup_anchors b
   JOIN vods bv ON bv.id=b.vod_id WHERE b.matchup_id=${m}.id AND b.current_detection_id IS NOT NULL AND bv.availability='available')`;
-const sessionMatchupCounts = `SELECT m.session_id,count(*) AS n FROM matchups m
-  WHERE m.session_id IN(SELECT value FROM json_each(?)) AND ${visibleMatchup("m")} GROUP BY m.session_id`;
 const recordingCount = `(SELECT count(DISTINCT s.matchup_id) FROM public_sources s WHERE s.vod_id=r.id) AS matchup_count`;
 async function getRecording(env: Env, id: number) {
   const row = await one<RecordingRow>(env, `SELECT r.*,${recordingCount} FROM public_recordings r WHERE r.id=?`, id);
@@ -489,12 +487,14 @@ async function recordingEvidence(env: Env, url: URL, id: number): Promise<Page<E
 }
 async function playback(env: Env, url: URL, id: number): Promise<Playback> {
   parameters(url, []);
-  const row = await getRecording(env, id);
-  const chunks = await rows<{ start_seconds: number; end_seconds: number }>(
-    env,
-    "SELECT start_seconds,end_seconds FROM chunks WHERE vod_id=? AND status='completed' ORDER BY start_seconds",
-    id,
-  );
+  const [row, chunks] = await Promise.all([
+    getRecording(env, id),
+    rows<{ start_seconds: number; end_seconds: number }>(
+      env,
+      "SELECT start_seconds,end_seconds FROM chunks WHERE vod_id=? AND status='completed' ORDER BY start_seconds",
+      id,
+    ),
+  ]);
   const chapters = JSON.parse(row.bazaar_chapters) as number[];
   const eligibleRanges = normalizeRanges(chapters, row.duration_seconds);
   const completedRanges = normalizeRanges(
@@ -517,64 +517,44 @@ async function playback(env: Env, url: URL, id: number): Promise<Playback> {
 }
 async function sessionDetail(env: Env, url: URL, requested: string): Promise<Session> {
   parameters(url, []);
-  let id = requested;
-  for (let hop = 0; hop < 8; hop++) {
-    const next = await one<{ merged_into: string | null }>(env, "SELECT merged_into FROM sessions WHERE id=?", id);
-    if (!next) throw new HttpError(404, "Session not found");
-    if (next.merged_into === null) break;
-    id = next.merged_into;
-  }
-  const [session] = await sessionsOf(env, [id]);
-  if (!session) throw new HttpError(404, "Session not found");
-  return id !== requested ? { ...session, redirectedFrom: requested } : session;
-}
-/** Sessions (canonical only) with their Recordings, segments and Matchup counts, in the order given. */
-async function sessionsOf(env: Env, ids: string[]): Promise<Session[]> {
-  if (!ids.length) return [];
-  const json = JSON.stringify(ids);
-  const [found, segments, counts] = await Promise.all([
-    rows<{ id: string; title: string | null; streamer_id: number | null; streamer_mode: number; owner_name: string | null; owner_avatar: string | null }>(
+  // The canonical Session (following up to 8 merges) is resolved inside every query, so all four run at once.
+  const canonical = `(WITH RECURSIVE chain(id,hop) AS (SELECT id,0 FROM sessions WHERE id=?
+      UNION ALL SELECT s.merged_into,chain.hop+1 FROM chain JOIN sessions s ON s.id=chain.id WHERE s.merged_into IS NOT NULL AND chain.hop<8)
+    SELECT id FROM chain ORDER BY hop DESC LIMIT 1)`;
+  const [found, segments, counts, recordingRows] = await Promise.all([
+    one<{ id: string; title: string | null; streamer_id: number | null; streamer_mode: number; owner_name: string | null; owner_avatar: string | null }>(
       env,
       `SELECT s.id,s.title,s.streamer_id,s.streamer_mode,i.display_name AS owner_name,i.avatar_url AS owner_avatar FROM sessions s
-      LEFT JOIN streamer_identities i ON i.id=s.streamer_id WHERE s.merged_into IS NULL AND s.id IN(SELECT value FROM json_each(?))`,
-      json,
+      LEFT JOIN streamer_identities i ON i.id=s.streamer_id WHERE s.merged_into IS NULL AND s.id=${canonical}`,
+      requested,
     ),
-    rows<{ session_id: string; vod_id: number; rec_start: number; rec_end: number | null; offset_seconds: number }>(
+    rows<{ vod_id: number; rec_start: number; rec_end: number | null; offset_seconds: number }>(
       env,
-      `SELECT session_id,vod_id,rec_start,rec_end,offset_seconds FROM recording_alignments
-      WHERE session_id IN(SELECT value FROM json_each(?)) AND revoked_at IS NULL ORDER BY vod_id,rec_start`,
-      json,
+      `SELECT vod_id,rec_start,rec_end,offset_seconds FROM recording_alignments
+      WHERE session_id=${canonical} AND revoked_at IS NULL ORDER BY vod_id,rec_start`,
+      requested,
     ),
-    rows<{ session_id: string; n: number }>(
+    one<{ n: number }>(env, `SELECT count(*) AS n FROM matchups m WHERE m.session_id=${canonical} AND ${visibleMatchup("m")}`, requested),
+    rows<RecordingRow>(
       env,
-      sessionMatchupCounts,
-      json,
+      `SELECT r.*,${recordingCount} FROM public_recordings r WHERE r.id IN(SELECT vod_id FROM recording_alignments
+        WHERE session_id=${canonical} AND revoked_at IS NULL) ORDER BY r.id`,
+      requested,
     ),
   ]);
-  const vodIds = [...new Set(segments.map((s) => s.vod_id))];
-  const recordingRows = vodIds.length
-    ? await rows<RecordingRow>(env, `SELECT r.*,${recordingCount} FROM public_recordings r WHERE r.id IN(SELECT value FROM json_each(?)) ORDER BY r.id`, JSON.stringify(vodIds))
-    : [];
-  const byId = new Map(found.map((row) => [row.id, row]));
-  return ids.flatMap((id) => {
-    const row = byId.get(id);
-    if (!row) return [];
-    const own = segments.filter((s) => s.session_id === id);
-    const members = new Set(own.map((s) => s.vod_id));
-    return {
-      id,
-      title: row.title,
-      streamerMode: !!row.streamer_mode,
-      streamer: row.streamer_id ? streamerRef({ id: row.streamer_id, display_name: row.owner_name!, avatar_url: row.owner_avatar }) : null,
-      recordings: recordingRows
-        .filter((r) => members.has(r.id))
-        .map((r) => ({
-          recording: recording(r),
-          segments: own.filter((s) => s.vod_id === r.id).map((s) => ({ recStart: s.rec_start, recEnd: s.rec_end, offsetSeconds: s.offset_seconds })),
-        })),
-      matchupCount: counts.find((c) => c.session_id === id)?.n ?? 0,
-    };
-  });
+  if (!found) throw new HttpError(404, "Session not found");
+  const session: Session = {
+    id: found.id,
+    title: found.title,
+    streamerMode: !!found.streamer_mode,
+    streamer: found.streamer_id ? streamerRef({ id: found.streamer_id, display_name: found.owner_name!, avatar_url: found.owner_avatar }) : null,
+    recordings: recordingRows.map((r) => ({
+      recording: recording(r),
+      segments: segments.filter((s) => s.vod_id === r.id).map((s) => ({ recStart: s.rec_start, recEnd: s.rec_end, offsetSeconds: s.offset_seconds })),
+    })),
+    matchupCount: counts?.n ?? 0,
+  };
+  return found.id !== requested ? { ...session, redirectedFrom: requested } : session;
 }
 /** Rows of a Session's Recordings (one per Recording, canonical Sessions only) with the facts every Session query ranks on. */
 const sessionRecordings = `SELECT g.session_id,r.id,r.platform,r.title,r.duration_seconds,r.availability='available' AS available,
@@ -636,42 +616,36 @@ async function sessions(env: Env, url: URL): Promise<Page<SessionCard>> {
     having.push("rel>0");
   }
   if (state.after.length) (having.push("(rel,started,session_id)<(?,?,?)"), args.push(...state.after));
-  const found = await rows<{ session_id: string; rel: number; started: string }>(
+  // The ranked page and every card's Recordings, Matchup count and owner in one statement.
+  const found = await rows<SessionRecordingRow & { page_rel: number; page_started: string; matchup_n: number; owner_id: number | null; owner_name: string | null; owner_avatar: string | null }>(
     env,
-    `WITH recs AS (${sessionRecordings}) SELECT session_id,${relevance} AS rel,coalesce(min(at),'') AS started FROM recs
-    GROUP BY session_id HAVING ${having.join(" AND ")} ORDER BY rel DESC,started DESC,session_id DESC LIMIT ?`,
+    `WITH recs AS MATERIALIZED (${sessionRecordings}),
+    ranked AS MATERIALIZED (SELECT session_id,${relevance} AS rel,coalesce(min(at),'') AS started FROM recs
+      GROUP BY session_id HAVING ${having.join(" AND ")} ORDER BY rel DESC,started DESC,session_id DESC LIMIT ?)
+    SELECT f.rel AS page_rel,f.started AS page_started,r.*,
+      (SELECT count(*) FROM matchups m WHERE m.session_id=f.session_id AND ${visibleMatchup("m")}) AS matchup_n,
+      i.id AS owner_id,i.display_name AS owner_name,i.avatar_url AS owner_avatar
+    FROM ranked f JOIN recs r ON r.session_id=f.session_id LEFT JOIN sessions o ON o.id=f.session_id LEFT JOIN streamer_identities i ON i.id=o.streamer_id
+    ORDER BY f.rel DESC,f.started DESC,f.session_id DESC`,
     state.recordings,
     ...(q ? Array(10).fill(q) : []),
     ...args,
     limit + 1,
   );
-  const resultPage = await page(env, state, found, limit, (row) => [row.rel, row.started, row.session_id]);
-  return { ...resultPage, items: await sessionCards(env, resultPage.items.map((row) => row.session_id), state, { include, exclude }) };
+  const ranked: { session_id: string; rel: number; started: string }[] = [];
+  for (const row of found) if (ranked.at(-1)?.session_id !== row.session_id) ranked.push({ session_id: row.session_id, rel: row.page_rel, started: row.page_started });
+  const resultPage = await page(env, state, ranked, limit, (row) => [row.rel, row.started, row.session_id]);
+  const owners = new Map(found.filter((r) => r.owner_id !== null).map((r) => [r.session_id, streamerRef({ id: r.owner_id!, display_name: r.owner_name!, avatar_url: r.owner_avatar })]));
+  const counts = new Map(found.map((r) => [r.session_id, r.matchup_n]));
+  return { ...resultPage, items: sessionCards(resultPage.items.map((row) => row.session_id), found, counts, owners, { include, exclude }) };
 }
-async function sessionCards(env: Env, ids: string[], state: { recordings: number }, scope: { include: string[]; exclude: string[] }): Promise<SessionCard[]> {
-  if (!ids.length) return [];
-  const json = JSON.stringify(ids);
-  const [recs, counts, owners] = await Promise.all([
-    rows<SessionRecordingRow>(
-      env,
-      `WITH recs AS (${sessionRecordings}) SELECT * FROM recs WHERE session_id IN(SELECT value FROM json_each(?))`,
-      state.recordings,
-      json,
-    ),
-    rows<{ session_id: string; n: number }>(
-      env,
-      sessionMatchupCounts,
-      json,
-    ),
-    rows<StreamerRefRow & { session_id: string }>(
-      env,
-      `SELECT s.id AS session_id,i.id,i.display_name,i.avatar_url FROM sessions s JOIN streamer_identities i ON i.id=s.streamer_id
-      WHERE s.id IN(SELECT value FROM json_each(?))`,
-      json,
-    ),
-  ]);
-  const countOf = new Map(counts.map((c) => [c.session_id, c.n])),
-    ownerOf = new Map(owners.map((o) => [o.session_id, streamerRef(o)]));
+function sessionCards(
+  ids: string[],
+  recs: SessionRecordingRow[],
+  countOf: Map<string, number>,
+  ownerOf: Map<string, ReturnType<typeof streamerRef>>,
+  scope: { include: string[]; exclude: string[] },
+): SessionCard[] {
   return ids.flatMap((id) => {
     const own = recs.filter((r) => r.session_id === id);
     const inScope = (r: SessionRecordingRow) =>
