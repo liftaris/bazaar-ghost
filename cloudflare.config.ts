@@ -14,6 +14,8 @@ export function configuration(mode = "local") {
       workersDev: settings.workersDev,
       previewUrls: settings.previewUrls,
       observability: { enabled: true },
+      // Run next to the D1 primary (WNAM): one request makes several sequential queries.
+      ...("placement" in settings ? { placement: settings.placement } : {}),
       env: {
         ENVIRONMENT: bindings.text(settings.vars.ENVIRONMENT),
         BUILD_COMMIT: bindings.text(process.env.BUILD_COMMIT ?? ("BUILD_COMMIT" in settings.vars ? settings.vars.BUILD_COMMIT : "unreleased")),
