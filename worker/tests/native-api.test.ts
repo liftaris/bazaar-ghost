@@ -20,7 +20,7 @@ import { trigrams } from "../search";
 import { linkDetections } from "./link-fixture";
 import { boundary } from "../native-cursor";
 import { discord } from "../discord";
-import { nativeRoute, refreshStaleStreamerCounts } from "../native-api";
+import { matchupCards, nativeRoute, refreshStaleStreamerCounts } from "../native-api";
 import { registerPlatformsForTest, type PlatformEntry } from "../platform-registry";
 import { mergeSessions, moveRecording } from "../sessions";
 import { createStreamer, linkChannel } from "../streamers";
@@ -535,6 +535,7 @@ it("serves hosted Streamer lists from the scheduler's counts, and counts live wh
   await evidence(20, "Opponent", yt);
   await evidence(30, "Another", 1);
   const hosted = { ...env, ENVIRONMENT: "validation" };
+  await publicState(hosted, true);
   const list = async () => (await (await nativeRoute(new Request(`https://${crypto.randomUUID()}.example.org/api/v1/streamers`), hosted)).json<Page<StreamerCard>>()).items
     .map((s) => [s.id, s.matchupCount]);
   const live = await list();
@@ -701,6 +702,26 @@ it("reuses the revision for a few seconds in hosted environments, and always rea
   expect((await publicState(env)).search).toBe(before.search + 2);
   vi.spyOn(Date, "now").mockReturnValue(Date.now() + 3001);
   expect((await publicState(hosted)).search).toBe(before.search + 2);
+});
+it("reads a hosted search page and its cards in one round trip, identical to separately loaded cards", async () => {
+  await ownedPair();
+  const yt = await vod({ source: "youtube", account: CH.yt1 });
+  await evidence(10, "Alpha", 1, 0.9);
+  await evidence(20, "Alpha", yt, 0.99);
+  await evidence(30, "Beta", 2, 0.97);
+  await together(1, 2);
+  const hosted = { ...env, ENVIRONMENT: "validation" };
+  await publicState(hosted, true);
+  for (const query of ["", "?q=alpha", "?recordingId=1", "?platform=youtube"]) {
+    const response = await nativeRoute(new Request(`https://${crypto.randomUUID()}.example.org/api/v1/search${query}`), hosted);
+    expect(response.headers.get("Server-Timing"), query).toContain('desc="1 queries"');
+    const items = (await response.json<Page<MatchupResult>>()).items;
+    expect(items.length, query).toBeGreaterThan(0);
+    const rowsOf = await rows<any>(env, "SELECT * FROM public_matchups WHERE matchup_id IN(SELECT value FROM json_each(?))", JSON.stringify(items.map((i) => i.id)));
+    const expected = await matchupCards(env, items.map((i) => ({ ...rowsOf.find((r) => r.matchup_id === i.id), score: 0, exact: 0 })));
+    const strip = (cards: MatchupResult[]) => cards.map(({ relevance: _r, ...card }) => card);
+    expect(strip(items), query).toEqual(strip(expected as MatchupResult[]));
+  }
 });
 it("ranks selective searches (name, Recording, Session) exactly like the public_matchups view", async () => {
   await evidence(10, "Alpha", 1, 0.9);
