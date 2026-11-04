@@ -111,6 +111,16 @@ async function streamersOf(env: Env, ids: number[]) {
   return new Map(found.map((row) => [row.matchup_id, streamerRef(row)]));
 }
 
+/** Each Matchup in `pool` (a SQL subquery of Matchup IDs) with its display Source, ranked like the public_matchups view.
+ * Filtering before the window functions keeps the work to the pool; the view itself ranks every Matchup. */
+const displayRows = (pool: string) => `SELECT r.matchup_id,r.detection_id,r.username,r.confidence,r.name_state,r.rank,r.igd,r.recorded_timestamp,
+  r.latest_indexed_at AS indexed_at,m.session_id,m.session_time
+  FROM (SELECT ps.matchup_id,ps.detection_id,ps.username,ps.confidence,ps.name_state,ps.rank,ps.igd,ps.recorded_timestamp,
+    row_number() OVER (PARTITION BY ps.matchup_id ORDER BY ${nameOrder("ps")}) AS display_rank,
+    max(ps.indexed_at) OVER (PARTITION BY ps.matchup_id) AS latest_indexed_at
+    FROM public_sources ps WHERE ps.matchup_id IN(${pool})) r
+  JOIN matchups m ON m.id=r.matchup_id WHERE r.display_rank=1`;
+
 export async function search(env: Env, url: URL) {
   const timeline = url.searchParams.has("sessionId") && url.searchParams.get("sort") === "time";
   // A whole recording's ghosts are listed in one page, so session-time lists may be longer.
@@ -172,15 +182,7 @@ export async function search(env: Env, url: URL) {
     FROM candidates c JOIN detections d ON d.username_lower=c.name JOIN matchup_anchors a ON a.current_detection_id=d.id
     WHERE a.matchup_id<=? AND d.name_state IN('legacy','complete') AND d.confidence>0.7 AND d.username IS NOT NULL GROUP BY a.matchup_id),`
     : "";
-  const named = pool
-    ? `named AS (SELECT r.matchup_id,r.detection_id,r.username,r.confidence,r.name_state,r.rank,r.igd,r.recorded_timestamp,r.latest_indexed_at AS indexed_at,
-      m.session_id,m.session_time
-      FROM (SELECT ps.matchup_id,ps.detection_id,ps.username,ps.confidence,ps.name_state,ps.rank,ps.igd,ps.recorded_timestamp,
-        row_number() OVER (PARTITION BY ps.matchup_id ORDER BY ${nameOrder("ps")}) AS display_rank,
-        max(ps.indexed_at) OVER (PARTITION BY ps.matchup_id) AS latest_indexed_at
-        FROM public_sources ps WHERE ps.matchup_id IN(${pool})) r
-      JOIN matchups m ON m.id=r.matchup_id WHERE r.display_rank=1),`
-    : "";
+  const named = pool ? `named AS (${displayRows(pool)}),` : "";
   const candidates = hits + named;
   const binds: unknown[] = [...(q ? [grams.length, JSON.stringify(grams), grams.length, q, state.matchups] : []), ...poolBinds];
   // Session-time order puts Matchups with no mapped time last.
@@ -261,9 +263,9 @@ async function matchupDetail(env: Env, url: URL, id: number) {
   parameters(url, []);
   // Matchup IDs are never reused: an old anchor ID or a retired Matchup ID follows `merged_into`, inside the one statement.
   const { found, sources, streamers } = await rankedCards(env, {
-    sql: `SELECT *,1.0 AS score,0 AS exact FROM public_matchups WHERE matchup_id=(WITH RECURSIVE chain(id,merged_into,depth) AS (
+    sql: `SELECT *,1.0 AS score,0 AS exact FROM (${displayRows(`WITH RECURSIVE chain(id,merged_into,depth) AS (
       SELECT id,merged_into,0 FROM matchups WHERE id=? UNION ALL SELECT m.id,m.merged_into,c.depth+1 FROM matchups m JOIN chain c ON m.id=c.merged_into WHERE c.depth<8)
-      SELECT id FROM chain WHERE merged_into IS NULL)`,
+      SELECT id FROM chain WHERE merged_into IS NULL`)})`,
     binds: [id],
     order: "matchup_id",
   });
