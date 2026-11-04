@@ -325,7 +325,12 @@ export function projectEncounter(sources: EncounterRow[], image: ImageUrl = publ
     lethal: chosen.lethal?.row.lethal == null ? null : !!chosen.lethal.row.lethal, fieldEvidence: fieldEvidenceMap };
 }
 export function result(row: MatchupRow, sources: SourceRow[], streamer: StreamerRef | null): MatchupResult {
-  return { ...matchup(row, sources, streamer), relevance: { score: row.score, exact: !!row.exact } };
+  const { fieldEvidence: _alias, encounter: { rawIgdEvidence: _raw, fieldEvidence, ...encounter }, ...card } = matchup(row, sources, streamer);
+  return {
+    ...card,
+    encounter: { ...encounter, fieldEvidence: fieldEvidence.encounter ? { encounter: fieldEvidence.encounter } : {} },
+    relevance: { score: row.score, exact: !!row.exact },
+  };
 }
 export function detail(row: MatchupRow, sources: SourceRow[], streamer: StreamerRef | null, redirectedFrom?: number): MatchupDetail {
   return {

@@ -336,7 +336,7 @@ it("projects original time/image and explicit root provenance; hidden root image
   expect(detail.fieldEvidence.streamerHero).toMatchObject(expected);
   expect(detail.detections[0].fieldEvidence.streamerHero).toMatchObject(expected);
   expect((await get("/recordings/1/detections")).items.find((d: {id:string})=>d.id===b.id).fieldEvidence.streamerHero).toMatchObject(expected);
-  expect((await get(`/search?recordingId=1`)).items.find((d:{id:number})=>d.id===id).fieldEvidence.streamerHero).toMatchObject(expected);
+  expect((await get(`/search?recordingId=1`)).items.find((d:{id:number})=>d.id===id).encounter.fieldEvidence).toEqual({ encounter: detail.fieldEvidence.encounter });
   expect((await SELF.fetch(`http://local${expected.screenshotUrl}`)).status).toBe(200);
   await statement(env,"UPDATE matchups SET status='hidden' WHERE id=(SELECT matchup_id FROM matchup_anchors WHERE current_detection_id=?)",a.id).run();
   expect((await SELF.fetch(`http://local${expected.screenshotUrl}`)).status).toBe(404);
