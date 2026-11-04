@@ -564,6 +564,21 @@ def test_tournament_context_survives_pipeline_and_publication():
     assert evidence['tournament_wins']['image_path'] == '/saved.jpg'
 
 
+def test_prestige_reaches_the_uploaded_record_with_its_own_evidence():
+    observed = clock(prestige=0)
+    observed['evidence']['prestige'] = {'region': [6, 20, 8, 3], 'method': 'paddle_prestige_meter', 'confidence': .99}
+    p = pipeline([LOCATION, None, None, None], clocks=[clock(visible=False), observed, observed, observed])
+    for at_ms in (1250, 3250, 5250, 7250):
+        p.consume(image(), at_ms)
+    result = p.flush()[0]
+    client = BackendClient.__new__(BackendClient)
+    client._request = Mock(return_value={'storage_path': '/saved.jpg'})
+    record = client._next_record(result)
+    assert record['prestige'] == 0
+    assert record['field_evidence']['prestige']['region'] == [6, 20, 8, 3]
+    assert record['field_evidence']['prestige']['image_path'] == '/saved.jpg'
+
+
 def test_new_retry_uploads_ms_sources_and_preserves_exact_payload_identity(monkeypatch):
     better = dict(LOCATION,score=.95,rank='gold')
     p = pipeline([LOCATION,better,LOCATION,None,None,None],

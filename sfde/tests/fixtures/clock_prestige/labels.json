@@ -1,0 +1,19 @@
+{
+  "captured_at": "2026-11-04",
+  "source": "Live Twitch frames after the Nov 4 patch added the prestige meter, manually reviewed. Pixels outside the clock band of the left third are blanked; the clock search reads only the left third. Development cases, not held-out accuracy.",
+  "cases": [
+    {"id": "blindermine-001", "prestige": 1, "lethal": true},
+    {"id": "blindermine-021", "prestige": 0, "lethal": true},
+    {"id": "drakullboss-001", "prestige": 11},
+    {"id": "drakullboss-007", "prestige": 11},
+    {"id": "drakullboss-011", "prestige": 2},
+    {"id": "veetoqc-001", "prestige": 8},
+    {"id": "whisperzz_live-002", "prestige": 20},
+    {"id": "whisperzz_live-033", "prestige": 18},
+    {"id": "g0landez-001", "prestige": 20},
+    {"id": "gnashin-007", "prestige": 20},
+    {"id": "layzyn-001", "prestige": 20},
+    {"id": "zenaton-028", "prestige": 20},
+    {"id": "phima-009", "prestige": null}
+  ]
+}

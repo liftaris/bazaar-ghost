@@ -269,7 +269,7 @@ function toOpsDetection(row: DetectionDetailRow): OpsDetection {
 async function detection(env: Env, id: string): Promise<OpsDetection> {
   const row = await one<DetectionDetailRow>(
     env,
-    `SELECT ${detectionRowColumns},d.confidence,d.encounter_confidence,d.lethal,d.game_mode,d.tournament_wins,d.tournament_losses,
+    `SELECT ${detectionRowColumns},d.confidence,d.encounter_confidence,d.lethal,d.game_mode,d.tournament_wins,d.tournament_losses,d.prestige,
       d.truncated,d.no_right_edge,d.storage_path,d.field_evidence,d.created_at AS indexed_at,1 AS available,d.igd AS raw_igd,
       c.id AS igd_correction_id,c.evidence AS igd_correction_evidence,c.source_refs AS igd_correction_source_refs,
       c.input_digest AS igd_correction_input_digest,c.reason AS igd_correction_reason,c.created_at AS igd_correction_created_at,

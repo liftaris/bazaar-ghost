@@ -25,6 +25,7 @@ def test_reviewed_clock_day_and_score_are_separate(case, clock):
     assert actual['igd'] in (None, case['day'])
     assert actual['tournament_wins'] == case['wins']
     assert actual['tournament_losses'] == case['losses']
+    assert actual['prestige'] is None  # Captured before the prestige meter existed.
     if case['wins'] is not None:
         assert actual['game_mode'] == 'tournament'
         assert actual['wins_remaining'] is None

@@ -61,6 +61,7 @@ export interface SourceRow {
   game_mode?: "normal" | "tournament" | null;
   tournament_wins?: number | null;
   tournament_losses?: number | null;
+  prestige?: number | null;
   raw_igd?: number | null;
   igd_correction_id?: string | null;
   igd_correction_evidence?: string | null;
@@ -95,7 +96,7 @@ export interface SourceRow {
 /** The detection columns an Encounter projection reads; any detection query can supply them. */
 export type EncounterRow = Pick<SourceRow, "detection_id" | "vod_id" | "at" | "username" | "confidence" | "name_state"
   | "encounter_confidence" | "ghost_hero" | "streamer_hero" | "wins_remaining" | "lethal" | "game_mode" | "tournament_wins"
-  | "tournament_losses" | "raw_igd" | "igd_correction_id" | "igd_correction_evidence" | "igd_correction_source_refs"
+  | "tournament_losses" | "prestige" | "raw_igd" | "igd_correction_id" | "igd_correction_evidence" | "igd_correction_source_refs"
   | "igd_correction_input_digest" | "igd_correction_reason" | "igd_correction_created_at" | "field_evidence" | "indexed_at"
   | "rank" | "igd" | "storage_path" | "available">;
 /** One row of the public_matchups view plus search relevance. */
@@ -242,7 +243,7 @@ export function matchup(row: MatchupRow, sources: SourceRow[], streamer: Streame
 }
 const publicField: Record<FieldKey, EvidenceField> = { encounter: "encounter", username: "username", rank: "rank", igd: "igd",
   ghost_hero: "ghostHero", streamer_hero: "streamerHero", wins_remaining: "winsRemaining", lethal: "lethal",
-  game_mode: "gameMode", tournament_wins: "tournamentWins", tournament_losses: "tournamentLosses" };
+  game_mode: "gameMode", tournament_wins: "tournamentWins", tournament_losses: "tournamentLosses", prestige: "prestige" };
 function observations(row: EncounterRow): FieldObservations {
   const raw: FieldObservations = JSON.parse(row.field_evidence || "{}");
   return row.igd_correction_evidence ? { ...raw, igd: JSON.parse(row.igd_correction_evidence) } : raw;
@@ -322,6 +323,7 @@ export function projectEncounter(sources: EncounterRow[], image: ImageUrl = publ
       reason: day.igd_correction_reason!, createdAt: day.igd_correction_created_at!, sourceRefs: JSON.parse(day.igd_correction_source_refs!) } : null,
     gameMode: mode, tournamentWins: chosen.tournament_wins?.row.tournament_wins ?? null,
     tournamentLosses: chosen.tournament_losses?.row.tournament_losses ?? null,
+    prestige: chosen.prestige?.row.prestige ?? null,
     lethal: chosen.lethal?.row.lethal == null ? null : !!chosen.lethal.row.lethal, fieldEvidence: fieldEvidenceMap };
 }
 export function result(row: MatchupRow, sources: SourceRow[], streamer: StreamerRef | null): MatchupResult {

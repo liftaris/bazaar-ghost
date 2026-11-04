@@ -147,7 +147,7 @@ class BackendClient:
         record = {key: matchup.get(key) for key in (
             'username', 'confidence', 'name_state', 'encounter_confidence', 'igd',
             'ghost_hero', 'streamer_hero', 'wins_remaining', 'lethal',
-            'game_mode', 'tournament_wins', 'tournament_losses')}
+            'game_mode', 'tournament_wins', 'tournament_losses', 'prestige')}
         record.update(schema_version=2,
                       id=detection_id(matchup['recording_identity'], matchup['anchor_ms']),
                       timestamp=matchup['timestamp'], frame_time_seconds=matchup['timestamp'],

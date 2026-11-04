@@ -182,7 +182,7 @@ def test_no_clock_and_wrong_profile_do_not_call_ocr_or_return_zero_false_default
     result = ClockReader(reader, PROFILE).observe(frame)
     assert result == {'visible': False, 'igd': None, 'wins_remaining': None,
                       'lethal': None, 'evidence': {}, 'clock_region': None,
-                      'game_mode': None, 'tournament_wins': None, 'tournament_losses': None}
+                      'game_mode': None, 'tournament_wins': None, 'tournament_losses': None, 'prestige': None}
     reader.predict.assert_not_called()
 
 
@@ -192,7 +192,7 @@ def test_real_no_clock_intro_returns_no_fabricated_zero_or_false():
     result = ClockReader(reader, PROFILE).observe(frame)
     assert result == {'visible': False, 'igd': None, 'wins_remaining': None,
                       'lethal': None, 'evidence': {}, 'clock_region': None,
-                      'game_mode': None, 'tournament_wins': None, 'tournament_losses': None}
+                      'game_mode': None, 'tournament_wins': None, 'tournament_losses': None, 'prestige': None}
     reader.predict.assert_not_called()
 
 
@@ -215,8 +215,8 @@ def test_evidence_and_clock_regions_are_bounded_source_pixels():
     frame = native('m12')
     result = ClockReader(None).observe(frame)
     assert set(result) == {'visible', 'igd', 'wins_remaining', 'lethal', 'evidence', 'clock_region',
-                           'game_mode', 'tournament_wins', 'tournament_losses'}
-    assert set(result['evidence']) == {'igd', 'wins_remaining', 'lethal', 'game_mode'}
+                           'game_mode', 'tournament_wins', 'tournament_losses', 'prestige'}
+    assert set(result['evidence']) == {'igd', 'wins_remaining', 'lethal', 'game_mode', 'prestige'}
     for region in [result['clock_region']] + [r['region'] for r in result['evidence'].values()]:
         x, y, w, h = region
         assert all(isinstance(v, int) for v in region)

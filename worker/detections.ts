@@ -5,7 +5,7 @@ import { owned } from "./processing";
 import { trigrams } from "./search";
 
 export const HEROES = ["vanessa", "pygmalien", "dooley", "mak", "jules", "stelle", "karnok", "the_dragons"];
-export const FIELD_KEYS = ["encounter", "username", "rank", "igd", "ghost_hero", "streamer_hero", "wins_remaining", "lethal", "game_mode", "tournament_wins", "tournament_losses"] as const;
+export const FIELD_KEYS = ["encounter", "username", "rank", "igd", "ghost_hero", "streamer_hero", "wins_remaining", "lethal", "game_mode", "tournament_wins", "tournament_losses", "prestige"] as const;
 export type FieldKey = typeof FIELD_KEYS[number];
 export interface FieldObservation {
   at_ms: number; method: string; confidence: number | null; image_path: string;
@@ -237,7 +237,7 @@ export async function publish(env: Env, id: string, token: string | null, input:
     const publisherId = uuid(record.id), v2 = record.schema_version === 2;
     requireValue(record.schema_version === undefined || v2, "Unsupported schema_version");
     if (v2) requireValue(Object.keys(record).every(k => ["schema_version", "id", "timestamp", "frame_time_seconds", "username", "confidence", "name_state", "encounter_confidence",
-      "rank", "igd", "ghost_hero", "streamer_hero", "wins_remaining", "lethal", "game_mode", "tournament_wins", "tournament_losses", "storage_path", "field_evidence", "no_right_edge", "truncated"].includes(k)), "Unsupported detection field");
+      "rank", "igd", "ghost_hero", "streamer_hero", "wins_remaining", "lethal", "game_mode", "tournament_wins", "tournament_losses", "prestige", "storage_path", "field_evidence", "no_right_edge", "truncated"].includes(k)), "Unsupported detection field");
     const at = integer(v2 ? (record.timestamp ?? record.frame_time_seconds) : record.frame_time_seconds, "timestamp", chunk.start_seconds, chunk.end_seconds - 1);
     requireValue(record.timestamp === undefined || record.frame_time_seconds === undefined || record.timestamp === record.frame_time_seconds, "Conflicting anchor timestamps");
     requireValue(!anchors.has(at) && !ids.has(publisherId), "Duplicate ID or anchor in request"); anchors.add(at); ids.add(publisherId);
@@ -257,6 +257,7 @@ export async function publish(env: Env, id: string, token: string | null, input:
     for (const field of ["ghost_hero", "streamer_hero"]) requireValue(record[field] == null || (v2 && HEROES.includes(record[field] as string)), `Invalid ${field}`);
     if (record.wins_remaining != null) { requireValue(v2, "Clock fields require schema_version 2"); integer(record.wins_remaining, "wins_remaining", 0, 10); }
     requireValue(record.lethal == null || (v2 && typeof record.lethal === "boolean"), "Invalid lethal");
+    if (record.prestige != null) { requireValue(v2, "Clock fields require schema_version 2"); integer(record.prestige, "prestige", 0, 20); }
     requireValue(record.game_mode == null || (v2 && (record.game_mode === "normal" || record.game_mode === "tournament")), "Invalid game_mode");
     for (const field of ["tournament_wins", "tournament_losses"]) if (record[field] != null) {
       requireValue(v2 && record.game_mode === "tournament", "Tournament scores require tournament mode");
@@ -293,7 +294,7 @@ export async function publish(env: Env, id: string, token: string | null, input:
       streamer_hero: record.streamer_hero ?? null, wins_remaining: record.wins_remaining ?? null, lethal: record.lethal ?? null, field_evidence: evidence,
       ...(record.game_mode != null || record.tournament_wins != null || record.tournament_losses != null ? {
         game_mode: record.game_mode ?? null, tournament_wins: record.tournament_wins ?? null, tournament_losses: record.tournament_losses ?? null,
-      } : {}) };
+      } : {}), ...(record.prestige != null ? { prestige: record.prestige } : {}) };
     const body = canonical(normalized);
     const prior = await rows(env, "SELECT * FROM detections WHERE vod_id=? AND frame_time_seconds=?", chunk.vod_id, at);
     if (prior.length > 1) throw new HttpError(409, "Ambiguous historical publications at anchor; operator review required");
@@ -320,10 +321,10 @@ export async function publish(env: Env, id: string, token: string | null, input:
       if (named && (record.confidence as number) > 0.7) statements.push(statement(env,
         "INSERT OR IGNORE INTO search_grams(gram,name) SELECT value,? FROM json_each(?)", name, JSON.stringify(grams)));
     }
-    const fields = ["username", "username_lower", "confidence", "rank", "storage_path", "no_right_edge", "truncated", "igd", "name_state", "encounter_confidence", "ghost_hero", "streamer_hero", "wins_remaining", "lethal", "field_evidence", "publish_id", "publish_claim", "publish_body", "game_mode", "tournament_wins", "tournament_losses"];
+    const fields = ["username", "username_lower", "confidence", "rank", "storage_path", "no_right_edge", "truncated", "igd", "name_state", "encounter_confidence", "ghost_hero", "streamer_hero", "wins_remaining", "lethal", "field_evidence", "publish_id", "publish_claim", "publish_body", "game_mode", "tournament_wins", "tournament_losses", "prestige"];
     const values = [record.username, name, record.confidence, record.rank, record.storage_path, !!record.no_right_edge, !!record.truncated, record.igd,
       state, v2 ? record.encounter_confidence : null, record.ghost_hero, record.streamer_hero, record.wins_remaining, record.lethal, canonical(evidence), publisherId, token, body,
-      record.game_mode, record.tournament_wins, record.tournament_losses];
+      record.game_mode, record.tournament_wins, record.tournament_losses, record.prestige];
     if (old) {
       statements.push(statement(env, `UPDATE detections SET ${fields.map(f => `${f}=?`).join(",")} WHERE id=?`, ...values, old.id)); replaced++;
     } else {

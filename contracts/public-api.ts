@@ -103,7 +103,7 @@ export interface ClipSource {
 export type Source = RecordingSource | ClipSource;
 export type NameState = "legacy" | "complete" | "partial" | "obstructed" | "masked" | "unreadable";
 export type Hero = "vanessa" | "pygmalien" | "dooley" | "mak" | "jules" | "stelle" | "karnok" | "the_dragons";
-export type EvidenceField = "encounter" | "username" | "rank" | "igd" | "ghostHero" | "streamerHero" | "winsRemaining" | "lethal" | "gameMode" | "tournamentWins" | "tournamentLosses";
+export type EvidenceField = "encounter" | "username" | "rank" | "igd" | "ghostHero" | "streamerHero" | "winsRemaining" | "lethal" | "gameMode" | "tournamentWins" | "tournamentLosses" | "prestige";
 export interface IgdCorrection {
   id: string;
   inputDigest: string;
@@ -159,6 +159,8 @@ export interface Encounter {
   gameMode: "normal" | "tournament" | null;
   tournamentWins: number | null;
   tournamentLosses: number | null;
+  /** Prestige meter value (N of N/20); unchanged after a win, reduced by the day after a loss. */
+  prestige: number | null;
   lethal: boolean | null;
   fieldEvidence: Partial<Record<EvidenceField, FieldEvidence>>;
 }

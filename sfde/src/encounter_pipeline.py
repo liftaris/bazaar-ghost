@@ -19,7 +19,7 @@ import numpy as np
 
 MAX_JPEG_BYTES = 2 * 1024 * 1024
 HEROES = {'vanessa', 'pygmalien', 'dooley', 'mak', 'jules', 'stelle', 'karnok', 'the_dragons'}
-FIELDS = ('igd', 'wins_remaining', 'lethal')
+FIELDS = ('igd', 'wins_remaining', 'lethal', 'prestige')
 
 
 def detection_id(recording, anchor_ms):
@@ -41,7 +41,7 @@ def bounded_name_evidence(raw):
 def valid_field(field, value):
     if field == 'lethal':
         return type(value) is bool
-    limit = (1, 20) if field == 'igd' else (0, 10)
+    limit = {'igd': (1, 20), 'prestige': (0, 20)}.get(field, (0, 10))
     return type(value) is int and limit[0] <= value <= limit[1]
 
 
@@ -111,7 +111,7 @@ class EncounterPipeline:
             # This is detector similarity, not a calibrated probability. Per-field
             # confidence stays null for template methods, as the wire requires.
             'encounter_confidence': max(0., min(1., location['score'])), 'detected_rank': None,
-            'igd': None, 'wins_remaining': None, 'lethal': None,
+            'igd': None, 'wins_remaining': None, 'lethal': None, 'prestige': None,
             'game_mode': None, 'tournament_wins': None, 'tournament_losses': None,
             'ghost_hero': None, 'streamer_hero': None, 'field_evidence': {},
             '_images': {}, '_intro_ms': at_ms, '_intro_reads': 0, '_last_intro_ms': at_ms,

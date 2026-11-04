@@ -18,6 +18,7 @@ ASSET_DIR = Path(__file__).resolve().parent.parent / 'assets' / 'clock'
 _SCALES = (0.42, 4 / 9, 0.46, 0.48, 0.6, 0.8, 1.0, 1.2)
 _CROWN = (34, 214, 63, 242)
 _WINS = (66, 20, 176, 60)
+_PRESTIGE = (68, 220, 178, 252)
 _ROW_OFFSETS = tuple((dx, dy) for dy in range(-2, 3) for dx in range(-2, 3))
 
 
@@ -246,7 +247,7 @@ class ClockReader:
     def observe(self, frame):
         output = {'visible': False, 'igd': None, 'wins_remaining': None,
                   'lethal': None, 'game_mode': None, 'tournament_wins': None,
-                  'tournament_losses': None, 'evidence': {}, 'clock_region': None}
+                  'tournament_losses': None, 'prestige': None, 'evidence': {}, 'clock_region': None}
         location = self._location(frame)
         if location is None:
             return output
@@ -296,6 +297,11 @@ class ClockReader:
         output['igd'] = value
         output['evidence']['igd'] = {'region': region, 'confidence': confidence,
                                      'method': method + ('_unknown' if value is None else '')}
+        prestige_region, complete = self._region(frame, location, _PRESTIGE)
+        value, confidence = self._prestige(frame, prestige_region) if complete else (None, None)
+        output['prestige'] = value
+        output['evidence']['prestige'] = {'region': prestige_region, 'confidence': confidence,
+                                          'method': 'paddle_prestige_meter' + ('_unknown' if value is None else '')}
         score_region, complete = self._region(frame, location, (64, 24, 146, 59))
         score = self._tournament_score(frame, score_region) if complete else None
         if score is not None:
@@ -345,6 +351,25 @@ class ClockReader:
         except Exception:
             pass
         return None
+
+    def _prestige(self, frame, region):
+        if self.text_reader is None:
+            return None, None
+        x, y, w, h = region
+        image = cv2.resize(frame[y:y+h, x:x+w], (w*8, h*8), interpolation=cv2.INTER_LINEAR)
+        try:
+            results = list(self.text_reader.predict(image))
+            if len(results) != 1:
+                return None, None
+            text, confidence = results[0].get('rec_text', ''), results[0].get('rec_score', 0)
+            # The italic slash is sometimes read as a trailing 7: "18/20" -> "187/20".
+            match = re.fullmatch(r'(0|[1-9][0-9]?)7?\s*/\s*20', text.strip())
+            if (match and int(match[1]) <= 20 and isinstance(confidence, Real)
+                    and not isinstance(confidence, bool) and .9 <= confidence <= 1):
+                return int(match[1]), float(confidence)
+        except Exception:
+            pass
+        return None, None
 
     @staticmethod
     def _wins_quality(native):

@@ -77,6 +77,18 @@ it("persists coherent tournament observations and rejects mixed clocks or mismat
     .toEqual({ game_mode: "tournament", tournament_wins: Number.MAX_SAFE_INTEGER, tournament_losses: 101 });
 });
 
+it("persists prestige with its own evidence and rejects out-of-range values", async () => {
+  const base = await detection();
+  const d = { ...base, prestige: 17, field_evidence: { ...base.field_evidence, prestige: base.field_evidence.igd } };
+  await expect(post(0, [{ ...d, prestige: 21 }])).rejects.toThrow("prestige");
+  await expect(post(0, [{ ...base, prestige: 17 }])).rejects.toThrow("prestige requires its own evidence");
+  await post(0, [d]);
+  const result = await get(`/matchups/${await anchor()}`);
+  expect(result.encounter.prestige).toBe(17);
+  expect(result.fieldEvidence.prestige.atMs).toBe(base.field_evidence.igd.at_ms);
+  expect(await one(env, "SELECT prestige FROM detections WHERE id=?", d.id)).toEqual({ prestige: 17 });
+});
+
 it("deletes a reviewed correction with a fresh digest, restores raw day, and invalidates public caches", async () => {
   const d = await detection(); await post(0, [d]);
   const raw = await one(env, "SELECT * FROM detections WHERE id=?", d.id);
