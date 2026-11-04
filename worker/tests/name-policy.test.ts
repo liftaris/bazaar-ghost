@@ -83,12 +83,13 @@ it("prefers a low-confidence complete name over a stronger obstruction, consiste
   a.confidence = 0.5;
   await post(0, [a]); await post(2, [b]);
   const id = await anchor(); await linkAnchors(env, [id, await anchor(2)], how);
+  const detail = await get(`/matchups/${id}`);
+  expect(detail.fieldEvidence.username.detectionId).toBe(a.id);
   for (const path of ["/search", "/search?recordingId=1", `/search?sessionId=${await sessionOf()}`]) {
     const item = (await get(path)).items[0];
     expect(item.opponent).toMatchObject({ username: a.username, confidence: 0.5, nameState: "complete" });
-    expect(item.fieldEvidence.username.detectionId).toBe(a.id);
+    expect(item.encounter.fieldEvidence).toEqual({ encounter: detail.fieldEvidence.encounter });
   }
-  expect((await get(`/matchups/${id}`)).fieldEvidence.username.detectionId).toBe(a.id);
   const [full] = (await get("/search")).items, [summary] = (await get("/search?representation=summary")).items;
   expect(full.sources).toHaveLength(2);
   expect(summary).toEqual({ ...full, sources: full.sources.slice(0, 1) });

@@ -185,8 +185,17 @@ export interface Matchup {
   indexedAt: string;
   sources: Source[];
 }
+/** An Encounter as listed: its values and the evidence for the encounter itself, which carries the screenshot.
+ * Evidence for each other field, and raw day evidence, are on the Matchup detail. */
+export interface EncounterSummary extends Omit<Encounter, "rawIgdEvidence" | "fieldEvidence"> {
+  fieldEvidence: Pick<Encounter["fieldEvidence"], "encounter">;
+}
+/** A Matchup as listed by search and favorites. */
+export interface MatchupCard extends Omit<Matchup, "encounter" | "fieldEvidence"> {
+  encounter: EncounterSummary;
+}
 /** A search hit: relevance is search-only and separate from OCR confidence. */
-export interface MatchupResult extends Matchup {
+export interface MatchupResult extends MatchupCard {
   relevance: { score: number; exact: boolean };
 }
 /** SFDE evidence for a Matchup in one Recording. `screenshotUrl` is null when its Recording is unavailable. */

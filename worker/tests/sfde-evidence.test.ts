@@ -216,12 +216,14 @@ it("selects each field independently across manually established Sources; strong
   await post(0, [a]); await post(1, [b]);
   const x = await anchor(), y = await anchor(2);
   await linkAnchors(env, [x,y], how);
+  const detail = await get(`/matchups/${x}`);
+  expect(detail.fieldEvidence.username.detectionId).toBe(a.id);
+  expect(detail.fieldEvidence.igd).toMatchObject({ detectionId: b.id, recordingId: 2, atMs: 14025 });
   for (const route of ["/search", "/search?q=Bestname", "/search?recordingId=1", `/matchups/${x}`]) {
     const response = await get(route), m = response.items?.[0] ?? response;
     expect(m.opponent).toMatchObject({ username: "Bestname", confidence: 0.99, igd: 9 });
     expect(m.encounter).toMatchObject({ winsRemaining: 0, lethal: false });
-    expect(m.fieldEvidence.username.detectionId).toBe(a.id);
-    expect(m.fieldEvidence.igd).toMatchObject({ detectionId: b.id, recordingId: 2, atMs: 14025 });
+    expect(m.encounter.fieldEvidence.encounter).toEqual(detail.fieldEvidence.encounter);
     expect(m.sources).toHaveLength(2);
   }
   await statement(env, "UPDATE vods SET availability='unavailable' WHERE id=2").run();
